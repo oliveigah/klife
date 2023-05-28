@@ -1,0 +1,5 @@
+%{
+  "crc32cer": {:hex, :crc32cer, "0.1.10", "fb87abbf34b72f180f8c3a908cd1826c6cb9a59787d156a29e05de9e98be385e", [:rebar3], [], "hexpm", "5b1f47efd0a1b4b7411f1f35e14d3c8c6da6e6a2a725ec8f2cf1ab13703e5f38"},
+  "klife_protocol": {:hex, :klife_protocol, "0.1.0", "f2205cfd2122d807892590c39116182cf64bfa74eac67c23dad6311a6e167bde", [:mix], [{:crc32cer, "~> 0.1.8", [hex: :crc32cer, repo: "hexpm", optional: false]}, {:snappyer, "~> 1.2.7", [hex: :snappyer, repo: "hexpm", optional: false]}], "hexpm", "64351f54bf0c5ffd3dc55ffe3ea6726b2407aef5b2396c2f79c69eadeeb88f70"},
+  "snappyer": {:hex, :snappyer, "1.2.9", "9cc58470798648ce34c662ca0aa6daae31367667714c9a543384430a3586e5d3", [:rebar3], [], "hexpm", "18d00ca218ae613416e6eecafe1078db86342a66f86277bd45c95f05bf1c8b29"},
+}
