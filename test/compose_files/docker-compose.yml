@@ -3,10 +3,7 @@ version: '3.3'
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
-    ports:
-    - "2181:2181"
-    - "2888:2888"
-    - "3888:3888"
+    network_mode: host
     environment:
     - ZOOKEEPER_SERVER_ID=1
     - ZOOKEEPER_CLIENT_PORT=2181
@@ -19,21 +16,19 @@ services:
     image: confluentinc/cp-kafka:7.4.0
     depends_on:
     - zookeeper
-    ports:
-    - "19092:9092"
-    - "19093:9093"
+    network_mode: host
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      ZOOKEEPER: zookeeper:2181
-      BOOTSTRAP_SERVERS: kafka1:9091,kafka2:9091,kafka3:9091
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9091,EXTERNAL_PLAIN://kafka1:9092,EXTERNAL://kafka1:9093
+      KAFKA_ZOOKEEPER_CONNECT: localhost:2181
+      ZOOKEEPER: localhost:2181
+      BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:19091,EXTERNAL_PLAIN://localhost:19092,EXTERNAL://localhost:19093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
-      KAFKA_SSL_KEY_PASSWORD: klifeprotocol
-      KAFKA_SSL_KEYSTORE_PASSWORD: klifeprotocol
-      KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeprotocol
+      KAFKA_SSL_KEY_PASSWORD: klifeclient
+      KAFKA_SSL_KEYSTORE_PASSWORD: klifeclient
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeclient
     volumes:
     - ./keystore/kafka.keystore.jks:/secrets/kafka.keystore.jks:ro,z
     - ./truststore/kafka.truststore.jks:/secrets/kafka.truststore.jks:ro,z
@@ -43,21 +38,19 @@ services:
     depends_on:
     - zookeeper
     - kafka1
-    ports:
-    - "29092:9092"
-    - "29093:9093"
+    network_mode: host
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      ZOOKEEPER: zookeeper:2181
-      BOOTSTRAP_SERVERS: kafka1:9091,kafka2:9091,kafka3:9091
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:9091,EXTERNAL_PLAIN://kafka2:9092,EXTERNAL://kafka2:9093
+      KAFKA_ZOOKEEPER_CONNECT: localhost:2181
+      ZOOKEEPER: localhost:2181
+      BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:29091,EXTERNAL_PLAIN://localhost:29092,EXTERNAL://localhost:29093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
-      KAFKA_SSL_KEY_PASSWORD: klifeprotocol
-      KAFKA_SSL_KEYSTORE_PASSWORD: klifeprotocol
-      KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeprotocol
+      KAFKA_SSL_KEY_PASSWORD: klifeclient
+      KAFKA_SSL_KEYSTORE_PASSWORD: klifeclient
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeclient
     volumes:
     - ./keystore/kafka.keystore.jks:/secrets/kafka.keystore.jks:ro,z
     - ./truststore/kafka.truststore.jks:/secrets/kafka.truststore.jks:ro,z
@@ -67,21 +60,19 @@ services:
     depends_on:
     - zookeeper
     - kafka2
-    ports:
-    - "39092:9092"
-    - "39093:9093"
+    network_mode: host
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      ZOOKEEPER: zookeeper:2181
-      BOOTSTRAP_SERVERS: kafka1:9091,kafka2:9091,kafka3:9091
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:9091,EXTERNAL_PLAIN://kafka3:9092,EXTERNAL://kafka3:9093
+      KAFKA_ZOOKEEPER_CONNECT: localhost:2181
+      ZOOKEEPER: localhost:2181
+      BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:39091,EXTERNAL_PLAIN://localhost:39092,EXTERNAL://localhost:39093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
-      KAFKA_SSL_KEY_PASSWORD: klifeprotocol
-      KAFKA_SSL_KEYSTORE_PASSWORD: klifeprotocol
-      KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeprotocol
+      KAFKA_SSL_KEY_PASSWORD: klifeclient
+      KAFKA_SSL_KEYSTORE_PASSWORD: klifeclient
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeclient
     volumes:
     - ./keystore/kafka.keystore.jks:/secrets/kafka.keystore.jks:ro,z
     - ./truststore/kafka.truststore.jks:/secrets/kafka.truststore.jks:ro,z
