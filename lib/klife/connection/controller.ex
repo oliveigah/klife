@@ -14,7 +14,7 @@ defmodule Klife.Connection.Controller do
   # in order to avoid reaching this limit.
   @max_correlation_counter 200_000_000
   @check_correlation_counter_delay :timer.seconds(300)
-  @check_brokers_delay :timer.seconds(5)
+  @check_brokers_delay :timer.seconds(180)
 
   defstruct [:bootstrap_servers, :cluster_name, :known_brokers, :socket_opts, :bootstrap_conn]
 
@@ -71,7 +71,7 @@ defmodule Klife.Connection.Controller do
         to_start = new_brokers_list -- old_brokers
 
         Process.send(self(), {:remove_brokers, to_remove}, [])
-        Process.send(self(), {:start_brokers, to_start}, [])
+        Process.send(self(), {:start_brokers, to_start, nil}, [])
         Process.send_after(self(), :check_brokers, @check_brokers_delay)
         {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
 
@@ -81,7 +81,7 @@ defmodule Klife.Connection.Controller do
     end
   end
 
-  def handle_info({:start_brokers, brokers_list}, %__MODULE__{} = state) do
+  def handle_info({:start_brokers, brokers_list, from}, %__MODULE__{} = state) do
     Enum.each(brokers_list, fn {broker_id, url} ->
       broker_opts = [
         socket_opts: state.socket_opts,
@@ -101,6 +101,8 @@ defmodule Klife.Connection.Controller do
       {:known_brokers_ids, state.cluster_name},
       Enum.map(state.known_brokers, &elem(&1, 0))
     )
+
+    if from != nil, do: GenServer.reply(from, :ok)
 
     {:noreply, state}
   end
@@ -138,6 +140,46 @@ defmodule Klife.Connection.Controller do
     {:noreply, state}
   end
 
+  @impl true
+  def handle_call(:check_brokers_manual, from, %__MODULE__{} = state) do
+    case get_known_brokers(state.bootstrap_conn) do
+      {:ok, new_brokers_list} ->
+        old_brokers = state.known_brokers
+        to_remove = old_brokers -- new_brokers_list
+        to_start = new_brokers_list -- old_brokers
+
+        Process.send(self(), {:remove_brokers, to_remove}, [])
+        Process.send(self(), {:start_brokers, to_start, from}, [])
+
+        {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
+
+      {:error, _reason} ->
+        new_conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
+
+        case get_known_brokers(new_conn) do
+          {:ok, new_brokers_list} ->
+            old_brokers = state.known_brokers
+            to_remove = old_brokers -- new_brokers_list
+            to_start = new_brokers_list -- old_brokers
+
+            Process.send(self(), {:remove_brokers, to_remove}, [])
+            Process.send(self(), {:start_brokers, to_start, from}, [])
+
+            {:noreply,
+             %__MODULE__{
+               state
+               | known_brokers: new_brokers_list,
+                 bootstrap_conn: new_conn
+             }}
+
+          _ ->
+            {:reply, :error, state}
+        end
+
+        {:noreply, state}
+    end
+  end
+
   ## PUBLIC INTERFACE
 
   def insert_in_flight(cluster_name, correlation_id) do
@@ -163,6 +205,10 @@ defmodule Klife.Connection.Controller do
     {:known_brokers_ids, cluster_name}
     |> :persistent_term.get()
     |> Enum.random()
+  end
+
+  def trigger_brokers_verification(cluster_name) do
+    GenServer.call(via_tuple({__MODULE__, cluster_name}), :check_brokers_manual)
   end
 
   ## PRIVATE FUNCTIONS

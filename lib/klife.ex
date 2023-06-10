@@ -6,7 +6,6 @@ defmodule Klife do
     version = 0
     cluster_name = :my_cluster_1
 
-    Broker.send_message(Messages.ApiVersions, version, cluster_name, :any)
-    :ok
+    {:ok, _} = Broker.send_message_sync(Messages.ApiVersions, version, cluster_name, :any)
   end
 end

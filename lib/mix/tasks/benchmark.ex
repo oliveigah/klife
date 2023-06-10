@@ -15,7 +15,7 @@ if Mix.env() in [:dev] do
         },
         time: 10,
         memory_time: 2,
-        parallel: 12
+        parallel: 8
       )
     end
   end
