@@ -237,8 +237,8 @@ defmodule Klife.Connection.Controller do
         """)
   end
 
-  defp get_known_brokers(conn) do
-    %{headers: %{correlation_id: 123}, content: %{include_cluster_authorized_operations: true}}
+  defp get_known_brokers(%Connection{} = conn) do
+    %{headers: %{correlation_id: 0}, content: %{include_cluster_authorized_operations: true}}
     |> DescribeCluster.serialize_request(0)
     |> Connection.write(conn)
     |> case do
