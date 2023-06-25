@@ -2,17 +2,13 @@ defmodule Klife.Connection.BrokerTest do
   use ExUnit.Case
 
   alias Klife.Connection.Broker
+  alias Klife.TestUtils
   alias KlifeProtocol.Messages
 
   @cluster_name :my_cluster_1
-  use Retry
 
   setup_all do
-    wait constant_backoff(50) |> expiry(1_000) do
-      :persistent_term.get({:known_brokers_ids, @cluster_name}, false)
-    end
-
-    :ok
+    TestUtils.wait_for_broker_connection(@cluster_name)
   end
 
   test "sends synchronous message" do
