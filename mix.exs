@@ -28,9 +28,7 @@ defmodule Klife.MixProject do
     [
       {:klife_protocol, "~> 0.1.0"},
       # Benchmarks and tests
-      {:benchee, "~> 1.0", only: :dev, runtime: false},
-      # Used to wait for connection in tests
-      {:retry, "~> 0.18", only: :test}
+      {:benchee, "~> 1.0", only: :dev, runtime: false}
     ]
   end
 end

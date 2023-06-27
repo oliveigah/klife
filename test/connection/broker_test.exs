@@ -9,6 +9,7 @@ defmodule Klife.Connection.BrokerTest do
 
   setup_all do
     TestUtils.wait_for_broker_connection(@cluster_name)
+    :ok
   end
 
   test "sends synchronous message" do
