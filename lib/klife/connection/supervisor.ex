@@ -12,7 +12,8 @@ defmodule Klife.Connection.Supervisor do
   def init(opts) do
     children = [
       {Klife.Connection.BrokerSupervisor, opts},
-      {Klife.Connection.Controller, opts}
+      {Klife.Connection.Controller, opts},
+      {Task.Supervisor, name: Klife.TaskSupervisor}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
