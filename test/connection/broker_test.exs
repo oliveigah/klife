@@ -18,6 +18,8 @@ defmodule Klife.Connection.BrokerTest do
   end
 
   test "sends asynchronous message" do
-    assert :ok == Broker.send_message_async(Messages.ApiVersions, 0, @cluster_name, :any)
+    pid = self()
+    assert :ok == Broker.send_message_async(Messages.ApiVersions, 0, @cluster_name, :any, %{}, %{}, fn -> send(pid, :written_to_socket) end)
+    assert_receive :written_to_socket, 1_000
   end
 end

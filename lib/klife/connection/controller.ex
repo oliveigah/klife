@@ -188,6 +188,12 @@ defmodule Klife.Connection.Controller do
     |> :ets.insert({correlation_id, self()})
   end
 
+  def insert_in_flight(cluster_name, correlation_id, callback) do
+    cluster_name
+    |> get_in_flight_messages_table_name()
+    |> :ets.insert({correlation_id, callback})
+  end
+
   def take_from_in_flight(cluster_name, correlation_id) do
     cluster_name
     |> get_in_flight_messages_table_name()
