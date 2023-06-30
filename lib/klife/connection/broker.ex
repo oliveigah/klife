@@ -133,7 +133,7 @@ defmodule Klife.Connection.Broker do
         broker_id,
         content \\ %{},
         headers \\ %{},
-        callback \\ fn -> :noop end
+        callback \\ nil
       ) do
     correlation_id = Controller.get_next_correlation_id(cluster_name)
     broker_id = get_broker_id(broker_id, cluster_name)
@@ -147,7 +147,9 @@ defmodule Klife.Connection.Broker do
 
     serialized_msg = apply(message_mod, :serialize_request, [input, version])
 
-    true = Controller.insert_in_flight(cluster_name, correlation_id, callback)
+    if is_function(callback) do
+      true = Controller.insert_in_flight(cluster_name, correlation_id, callback)
+    end
 
     case Connection.write(serialized_msg, conn) do
       :ok ->
@@ -182,7 +184,7 @@ defmodule Klife.Connection.Broker do
         nil
 
       {^correlation_id, callback} when is_function(callback) ->
-        Task.Supervisor.async(Klife.TaskSupervisor, fn -> callback.() end)
+        Task.Supervisor.async(Klife.Connection.CallbackSupervisor, fn -> callback.() end)
 
       {^correlation_id, waiting_pid} ->
         Process.send(waiting_pid, {:broker_response, reply}, [])
