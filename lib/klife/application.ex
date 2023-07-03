@@ -8,7 +8,7 @@ defmodule Klife.Application do
   @opts [
     cluster_name: :my_cluster_1,
     connection: [
-      bootstrap_servers: ["localhost:29092", "localhost:29093"],
+      bootstrap_servers: ["localhost:19093", "localhost:29093"],
       socket_opts: [
         ssl: true,
         ssl_opts: [

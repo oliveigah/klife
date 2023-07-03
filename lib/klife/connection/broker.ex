@@ -184,7 +184,7 @@ defmodule Klife.Connection.Broker do
         nil
 
       {^correlation_id, callback} when is_function(callback) ->
-        Task.Supervisor.async(Klife.Connection.CallbackSupervisor, fn -> callback.() end)
+        Task.Supervisor.start_child(Klife.Connection.CallbackSupervisor, fn -> callback.() end)
 
       {^correlation_id, waiting_pid} ->
         Process.send(waiting_pid, {:broker_response, reply}, [])
