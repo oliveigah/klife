@@ -75,6 +75,10 @@ defmodule Klife.Connection.Broker do
     {:noreply, state}
   end
 
+  def handle_info({ref, _resp}, %__MODULE__{} = state) when is_reference(ref) do
+    {:noreply, state}
+  end
+
   def terminate(reason, %__MODULE__{} = state) do
     :persistent_term.erase({__MODULE__, state.cluster_name, state.broker_id})
     reason
