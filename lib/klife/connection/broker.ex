@@ -75,10 +75,6 @@ defmodule Klife.Connection.Broker do
     {:noreply, state}
   end
 
-  def handle_info({ref, _resp}, %__MODULE__{} = state) when is_reference(ref) do
-    {:noreply, state}
-  end
-
   def terminate(reason, %__MODULE__{} = state) do
     :persistent_term.erase({__MODULE__, state.cluster_name, state.broker_id})
     reason
@@ -174,7 +170,7 @@ defmodule Klife.Connection.Broker do
         # TODO: HOW TO HANDLE THIS?
         # There are 2 possibilities to this case
         #
-        # 1 - An async message was sent which does not populate the inflight table ()
+        # 1 - An async message without callback was sent which does not populate the inflight table
         # 2 - A sync message was sent but the caller gave up waiting the response
         #
         # The only problematic case is the second one since the caller will assume
