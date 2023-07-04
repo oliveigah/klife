@@ -132,7 +132,8 @@ defmodule Klife.Connection.Broker do
         cluster_name,
         broker_id,
         content \\ %{},
-        headers \\ %{}
+        headers \\ %{},
+        callback \\ nil
       ) do
     correlation_id = Controller.get_next_correlation_id(cluster_name)
     broker_id = get_broker_id(broker_id, cluster_name)
@@ -145,6 +146,10 @@ defmodule Klife.Connection.Broker do
     }
 
     serialized_msg = apply(message_mod, :serialize_request, [input, version])
+
+    if is_function(callback) do
+      true = Controller.insert_in_flight(cluster_name, correlation_id, callback)
+    end
 
     case Connection.write(serialized_msg, conn) do
       :ok ->
@@ -165,7 +170,7 @@ defmodule Klife.Connection.Broker do
         # TODO: HOW TO HANDLE THIS?
         # There are 2 possibilities to this case
         #
-        # 1 - An async message was sent which does not populate the inflight table
+        # 1 - An async message without callback was sent which does not populate the inflight table
         # 2 - A sync message was sent but the caller gave up waiting the response
         #
         # The only problematic case is the second one since the caller will assume
@@ -177,6 +182,9 @@ defmodule Klife.Connection.Broker do
         # Must revisit this later.
         #
         nil
+
+      {^correlation_id, callback} when is_function(callback) ->
+        Task.Supervisor.start_child(Klife.Connection.CallbackSupervisor, fn -> callback.() end)
 
       {^correlation_id, waiting_pid} ->
         Process.send(waiting_pid, {:broker_response, reply}, [])
