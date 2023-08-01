@@ -13,7 +13,7 @@ defmodule Klife.Connection.BrokerTest do
   end
 
   test "sends synchronous message" do
-    {:ok, response} = Broker.send_message_sync(Messages.ApiVersions, 0, @cluster_name, :any)
+    {:ok, response} = Broker.send_message_sync(Messages.ApiVersions, @cluster_name, :any)
     assert is_list(response.content.api_keys)
   end
 
@@ -23,7 +23,6 @@ defmodule Klife.Connection.BrokerTest do
     assert :ok ==
              Broker.send_message_async(
                Messages.ApiVersions,
-               0,
                @cluster_name,
                :any,
                %{},

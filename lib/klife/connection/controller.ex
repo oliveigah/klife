@@ -4,10 +4,12 @@ defmodule Klife.Connection.Controller do
   import Klife.ProcessRegistry
 
   alias KlifeProtocol.Messages.DescribeCluster
+  alias KlifeProtocol.Messages.ApiVersions
 
   alias Klife.Connection
   alias Klife.Connection.Broker
   alias Klife.Connection.BrokerSupervisor
+  alias Klife.Connection.MessageVersions
 
   # Since the biggest signed int32 is 2,147,483,647
   # We need to eventually reset the correlation counter value
@@ -30,7 +32,7 @@ defmodule Klife.Connection.Controller do
 
     :persistent_term.put(
       {:in_flight_messages, cluster_name},
-      String.to_atom("in_flight_messages__#{cluster_name}")
+      String.to_atom("in_flight_messages.#{cluster_name}")
     )
 
     :ets.new(get_in_flight_messages_table_name(cluster_name), [
@@ -59,20 +61,23 @@ defmodule Klife.Connection.Controller do
   @impl true
   def handle_info(:init_bootstrap_conn, %__MODULE__{} = state) do
     conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
-    Process.send(self(), :check_brokers, [])
+    negotiate_api_versions(conn, state.cluster_name)
+    Process.send(self(), :check_cluster, [])
     {:noreply, %__MODULE__{state | bootstrap_conn: conn}}
   end
 
-  def handle_info(:check_brokers, %__MODULE__{} = state) do
-    case get_known_brokers(state.bootstrap_conn) do
-      {:ok, new_brokers_list} ->
+  def handle_info(:check_cluster, %__MODULE__{} = state) do
+    case get_cluster_info(state.bootstrap_conn) do
+      {:ok, %{brokers: new_brokers_list, controller: controller}} ->
+        set_cluster_controller(controller, state.cluster_name)
+
         old_brokers = state.known_brokers
         to_remove = old_brokers -- new_brokers_list
         to_start = new_brokers_list -- old_brokers
 
         Process.send(self(), {:remove_brokers, to_remove}, [])
         Process.send(self(), {:start_brokers, to_start, nil}, [])
-        Process.send_after(self(), :check_brokers, @check_brokers_delay)
+        Process.send_after(self(), :check_cluster, @check_brokers_delay)
         {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
 
       {:error, _reason} ->
@@ -141,9 +146,11 @@ defmodule Klife.Connection.Controller do
   end
 
   @impl true
-  def handle_call(:check_brokers_manual, from, %__MODULE__{} = state) do
-    case get_known_brokers(state.bootstrap_conn) do
-      {:ok, new_brokers_list} ->
+  def handle_call(:check_cluster_manual, from, %__MODULE__{} = state) do
+    case get_cluster_info(state.bootstrap_conn) do
+      {:ok, %{brokers: new_brokers_list, controller: controller}} ->
+        set_cluster_controller(controller, state.cluster_name)
+
         old_brokers = state.known_brokers
         to_remove = old_brokers -- new_brokers_list
         to_start = new_brokers_list -- old_brokers
@@ -156,8 +163,10 @@ defmodule Klife.Connection.Controller do
       {:error, _reason} ->
         new_conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
 
-        case get_known_brokers(new_conn) do
-          {:ok, new_brokers_list} ->
+        case get_cluster_info(new_conn) do
+          {:ok, %{brokers: new_brokers_list, controller: controller}} ->
+            set_cluster_controller(controller, state.cluster_name)
+
             old_brokers = state.known_brokers
             to_remove = old_brokers -- new_brokers_list
             to_start = new_brokers_list -- old_brokers
@@ -175,8 +184,6 @@ defmodule Klife.Connection.Controller do
           _ ->
             {:reply, :error, state}
         end
-
-        {:noreply, state}
     end
   end
 
@@ -214,8 +221,12 @@ defmodule Klife.Connection.Controller do
   end
 
   def trigger_brokers_verification(cluster_name) do
-    GenServer.call(via_tuple({__MODULE__, cluster_name}), :check_brokers_manual)
+    GenServer.call(via_tuple({__MODULE__, cluster_name}), :check_cluster_manual)
   end
+
+  def get_cluster_controller(cluster_name),
+    do: :persistent_term.get({:cluster_controller, cluster_name})
+
 
   ## PRIVATE FUNCTIONS
 
@@ -243,7 +254,7 @@ defmodule Klife.Connection.Controller do
         """)
   end
 
-  defp get_known_brokers(%Connection{} = conn) do
+  defp get_cluster_info(%Connection{} = conn) do
     %{headers: %{correlation_id: 0}, content: %{include_cluster_authorized_operations: true}}
     |> DescribeCluster.serialize_request(0)
     |> Connection.write(conn)
@@ -251,7 +262,12 @@ defmodule Klife.Connection.Controller do
       :ok ->
         {:ok, received_data} = Connection.read(conn)
         {:ok, %{content: resp}} = DescribeCluster.deserialize_response(received_data, 0)
-        {:ok, Enum.map(resp.brokers, fn b -> {b.broker_id, "#{b.host}:#{b.port}"} end)}
+
+        {:ok,
+         %{
+           brokers: Enum.map(resp.brokers, fn b -> {b.broker_id, "#{b.host}:#{b.port}"} end),
+           controller: resp.controller_id
+         }}
 
       {:error, _reason} = res ->
         res
@@ -262,5 +278,23 @@ defmodule Klife.Connection.Controller do
     {:correlation_counter, cluster_name}
     |> :persistent_term.get()
     |> :atomics.get(1)
+  end
+
+  defp set_cluster_controller(broker_id, cluster_name),
+    do: :persistent_term.put({:cluster_controller, cluster_name}, broker_id)
+
+  defp negotiate_api_versions(%Connection{} = conn, cluster_name) do
+    :ok =
+      %{headers: %{correlation_id: 0}, content: %{}}
+      |> ApiVersions.serialize_request(0)
+      |> Connection.write(conn)
+
+    {:ok, received_data} = Connection.read(conn)
+    {:ok, %{content: resp}} = ApiVersions.deserialize_response(received_data, 0)
+
+    resp.api_keys
+    |> Enum.map(&{&1.api_key, %{min: &1.min_version, max: &1.max_version}})
+    |> Map.new()
+    |> MessageVersions.setup_versions(cluster_name)
   end
 end
