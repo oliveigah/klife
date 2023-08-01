@@ -227,7 +227,6 @@ defmodule Klife.Connection.Controller do
   def get_cluster_controller(cluster_name),
     do: :persistent_term.get({:cluster_controller, cluster_name})
 
-
   ## PRIVATE FUNCTIONS
 
   defp get_in_flight_messages_table_name(cluster_name),

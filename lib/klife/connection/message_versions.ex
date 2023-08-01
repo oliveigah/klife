@@ -5,7 +5,6 @@ defmodule Klife.Connection.MessageVersions do
     :persistent_term.get({:api_version, mod, cluster_name})
   end
 
-
   def setup_versions(cluster_data, cluster_name),
     do: do_setup_versions(client_versions(), cluster_data, cluster_name)
 
