@@ -3,7 +3,7 @@ defmodule Klife.Connection.Controller do
 
   import Klife.ProcessRegistry
 
-  alias KlifeProtocol.Messages.DescribeCluster
+  alias KlifeProtocol.Messages.Metadata
   alias KlifeProtocol.Messages.ApiVersions
 
   alias Klife.Connection
@@ -254,17 +254,20 @@ defmodule Klife.Connection.Controller do
   end
 
   defp get_cluster_info(%Connection{} = conn) do
-    %{headers: %{correlation_id: 0}, content: %{include_cluster_authorized_operations: true}}
-    |> DescribeCluster.serialize_request(0)
+    %{
+      headers: %{correlation_id: 0},
+      content: %{include_cluster_authorized_operations: true, topics: []}
+    }
+    |> Metadata.serialize_request(0)
     |> Connection.write(conn)
     |> case do
       :ok ->
         {:ok, received_data} = Connection.read(conn)
-        {:ok, %{content: resp}} = DescribeCluster.deserialize_response(received_data, 0)
+        {:ok, %{content: resp}} = Metadata.deserialize_response(received_data, 0)
 
         {:ok,
          %{
-           brokers: Enum.map(resp.brokers, fn b -> {b.broker_id, "#{b.host}:#{b.port}"} end),
+           brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
            controller: resp.controller_id
          }}
 
