@@ -10,6 +10,7 @@ defmodule Klife.TestUtils do
         :not_found ->
           Process.sleep(50)
           do_wait_for_broker_connection(cluster_name, deadline)
+
         data ->
           data
       end

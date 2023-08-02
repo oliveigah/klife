@@ -18,7 +18,7 @@ defmodule Klife.Connection do
         [
           inet_backend: :socket,
           active: Keyword.get(opts, :active, false),
-          backend: get_socket_backend(map_opts),
+          backend: get_socket_backend(map_opts)
         ],
         Keyword.get(opts, :ssl_opts, [])
       )

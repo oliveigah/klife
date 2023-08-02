@@ -26,7 +26,7 @@ defmodule Klife.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:klife_protocol, "~> 0.1.0"},
+      {:klife_protocol, "~> 0.2"},
       # Benchmarks and tests
       {:benchee, "~> 1.0", only: :dev, runtime: false}
     ]

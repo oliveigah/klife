@@ -7,6 +7,7 @@ defmodule Klife.Connection.Broker do
 
   alias Klife.Connection
   alias Klife.Connection.Controller
+  alias Klife.Connection.MessageVersions
 
   @reconnect_delays_seconds [5, 10, 30, 60, 90, 120, 300]
 
@@ -32,7 +33,18 @@ defmodule Klife.Connection.Broker do
       reconnect_attempts: 0
     }
 
-    send(self(), :connect)
+    # This needs to be done instead of send(self(), :connect)
+    # in order to prevent a race condition where the
+    # manual broker verification returns :ok to the caller
+    # before a connection is properly initialized.
+    #
+    # This bug can be reproduced by artificially increasing
+    # the time it takes to complete the connect action
+    #
+    # Since we do not expect this process to restart often
+    # it is safe to go with a longer initialization time
+    {_, state} = handle_info(:connect, state)
+
     {:ok, state}
   end
 
@@ -82,7 +94,6 @@ defmodule Klife.Connection.Broker do
 
   def send_message_sync(
         message_mod,
-        version,
         cluster_name,
         broker_id,
         content \\ %{},
@@ -97,6 +108,7 @@ defmodule Klife.Connection.Broker do
       content: content
     }
 
+    version = MessageVersions.get(cluster_name, message_mod)
     serialized_msg = apply(message_mod, :serialize_request, [input, version])
 
     true = Controller.insert_in_flight(cluster_name, correlation_id)
@@ -128,13 +140,13 @@ defmodule Klife.Connection.Broker do
 
   def send_message_async(
         message_mod,
-        version,
         cluster_name,
         broker_id,
         content \\ %{},
         headers \\ %{},
         callback \\ nil
       ) do
+    version = MessageVersions.get(cluster_name, message_mod)
     correlation_id = Controller.get_next_correlation_id(cluster_name)
     broker_id = get_broker_id(broker_id, cluster_name)
 
@@ -201,6 +213,10 @@ defmodule Klife.Connection.Broker do
   end
 
   defp get_broker_id(:any, cluster_name), do: Controller.get_random_broker_id(cluster_name)
+
+  defp get_broker_id(:controller, cluster_name),
+    do: Controller.get_cluster_controller(cluster_name)
+
   defp get_broker_id(broker_id, _cluster_name), do: broker_id
 
   defp get_connection(cluster_name, broker_id) do
