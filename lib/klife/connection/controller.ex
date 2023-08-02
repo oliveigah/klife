@@ -258,12 +258,12 @@ defmodule Klife.Connection.Controller do
       headers: %{correlation_id: 0},
       content: %{include_cluster_authorized_operations: true, topics: []}
     }
-    |> Metadata.serialize_request(0)
+    |> Metadata.serialize_request(1)
     |> Connection.write(conn)
     |> case do
       :ok ->
         {:ok, received_data} = Connection.read(conn)
-        {:ok, %{content: resp}} = Metadata.deserialize_response(received_data, 0)
+        {:ok, %{content: resp}} = Metadata.deserialize_response(received_data, 1)
 
         {:ok,
          %{
