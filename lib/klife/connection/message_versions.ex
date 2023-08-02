@@ -42,8 +42,8 @@ defmodule Klife.Connection.MessageVersions do
   defp client_versions do
     [
       {P.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
-      {P.DescribeCluster, %{min: 0, max: 0, should_raise?: true}},
-      {P.CreateTopics, %{min: 0, max: 0, should_raise?: true}}
+      {P.CreateTopics, %{min: 0, max: 0, should_raise?: true}},
+      {P.Metadata, %{min: 1, max: 1, should_raise?: true}}
     ]
   end
 
