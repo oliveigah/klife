@@ -23,7 +23,11 @@ defmodule Klife.Application do
     |> Application.fetch_env!(:clusters)
     |> Enum.map(fn cluster_opts ->
       cluster_name = Keyword.fetch!(cluster_opts, :cluster_name)
-      {Klife.Connection.Supervisor, [{:cluster_name, cluster_name} | cluster_opts[:connection]]}
+
+      [
+        {Klife.Connection.Supervisor, [{:cluster_name, cluster_name} | cluster_opts[:connection]]}
+        # {Klife.Producer.Controller, cluster_opts}
+      ]
     end)
   end
 end

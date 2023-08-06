@@ -13,13 +13,34 @@ config :klife,
             cacertfile: Path.relative("test/compose_files/truststore/ca.crt")
           ]
         ]
-      ]
-    ],
-    [
-      cluster_name: :my_cluster_2,
-      connection: [
-        bootstrap_servers: ["localhost:39092"],
-        socket_opts: [ssl: false]
+      ],
+      producers: [
+        %{
+          name: :my_custom_producer,
+          client_id: "my_custom_client_id"
+        }
+      ],
+      topics: [
+        %{
+          name: "topic_a",
+          enable_produce: true,
+          producer: :my_custom_producer
+        },
+        %{
+          name: "topic_b",
+          enable_produce: true
+        },
+        %{
+          name: "topic_c",
+          enable_produce: false
+        }
       ]
     ]
+    # [
+    #   cluster_name: :my_cluster_2,
+    #   connection: [
+    #     bootstrap_servers: ["localhost:39092"],
+    #     socket_opts: [ssl: false]
+    #   ]
+    # ]
   ]

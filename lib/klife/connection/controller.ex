@@ -3,8 +3,7 @@ defmodule Klife.Connection.Controller do
 
   import Klife.ProcessRegistry
 
-  alias KlifeProtocol.Messages.Metadata
-  alias KlifeProtocol.Messages.ApiVersions
+  alias KlifeProtocol.Messages
 
   alias Klife.Connection
   alias Klife.Connection.Broker
@@ -258,12 +257,13 @@ defmodule Klife.Connection.Controller do
       headers: %{correlation_id: 0},
       content: %{include_cluster_authorized_operations: true, topics: []}
     }
-    |> Metadata.serialize_request(1)
+    |> Messages.Metadata.serialize_request(1)
     |> Connection.write(conn)
     |> case do
       :ok ->
         {:ok, received_data} = Connection.read(conn)
-        {:ok, %{content: resp}} = Metadata.deserialize_response(received_data, 1)
+
+        {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
 
         {:ok,
          %{
@@ -288,11 +288,11 @@ defmodule Klife.Connection.Controller do
   defp negotiate_api_versions(%Connection{} = conn, cluster_name) do
     :ok =
       %{headers: %{correlation_id: 0}, content: %{}}
-      |> ApiVersions.serialize_request(0)
+      |> Messages.ApiVersions.serialize_request(0)
       |> Connection.write(conn)
 
     {:ok, received_data} = Connection.read(conn)
-    {:ok, %{content: resp}} = ApiVersions.deserialize_response(received_data, 0)
+    {:ok, %{content: resp}} = Messages.ApiVersions.deserialize_response(received_data, 0)
 
     resp.api_keys
     |> Enum.map(&{&1.api_key, %{min: &1.min_version, max: &1.max_version}})

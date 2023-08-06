@@ -75,7 +75,7 @@ defmodule Klife.Connection.Broker do
     reason
   end
 
-  def send_message_sync(
+  def send_sync(
         message_mod,
         cluster_name,
         broker_id,
@@ -121,7 +121,7 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  def send_message_async(
+  def send_async(
         message_mod,
         cluster_name,
         broker_id,

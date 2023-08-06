@@ -1,19 +1,19 @@
 defmodule Klife.Connection.SystemTest do
   use ExUnit.Case
-  alias Klife.TestUtils
+  alias Klife.Utils
   alias Klife.Connection.Broker
   alias KlifeProtocol.Messages.ApiVersions
 
   def check_broker_connection(cluster_name, broker_id) do
     parent = self()
 
-    assert {:ok, response} = Broker.send_message_sync(ApiVersions, cluster_name, broker_id)
+    assert {:ok, response} = Broker.send_sync(ApiVersions, cluster_name, broker_id)
     assert is_list(response.content.api_keys)
 
-    assert :ok = Broker.send_message_async(ApiVersions, cluster_name, broker_id)
+    assert :ok = Broker.send_async(ApiVersions, cluster_name, broker_id)
 
     assert :ok =
-             Broker.send_message_async(ApiVersions, cluster_name, broker_id, %{}, %{}, fn ->
+             Broker.send_async(ApiVersions, cluster_name, broker_id, %{}, %{}, fn ->
                send(parent, {:ping, broker_id})
              end)
 
@@ -31,7 +31,7 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
 
-    brokers_list = TestUtils.wait_for_broker_connection(cluster_name)
+    brokers_list = Utils.wait_connection!(cluster_name)
     assert length(brokers_list) == 3
 
     Enum.each(brokers_list, &check_broker_connection(cluster_name, &1))
@@ -54,7 +54,7 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
 
-    brokers_list = TestUtils.wait_for_broker_connection(cluster_name)
+    brokers_list = Utils.wait_connection!(cluster_name)
     assert length(brokers_list) == 3
 
     Enum.each(brokers_list, &check_broker_connection(cluster_name, &1))
@@ -95,9 +95,9 @@ defmodule Klife.Connection.SystemTest do
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_2})
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_3})
 
-    brokers_list_1 = TestUtils.wait_for_broker_connection(cluster_name_1)
-    brokers_list_2 = TestUtils.wait_for_broker_connection(cluster_name_2)
-    brokers_list_3 = TestUtils.wait_for_broker_connection(cluster_name_3)
+    brokers_list_1 = Utils.wait_connection!(cluster_name_1)
+    brokers_list_2 = Utils.wait_connection!(cluster_name_2)
+    brokers_list_3 = Utils.wait_connection!(cluster_name_3)
 
     assert length(brokers_list_1) == 3
     assert length(brokers_list_2) == 3
