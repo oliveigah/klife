@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.14.5'
+          otp-version: '26.0'
+      - run: docker-compose -f "test/compose_files/docker-compose.yml" up -d
+      - run: mix deps.get
+      - run: mix compile --warning-as-errors
+      - run: mix test
