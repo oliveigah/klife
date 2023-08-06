@@ -16,7 +16,7 @@ defmodule Klife.Connection.Controller do
   # in order to avoid reaching this limit.
   @max_correlation_counter 200_000_000
   @check_correlation_counter_delay :timer.seconds(300)
-  @check_brokers_delay :timer.seconds(180)
+  @check_cluster_delay :timer.seconds(180)
 
   defstruct [:bootstrap_servers, :cluster_name, :known_brokers, :socket_opts, :bootstrap_conn]
 
@@ -77,7 +77,7 @@ defmodule Klife.Connection.Controller do
 
         Process.send(self(), {:remove_brokers, to_remove}, [])
         Process.send(self(), {:start_brokers, to_start, nil}, [])
-        Process.send_after(self(), :check_cluster, @check_brokers_delay)
+        Process.send_after(self(), :check_cluster, @check_cluster_delay)
         {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
 
       {:error, _reason} ->

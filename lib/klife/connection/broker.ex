@@ -43,29 +43,12 @@ defmodule Klife.Connection.Broker do
     #
     # Since we do not expect this process to restart often
     # it is safe to go with a longer initialization time
-    {_, state} = handle_info(:connect, state)
+    state = do_connect(state)
 
     {:ok, state}
   end
 
-  def handle_info(:connect, %__MODULE__{} = state) do
-    case Connection.new(state.url, Keyword.merge(state.socket_opts, active: :once)) do
-      {:ok, conn} ->
-        :persistent_term.put({__MODULE__, state.cluster_name, state.broker_id}, conn)
-        {:noreply, %__MODULE__{state | conn: conn, reconnect_attempts: 0}}
-
-      {:error, _reason} = res ->
-        :persistent_term.erase({__MODULE__, state.cluster_name, state.broker_id})
-
-        Logger.error("""
-        Error while connecting to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
-        """)
-
-        Process.send_after(self(), :connect, get_reconnect_delay(state))
-
-        {:noreply, %__MODULE__{state | reconnect_attempts: state.reconnect_attempts + 1}}
-    end
-  end
+  def handle_info(:connect, %__MODULE__{} = state), do: {:noreply, do_connect(state)}
 
   def handle_info({:tcp, _port, msg}, %__MODULE__{} = state) do
     :ok = reply_message(msg, state.cluster_name, state.conn)
@@ -230,6 +213,23 @@ defmodule Klife.Connection.Broker do
 
       %Connection{} = conn ->
         conn
+    end
+  end
+
+  defp do_connect(%__MODULE__{} = state) do
+    case Connection.new(state.url, Keyword.merge(state.socket_opts, active: :once)) do
+      {:ok, conn} ->
+        :persistent_term.put({__MODULE__, state.cluster_name, state.broker_id}, conn)
+        %__MODULE__{state | conn: conn, reconnect_attempts: 0}
+
+      {:error, _reason} = res ->
+        Logger.error("""
+        Error while connecting to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
+        """)
+
+        Process.send_after(self(), :connect, get_reconnect_delay(state))
+
+        %__MODULE__{state | reconnect_attempts: state.reconnect_attempts + 1}
     end
   end
 end

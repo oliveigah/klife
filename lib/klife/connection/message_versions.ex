@@ -1,9 +1,7 @@
 defmodule Klife.Connection.MessageVersions do
   alias KlifeProtocol.Messages, as: M
 
-  def get(cluster_name, mod) do
-    :persistent_term.get({:api_version, mod, cluster_name})
-  end
+  def get(cluster_name, mod), do: :persistent_term.get({:api_version, mod, cluster_name})
 
   def setup_versions(cluster_data, cluster_name),
     do: do_setup_versions(client_versions(), cluster_data, cluster_name)
@@ -47,7 +45,6 @@ defmodule Klife.Connection.MessageVersions do
     ]
   end
 
-  defp set_api_version(cluster_name, mod, version) do
-    :persistent_term.put({:api_version, mod, cluster_name}, version)
-  end
+  defp set_api_version(cluster_name, mod, version),
+    do: :persistent_term.put({:api_version, mod, cluster_name}, version)
 end

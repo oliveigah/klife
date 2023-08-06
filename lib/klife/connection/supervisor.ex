@@ -11,6 +11,7 @@ defmodule Klife.Connection.Supervisor do
   @impl true
   def init(opts) do
     cluster_name = Keyword.fetch!(opts, :cluster_name)
+
     children = [
       {Klife.Connection.BrokerSupervisor, opts},
       {Klife.Connection.Controller, opts},
