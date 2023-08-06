@@ -1,5 +1,5 @@
 defmodule Klife.Connection.MessageVersions do
-  alias KlifeProtocol.Messages, as: P
+  alias KlifeProtocol.Messages, as: M
 
   def get(cluster_name, mod) do
     :persistent_term.get({:api_version, mod, cluster_name})
@@ -41,9 +41,9 @@ defmodule Klife.Connection.MessageVersions do
 
   defp client_versions do
     [
-      {P.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
-      {P.CreateTopics, %{min: 0, max: 0, should_raise?: true}},
-      {P.Metadata, %{min: 1, max: 1, should_raise?: true}}
+      {M.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
+      {M.CreateTopics, %{min: 0, max: 0, should_raise?: true}},
+      {M.Metadata, %{min: 1, max: 1, should_raise?: true}}
     ]
   end
 
