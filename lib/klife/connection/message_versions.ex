@@ -40,8 +40,9 @@ defmodule Klife.Connection.MessageVersions do
   defp client_versions do
     [
       {M.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
-      {M.CreateTopics, %{min: 0, max: 0, should_raise?: true}},
-      {M.Metadata, %{min: 1, max: 1, should_raise?: true}}
+      {M.CreateTopics, %{min: 0, max: 0, should_raise?: false}},
+      {M.Metadata, %{min: 1, max: 1, should_raise?: true}},
+      {M.Produce, %{min: 0, max: 0, should_raise?: false}}
     ]
   end
 

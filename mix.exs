@@ -27,6 +27,7 @@ defmodule Klife.MixProject do
   defp deps do
     [
       {:klife_protocol, "~> 0.2"},
+      {:nimble_options, "~> 1.0"},
       # Benchmarks and tests
       {:benchee, "~> 1.0", only: :dev, runtime: false}
     ]

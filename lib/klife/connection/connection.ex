@@ -4,8 +4,8 @@ defmodule Klife.Connection do
   defstruct [:socket, :host, :port, :connect_timeout, :read_timeout, :ssl]
 
   @default_opts %{
-    connect_timeout: :timer.seconds(5),
-    read_timeout: :timer.seconds(5),
+    connect_timeout: :timer.seconds(15),
+    read_timeout: :timer.seconds(15),
     ssl: false,
     ssl_opts: %{}
   }

@@ -25,8 +25,8 @@ defmodule Klife.Application do
       cluster_name = Keyword.fetch!(cluster_opts, :cluster_name)
 
       [
-        {Klife.Connection.Supervisor, [{:cluster_name, cluster_name} | cluster_opts[:connection]]}
-        # {Klife.Producer.Controller, cluster_opts}
+        {Klife.Connection.Supervisor, [{:cluster_name, cluster_name} | cluster_opts[:connection]]},
+        {Klife.Producer.Supervisor, cluster_opts}
       ]
     end)
   end
