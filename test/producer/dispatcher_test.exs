@@ -20,7 +20,7 @@ defmodule Klife.Producer.DispatcherTest do
         compression_type: :none,
         delivery_timeout_ms: 60000,
         enable_idempotence: true,
-        linger_ms: 1000,
+        linger_ms: 10_000,
         max_inflight_requests: 2,
         max_retries: :infinity,
         producer_name: :my_batch_producer,
@@ -28,13 +28,16 @@ defmodule Klife.Producer.DispatcherTest do
         retry_backoff_ms: 1000
       },
       broker_id: 1002,
-      current_batch: %{}
+      current_batch: %{},
+      last_batch_sent_at: System.monotonic_time(:millisecond),
+      in_flight_queue: [nil, nil],
+      current_waiting_pids: %{}
     }
 
-    assert {:reply, :ok, new_state} =
-             Dispatcher.handle_call({:produce, rec, "topic_a", 0}, self(), state)
+    assert {:noreply, new_state} =
+             Dispatcher.handle_call({:produce_sync, rec, "my_topic", 0}, self(), state)
 
-    assert [inserted_rec_1] = new_state.current_batch[{"topic_a", 0}].records
+    assert [inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -52,10 +55,10 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key2", value: "header_value2"}]
       }
 
-    assert {:reply, :ok, new_state} =
-             Dispatcher.handle_call({:produce, rec, "topic_a", 0}, self(), new_state)
+    assert {:noreply, new_state} =
+             Dispatcher.handle_call({:produce_sync, rec, "my_topic", 0}, self(), new_state)
 
-    assert [inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"topic_a", 0}].records
+    assert [inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -73,12 +76,12 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key3", value: "header_value3"}]
       }
 
-    assert {:reply, :ok, new_state} =
-             Dispatcher.handle_call({:produce, rec, "topic_a", 1}, self(), new_state)
+    assert {:noreply, new_state} =
+             Dispatcher.handle_call({:produce_sync, rec, "my_topic", 1}, self(), new_state)
 
-    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"topic_a", 0}].records
+    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
 
-    assert [inserted_rec_3] = new_state.current_batch[{"topic_a", 1}].records
+    assert [inserted_rec_3] = new_state.current_batch[{"my_topic", 1}].records
 
     assert %{
              value: ^rec_val,
@@ -96,12 +99,12 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key4", value: "header_value4"}]
       }
 
-    assert {:reply, :ok, new_state} =
-             Dispatcher.handle_call({:produce, rec, "topic_b", 0}, self(), new_state)
+    assert {:noreply, new_state} =
+             Dispatcher.handle_call({:produce_sync, rec, "topic_b", 0}, self(), new_state)
 
-    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"topic_a", 0}].records
+    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
 
-    assert [^inserted_rec_3] = new_state.current_batch[{"topic_a", 1}].records
+    assert [^inserted_rec_3] = new_state.current_batch[{"my_topic", 1}].records
 
     assert [inserted_rec_4] = new_state.current_batch[{"topic_b", 0}].records
 

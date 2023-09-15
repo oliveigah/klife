@@ -7,6 +7,9 @@ defmodule Klife.Application do
 
   @impl true
   def start(_type, _args) do
+    # TODO: Refactor and rethink auto topic creation feature
+    create_topics()
+
     children = [
       Klife.ProcessRegistry,
       handle_clusters()
@@ -23,11 +26,33 @@ defmodule Klife.Application do
     |> Application.fetch_env!(:clusters)
     |> Enum.map(fn cluster_opts ->
       cluster_name = Keyword.fetch!(cluster_opts, :cluster_name)
+      conn_opts = [{:cluster_name, cluster_name} | cluster_opts[:connection]]
+      producer_opts = Keyword.delete(cluster_opts, :connection)
 
       [
-        {Klife.Connection.Supervisor, [{:cluster_name, cluster_name} | cluster_opts[:connection]]},
-        {Klife.Producer.Supervisor, cluster_opts}
+        {Klife.Connection.Supervisor, conn_opts},
+        {Klife.Producer.Supervisor, producer_opts}
       ]
     end)
+  end
+
+  defp create_topics() do
+    do_create_topics(System.monotonic_time())
+  end
+
+  defp do_create_topics(init_time) do
+    case Klife.Utils.create_topics!() do
+      :ok ->
+        :ok
+
+      :error ->
+        now = System.monotonic_time(:millisecond)
+
+        if now - init_time > :timer.seconds(15) do
+          raise "Timeout while creating topics"
+        else
+          do_create_topics(init_time)
+        end
+    end
   end
 end

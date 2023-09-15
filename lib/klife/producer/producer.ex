@@ -49,21 +49,23 @@ defmodule Klife.Producer do
     filtered_args = Map.take(args_map, Map.keys(base))
     state = Map.merge(base, filtered_args)
 
-    :persistent_term.put({__MODULE__, state.cluster_name, state.producer_name}, state)
+    state.cluster_name
+    |> ProducerController.get_topics_and_partitions_for_producer(state.producer_name)
+    |> Enum.map(fn {topic, _partition} -> topic end)
+    |> Enum.uniq()
+    |> Enum.each(fn topic ->
+      :persistent_term.put({__MODULE__, state.cluster_name, topic}, state)
+    end)
 
     :ok = init_dispatchers(state)
 
     {:ok, state}
   end
 
-  def get_producer_config(cluster_name, producer_name) do
-    :persistent_term.get({__MODULE__, cluster_name, producer_name})
-  end
-
   def produce_sync(record, topic, partition, cluster_name) do
-    producer = ProducerController.get_producer_for_topic(cluster_name, topic)
     broker_id = ProducerController.get_broker_id(cluster_name, topic, partition)
-    Dispatcher.produce(record, topic, partition, producer, broker_id, cluster_name)
+    pconfig = get_producer_for_topic(cluster_name, topic)
+    Dispatcher.produce_sync(record, topic, partition, pconfig, broker_id, cluster_name)
   end
 
   defp init_dispatchers(%__MODULE__{linger_ms: 0} = state) do
@@ -107,4 +109,7 @@ defmodule Klife.Producer do
       end
     end)
   end
+
+  defp get_producer_for_topic(cluster_name, topic),
+    do: :persistent_term.get({__MODULE__, cluster_name, topic})
 end

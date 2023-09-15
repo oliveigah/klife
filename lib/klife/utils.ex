@@ -1,6 +1,6 @@
 defmodule Klife.Utils do
-  alias Klife.Connection.Broker
-  alias KlifeProtocol.Messages
+  # TODO: Everything that is in here must be moved to a proper place
+  require Logger
 
   def wait_connection!(cluster_name, timeout \\ :timer.seconds(5)) do
     deadline = System.monotonic_time() + System.convert_time_unit(timeout, :millisecond, :native)
@@ -22,52 +22,79 @@ defmodule Klife.Utils do
     end
   end
 
-  def create_topics!(topics, cluster_name) do
-    topics_input =
-      Enum.map(topics, fn input ->
+  # TODO: Refactor and think about topic auto creation feature
+  # right now there is a bug when the Connection system intialize before
+  # the topic are created, thats why we need to create a connection from
+  # scratch here. Must solve it later.
+  def create_topics!() do
+    :klife
+    |> Application.fetch_env!(:clusters)
+    |> Enum.map(fn cluster_opts ->
+      socker_opts = cluster_opts[:connection][:socket_opts]
+
+      {:ok, conn} =
+        Klife.Connection.new(
+          cluster_opts[:connection][:bootstrap_servers] |> List.first(),
+          socker_opts
+        )
+
+      {:ok, %{brokers: brokers_list, controller: controller_id}} =
+        Klife.Connection.Controller.get_cluster_info(conn)
+
+      {_id, url} = Enum.find(brokers_list, fn {id, _} -> id == controller_id end)
+
+      {:ok, new_conn} = Klife.Connection.new(url, socker_opts)
+
+      topics_input =
+        Enum.map(cluster_opts[:topics], fn input ->
+          %{
+            name: input[:name],
+            num_partitions: 3,
+            replication_factor: 1,
+            assignments: [],
+            configs: []
+          }
+        end)
+
+      :ok =
         %{
-          name: input[:name],
-          num_partitions: 3,
-          replication_factor: 2,
-          assignments: [],
-          configs: []
+          content: %{
+            topics: topics_input,
+            timeout_ms: 15_000
+          },
+          headers: %{correlation_id: 123}
         }
-      end)
+        |> KlifeProtocol.Messages.CreateTopics.serialize_request(0)
+        |> Klife.Connection.write(new_conn)
 
-    content = %{
-      topics: topics_input,
-      timeout_ms: 5_000
-    }
+      {:ok, received_data} = Klife.Connection.read(new_conn)
 
-    result =
-      Broker.send_sync(
-        Messages.CreateTopics,
-        cluster_name,
-        :controller,
-        content,
-        %{client_id: "klife.topic_creation.#{cluster_name}"}
-      )
+      KlifeProtocol.Messages.CreateTopics.deserialize_response(received_data, 0)
+      |> case do
+        {:ok, %{content: content}} ->
+          case Enum.filter(content.topics, fn e -> e.error_code not in [0, 36] end) do
+            [] ->
+              :ok
 
-    case result do
-      {:ok, %{content: content}} ->
-        case Enum.filter(content.topics, fn e -> e.error_code not in [0, 36] end) do
-          [] ->
-            :ok
+            err ->
+              {:error, err}
+          end
 
-          err ->
-            raise "
-          Error while creating topics:
+        err ->
+          raise "
+            Unexpected error while creating topics:
 
-          #{inspect(err)}
-          "
-        end
+            #{inspect(err)}
+            "
+      end
+    end)
+    |> Enum.all?(fn e -> e == :ok end)
+    |> case do
+      true ->
+        :ok
 
-      err ->
-        raise "
-        Unexpected error while creating topics:
-
-        #{inspect(err)}
-        "
+      false ->
+        :error
     end
   end
 end

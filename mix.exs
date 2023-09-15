@@ -29,7 +29,8 @@ defmodule Klife.MixProject do
       {:klife_protocol, "~> 0.2"},
       {:nimble_options, "~> 1.0"},
       # Benchmarks and tests
-      {:benchee, "~> 1.0", only: :dev, runtime: false}
+      {:benchee, "~> 1.0", only: :dev, runtime: false},
+      {:kafka_ex, "~> 0.11", only: :dev}
     ]
   end
 end

@@ -10,7 +10,9 @@ defmodule Klife.Producer.Supervisor do
 
   @impl true
   def init(opts) do
+    cluster_name = Keyword.fetch!(opts, :cluster_name)
     children = [
+      {Task.Supervisor, name: via_tuple({Klife.Producer.DispatcherTaskSupervisor, cluster_name})},
       {Klife.Producer.ProducerSupervisor, opts},
       {Klife.Producer.DispatcherSupervisor, opts},
       {Klife.Producer.Controller, opts}

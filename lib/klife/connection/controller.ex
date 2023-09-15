@@ -229,6 +229,30 @@ defmodule Klife.Connection.Controller do
   def get_known_brokers(cluster_name),
     do: :persistent_term.get({:known_brokers_ids, cluster_name})
 
+  def get_cluster_info(%Connection{} = conn) do
+    %{
+      headers: %{correlation_id: 0},
+      content: %{include_cluster_authorized_operations: true, topics: []}
+    }
+    |> Messages.Metadata.serialize_request(1)
+    |> Connection.write(conn)
+    |> case do
+      :ok ->
+        {:ok, received_data} = Connection.read(conn)
+
+        {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
+
+        {:ok,
+         %{
+           brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
+           controller: resp.controller_id
+         }}
+
+      {:error, _reason} = res ->
+        res
+    end
+  end
+
   ## PRIVATE FUNCTIONS
 
   defp get_in_flight_messages_table_name(cluster_name),
@@ -253,30 +277,6 @@ defmodule Klife.Connection.Controller do
         Could not connect with any boostrap server provided on configuration.
                     Errors: #{inspect(conn)}
         """)
-  end
-
-  defp get_cluster_info(%Connection{} = conn) do
-    %{
-      headers: %{correlation_id: 0},
-      content: %{include_cluster_authorized_operations: true, topics: []}
-    }
-    |> Messages.Metadata.serialize_request(1)
-    |> Connection.write(conn)
-    |> case do
-      :ok ->
-        {:ok, received_data} = Connection.read(conn)
-
-        {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
-
-        {:ok,
-         %{
-           brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
-           controller: resp.controller_id
-         }}
-
-      {:error, _reason} = res ->
-        res
-    end
   end
 
   defp read_correlation_id(cluster_name) do

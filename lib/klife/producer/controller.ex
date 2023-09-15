@@ -3,6 +3,7 @@ defmodule Klife.Producer.Controller do
 
   import Klife.ProcessRegistry
 
+  require Logger
   alias KlifeProtocol.Messages
   alias Klife.Connection.Broker
   alias Klife.Utils
@@ -47,7 +48,6 @@ defmodule Klife.Producer.Controller do
     Utils.wait_connection!(cluster_name)
 
     send(self(), :check_metadata)
-    send(self(), :init_producers)
 
     {:ok, state}
   end
@@ -80,15 +80,13 @@ defmodule Klife.Producer.Controller do
   @impl true
   def handle_info(:check_metadata, %__MODULE__{} = state) do
     content = %{
-      include_cluster_authorized_operations: false,
       topics: Enum.map(state.topics, fn t -> %{name: t.name} end)
     }
 
     {:ok, %{content: resp}} =
       Broker.send_sync(Messages.Metadata, state.cluster_name, :controller, content)
 
-    # TODO: Avoid impact topics/partition when other topics/partitions return error_code != 0
-    for topic <- resp.topics,
+    for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
         producer_name = get_producer_for_topic(state.cluster_name, topic.name),
         partition <- topic.partitions do
       :persistent_term.put(
@@ -101,16 +99,18 @@ defmodule Klife.Producer.Controller do
       |> :ets.insert({producer_name, {topic.name, partition.partition_index}})
     end
 
+    if Enum.any?(resp.topics, &(&1.error_code != 0)) do
+      Process.send_after(self(), :check_metadata, :timer.seconds(5))
+    else
+      send(self(), :init_producers)
+    end
+
     {:noreply, state}
   end
 
   # Public Interface
   def get_broker_id(cluster_name, topic, partition) do
     :persistent_term.get({__MODULE__, cluster_name, topic, partition})
-  end
-
-  def get_producer_for_topic(cluster_name, topic) do
-    :persistent_term.get({__MODULE__, cluster_name, topic})
   end
 
   def get_topics_and_partitions_for_producer(cluster_name, producer_name) do
@@ -123,4 +123,7 @@ defmodule Klife.Producer.Controller do
 
   defp get_producer_topics_table(cluster_name),
     do: :persistent_term.get({:producer_topics_partitions, cluster_name})
+
+  defp get_producer_for_topic(cluster_name, topic),
+    do: :persistent_term.get({__MODULE__, cluster_name, topic})
 end
