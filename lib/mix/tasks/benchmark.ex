@@ -9,7 +9,7 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test") do
-      rec = %{
+      _rec = %{
         value: "1",
         key: "key_1",
         headers: [%{key: "header_key", value: "header_value"}]
@@ -28,6 +28,7 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test_producer") do
+      create_erlkaf_producer()
       topic = "my_no_batch_topic"
       val = :rand.bytes(1000)
       key = "some_key"
@@ -40,7 +41,7 @@ if Mix.env() in [:dev] do
       Benchee.run(
         %{
           "klife produce_sync" => fn ->
-            {:ok, offset} =
+            {:ok, _offset} =
               Klife.Producer.produce_sync(
                 record,
                 topic,
@@ -49,14 +50,22 @@ if Mix.env() in [:dev] do
               )
           end,
           "kafka_ex" => fn ->
-            {:ok, offset} =
+            {:ok, _offset} =
               KafkaEx.produce(topic, Enum.random(0..2), val, key: key, required_acks: -1)
+          end,
+          "erlkaf" => fn ->
+            :ok = :erlkaf.produce(:bench_producer, topic, key, val)
           end
         },
         time: 10,
         memory_time: 2,
         parallel: 10
       )
+    end
+
+    defp create_erlkaf_producer() do
+      :ok = :erlkaf.start()
+      :ok = :erlkaf.create_producer(:bench_producer, Application.get_env(:erlkaf, :config))
     end
   end
 end
