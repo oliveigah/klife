@@ -28,7 +28,6 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test_producer") do
-      create_erlkaf_producer()
       topic = "my_no_batch_topic"
       val = :rand.bytes(1000)
       key = "some_key"
@@ -37,6 +36,8 @@ if Mix.env() in [:dev] do
         value: val,
         key: key
       }
+
+      create_erlkaf_producer(topic)
 
       Benchee.run(
         %{
@@ -54,7 +55,7 @@ if Mix.env() in [:dev] do
               KafkaEx.produce(topic, Enum.random(0..2), val, key: key, required_acks: -1)
           end,
           "erlkaf" => fn ->
-            :ok = :erlkaf.produce(:bench_producer, topic, key, val)
+            :ok = :erlkaf.produce(:bench_producer, topic, Enum.random(0..2), key, val, :undefined)
           end
         },
         time: 10,
@@ -63,9 +64,10 @@ if Mix.env() in [:dev] do
       )
     end
 
-    defp create_erlkaf_producer() do
+    defp create_erlkaf_producer(topic) do
       :ok = :erlkaf.start()
       :ok = :erlkaf.create_producer(:bench_producer, Application.get_env(:erlkaf, :config))
+      :ok = :erlkaf.create_topic(:bench_producer, topic, [{:request_required_acks, -1}])
     end
   end
 end
