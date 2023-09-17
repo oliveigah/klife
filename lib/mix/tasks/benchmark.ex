@@ -8,27 +8,33 @@ if Mix.env() in [:dev] do
       apply(Mix.Tasks.Benchmark, :do_run_bench, args)
     end
 
-    def do_run_bench("test") do
-      rec = %{
-        value: "1",
-        key: "key_1",
-        headers: [%{key: "header_key", value: "header_value"}]
-      }
+    defp definition(%{a: a, b: b, c: c}), do: a + b + c
 
-      :persistent_term.put({:some, :key}, Application.fetch_env!(:klife, :clusters))
+    defp inside(map) do
+      %{a: a, b: b, c: c} = map
+      a + b + c
+    end
+
+    defp no_match(map) do
+      map.a + map.b + map.c
+    end
+
+    def do_run_bench("test") do
+      input = %{a: 1, b: 2, c: 3}
 
       Benchee.run(
         %{
-          "app_env" => fn -> Application.fetch_env!(:klife, :clusters) end,
-          "persistent_term" => fn -> :persistent_term.get({:some, :key}) end
+          "definition" => fn -> Enum.each(1..1000, fn _ -> definition(input) end) end,
+          "inside" => fn -> Enum.each(1..1000, fn _ -> inside(input) end) end,
+          "no_match" => fn -> Enum.each(1..1000, fn _ -> no_match(input) end) end
         },
         time: 10,
         memory_time: 2
       )
     end
 
-    def do_run_bench("test_producer") do
-      topic = "my_no_batch_topic"
+    def do_run_bench("test_producer_sync", parallel) do
+      topic = "benchmark_topic"
       val = :rand.bytes(1000)
       key = "some_key"
 
@@ -39,23 +45,33 @@ if Mix.env() in [:dev] do
 
       Benchee.run(
         %{
-          "klife produce_sync" => fn ->
+          "klife" => fn ->
             {:ok, offset} =
               Klife.Producer.produce_sync(
                 record,
                 topic,
-                Enum.random(0..2),
+                Enum.random(0..11),
                 :my_test_cluster_1
               )
           end,
           "kafka_ex" => fn ->
             {:ok, offset} =
-              KafkaEx.produce(topic, Enum.random(0..2), val, key: key, required_acks: -1)
+              KafkaEx.produce(topic, Enum.random(0..11), val, key: key, required_acks: -1)
+          end,
+          "brod" => fn ->
+            {:ok, offset} =
+              :brod.produce_sync_offset(
+                :kafka_client,
+                topic,
+                Enum.random(0..11),
+                key,
+                val
+              )
           end
         },
-        time: 10,
+        time: 15,
         memory_time: 2,
-        parallel: 10
+        parallel: parallel |> String.to_integer()
       )
     end
   end

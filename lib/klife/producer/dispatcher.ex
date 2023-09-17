@@ -15,8 +15,11 @@ defmodule Klife.Producer.Dispatcher do
     :current_batch,
     :current_waiting_pids,
     :current_base_time,
+    :current_estimated_size,
     :last_batch_sent_at,
-    :in_flight_queue
+    :in_flight_pool,
+    :next_send_msg_ref,
+    :batch_queue
   ]
 
   def start_link(args) do
@@ -33,22 +36,26 @@ defmodule Klife.Producer.Dispatcher do
 
   def init(args) do
     args_map = Map.new(args)
-    max_in_flight = args_map.producer_config.max_inflight_requests
+    max_in_flight = args_map.producer_config.max_in_flight_requests
     linger_ms = args_map.producer_config.linger_ms
+
+    next_send_msg_ref =
+      if linger_ms > 0,
+        do: Process.send_after(self(), :send_to_broker, linger_ms),
+        else: nil
 
     base = %__MODULE__{
       current_batch: %{},
       current_waiting_pids: %{},
       current_base_time: nil,
+      current_estimated_size: 0,
+      batch_queue: :queue.new(),
       last_batch_sent_at: System.monotonic_time(:millisecond),
-      in_flight_queue: Enum.map(1..max_in_flight, fn _ -> nil end)
+      in_flight_pool: Enum.map(1..max_in_flight, fn _ -> nil end),
+      next_send_msg_ref: next_send_msg_ref
     }
 
     state = %__MODULE__{} = Map.merge(base, args_map)
-
-    if linger_ms > 0 do
-      Process.send_after(self(), :send_to_broker, linger_ms)
-    end
 
     {:ok, state}
   end
@@ -56,45 +63,59 @@ defmodule Klife.Producer.Dispatcher do
   def produce_sync(record, topic, partition, %Producer{} = pconfig, broker_id, cluster_name) do
     pconfig
     |> get_process_name(broker_id, topic, partition, cluster_name)
-    |> GenServer.call({:produce_sync, record, topic, partition}, pconfig.delivery_timeout_ms)
+    |> GenServer.call(
+      {:produce_sync, record, topic, partition, estimate_record_size(record)},
+      pconfig.delivery_timeout_ms
+    )
   end
 
-  def handle_call({:produce_sync, record, topic, partition}, from, %__MODULE__{} = state) do
+  def handle_call(
+        {:produce_sync, record, topic, partition, rec_size},
+        {pid, _tag},
+        %__MODULE__{} = state
+      ) do
     %{
-      producer_config: %{linger_ms: linger_ms} = pconfig,
-      current_batch: current_batch,
+      producer_config: %{linger_ms: linger_ms},
       last_batch_sent_at: last_batch_sent_at,
-      in_flight_queue: in_flight_queue,
-      current_waiting_pids: current_waiting_pids
+      in_flight_pool: in_flight_pool,
+      batch_queue: batch_queue
     } = state
 
     now = System.monotonic_time(:millisecond)
-    queue_position = Enum.find_index(in_flight_queue, &is_nil/1)
+    pool_idx = Enum.find_index(in_flight_pool, &is_nil/1)
 
-    new_state =
-      %{
-        state
-        | current_batch: add_record_to_batch(current_batch, record, topic, partition, pconfig),
-          current_waiting_pids: add_waiting_pid(current_waiting_pids, from, topic, partition)
-      }
-      |> case do
-        %{current_base_time: nil} = state ->
-          %{state | current_base_time: now}
-
-        state ->
-          state
-      end
-
-    on_time = now - last_batch_sent_at >= linger_ms
-    queue_available = is_number(queue_position)
+    on_time? = now - last_batch_sent_at >= linger_ms
+    request_in_flight_available? = is_number(pool_idx)
+    batch_queue_is_empty? = :queue.is_empty(batch_queue)
 
     cond do
-      on_time and queue_available ->
-        {:noreply, send_batch_to_broker(new_state, queue_position)}
+      not on_time? ->
+        {:reply, :ok, add_record(state, record, topic, partition, pid, rec_size)}
 
-      true ->
-        Process.send_after(self(), :send_to_broker, :timer.seconds(1))
-        {:noreply, new_state}
+      not request_in_flight_available? ->
+        new_state =
+          state
+          |> add_record(record, topic, partition, pid, rec_size)
+          |> schedule_dispatch(20)
+
+        {:reply, :ok, new_state}
+
+      batch_queue_is_empty? ->
+        new_sate =
+          state
+          |> add_record(record, topic, partition, pid, rec_size)
+          |> dispatch_to_broker(pool_idx)
+
+        {:reply, :ok, new_sate}
+
+      not batch_queue_is_empty? ->
+        new_sate =
+          state
+          |> add_record(record, topic, partition, pid, rec_size)
+          |> dispatch_to_broker(pool_idx)
+          |> schedule_dispatch(20)
+
+        {:reply, :ok, new_sate}
     end
   end
 
@@ -102,57 +123,198 @@ defmodule Klife.Producer.Dispatcher do
     %{
       producer_config: %{linger_ms: linger_ms},
       last_batch_sent_at: last_batch_sent_at,
-      in_flight_queue: in_flight_queue
+      in_flight_pool: in_flight_pool,
+      batch_queue: batch_queue
     } = state
 
     now = System.monotonic_time(:millisecond)
-    queue_position = Enum.find_index(in_flight_queue, &is_nil/1)
+    pool_idx = Enum.find_index(in_flight_pool, &is_nil/1)
 
-    on_time = now - last_batch_sent_at >= linger_ms
-    queue_available = is_number(queue_position)
-    batch_is_empty = state.current_batch == %{}
+    on_time? = now - last_batch_sent_at >= linger_ms
+    in_flight_available? = is_number(pool_idx)
+    has_batch_on_queue? = not :queue.is_empty(batch_queue)
+    should_reschedule? = linger_ms > 0 or has_batch_on_queue?
+
+    new_state = %{state | next_send_msg_ref: nil}
 
     cond do
-      batch_is_empty ->
-        Process.send_after(self(), :send_to_broker, linger_ms)
-        {:noreply, state}
+      not on_time? ->
+        {:noreply, schedule_dispatch(new_state, linger_ms - (now - last_batch_sent_at))}
 
-      not on_time ->
-        Process.send_after(self(), :send_to_broker, linger_ms - (now - last_batch_sent_at))
-        {:noreply, state}
+      not in_flight_available? ->
+        {:noreply, schedule_dispatch(new_state, 20)}
 
-      on_time and queue_available ->
-        new_state = send_batch_to_broker(state, queue_position)
-        Process.send_after(self(), :send_to_broker, linger_ms)
+      should_reschedule? ->
+        new_state =
+          new_state
+          |> dispatch_to_broker(pool_idx)
+          |> schedule_dispatch(if has_batch_on_queue?, do: 0, else: linger_ms)
+
         {:noreply, new_state}
 
-      not queue_available ->
-        # TODO: Add warning log here
-        Process.send_after(self(), :send_to_broker, :timer.seconds(1))
-        {:noreply, state}
+      not should_reschedule? ->
+        {:noreply, dispatch_to_broker(new_state, pool_idx)}
     end
   end
 
-  def handle_info({:broker_delivery_success, queue_position, resp}, %__MODULE__{} = state) do
+  def handle_info({:broker_delivery_success, pool_idx}, %__MODULE__{} = state) do
     %__MODULE__{
-      in_flight_queue: in_flight_queue
+      in_flight_pool: in_flight_pool
     } = state
 
-    %{waiting_pids: waiting_pids} = Enum.at(in_flight_queue, queue_position)
-
-    topic_resps = resp.content.responses
-
-    for %{name: topic_name, partition_responses: partition_resps} <- topic_resps,
-        %{base_offset: base_offset, error_code: 0, index: p_index} <- partition_resps do
-      waiting_pids
-      |> Map.get({topic_name, p_index}, [])
-      |> Enum.each(fn {pid, batch_offset} ->
-        GenServer.reply(pid, {:ok, base_offset + batch_offset})
-      end)
-    end
-
-    {:noreply, %{state | in_flight_queue: List.replace_at(in_flight_queue, queue_position, nil)}}
+    {:noreply, %{state | in_flight_pool: List.replace_at(in_flight_pool, pool_idx, nil)}}
   end
+
+  ## State Operations
+
+  def reset_current_data(%__MODULE__{} = state) do
+    %{
+      state
+      | current_batch: %{},
+        current_waiting_pids: %{},
+        current_base_time: nil,
+        current_estimated_size: 0
+    }
+  end
+
+  def move_current_data_to_batch_queue(%__MODULE__{batch_queue: batch_queue} = state) do
+    data_to_queue =
+      Map.take(state, [
+        :current_batch,
+        :current_waiting_pids,
+        :current_base_time,
+        :current_estimated_size
+      ])
+
+    %{state | batch_queue: :queue.in(data_to_queue, batch_queue)}
+    |> reset_current_data()
+  end
+
+  def add_record_to_current_data(
+        %__MODULE__{
+          current_estimated_size: curr_size,
+          producer_config: pconfig,
+          current_batch: curr_batch,
+          current_waiting_pids: curr_pids,
+          current_base_time: curr_base_time
+        } = state,
+        record,
+        topic,
+        partition,
+        pid,
+        estimated_size
+      ) do
+    %{
+      state
+      | current_batch: add_record_to_batch(curr_batch, record, topic, partition, pconfig),
+        current_waiting_pids: add_waiting_pid(curr_pids, pid, topic, partition),
+        current_base_time: curr_base_time || System.monotonic_time(:millisecond),
+        current_estimated_size: curr_size + estimated_size
+    }
+  end
+
+  def add_record(
+        %__MODULE__{
+          producer_config: %{batch_size_bytes: batch_size_bytes},
+          current_estimated_size: current_estimated_size
+        } = state,
+        record,
+        topic,
+        partition,
+        pid,
+        rec_estimated_size
+      ) do
+    if current_estimated_size + rec_estimated_size > batch_size_bytes,
+      do:
+        state
+        |> move_current_data_to_batch_queue()
+        |> add_record_to_current_data(record, topic, partition, pid, rec_estimated_size),
+      else:
+        state
+        |> add_record_to_current_data(record, topic, partition, pid, rec_estimated_size)
+  end
+
+  def dispatch_to_broker(
+        %__MODULE__{
+          producer_config:
+            %{
+              cluster_name: cluster_name,
+              client_id: client_id,
+              acks: acks,
+              request_timeout_ms: request_timeout
+            } = pconfig,
+          broker_id: broker_id,
+          in_flight_pool: in_flight_pool,
+          batch_queue: batch_queue
+        } = state,
+        pool_idx
+      ) do
+    case :queue.out(batch_queue) do
+      {{:value, queued_data}, new_queue} ->
+        {queued_data, new_queue, false}
+
+      {:empty, new_queue} ->
+        if state.current_estimated_size == 0,
+          do: :noop,
+          else: {state, new_queue, true}
+    end
+    |> case do
+      :noop ->
+        state
+
+      {data_to_send, new_batch_queue, sending_from_current?} ->
+        %{
+          current_batch: batch_to_send,
+          current_waiting_pids: waiting_pids,
+          current_base_time: batch_base_time
+        } = data_to_send
+
+        headers = %{client_id: client_id}
+
+        content = %{
+          transactional_id: nil,
+          acks: if(acks == :all, do: -1, else: acks),
+          timeout_ms: request_timeout,
+          topic_data: parse_batch_before_send(batch_to_send)
+        }
+
+        {:ok, task_pid} =
+          Task.Supervisor.start_child(
+            via_tuple({Klife.Producer.DispatcherTaskSupervisor, cluster_name}),
+            __MODULE__,
+            :do_dispatch_to_broker,
+            [
+              pconfig,
+              content,
+              headers,
+              broker_id,
+              self(),
+              waiting_pids,
+              pool_idx,
+              batch_base_time
+            ]
+          )
+
+        new_state = %{
+          state
+          | batch_queue: new_batch_queue,
+            in_flight_pool: List.replace_at(in_flight_pool, pool_idx, task_pid),
+            last_batch_sent_at: System.monotonic_time(:millisecond)
+        }
+
+        if sending_from_current?,
+          do: reset_current_data(new_state),
+          else: new_state
+    end
+  end
+
+  def schedule_dispatch(%__MODULE__{next_send_msg_ref: nil} = state, time),
+    do: %{
+      state
+      | next_send_msg_ref: Process.send_after(self(), :send_to_broker, time)
+    }
+
+  def schedule_dispatch(%__MODULE__{} = state, _), do: state
 
   ## PRIVATE FUNCTIONS
 
@@ -210,15 +372,9 @@ defmodule Klife.Producer.Dispatcher do
       | records: [new_rec | batch.records],
         records_length: batch.records_length + 1,
         last_offset_delta: batch.last_offset_delta + 1,
-        max_timestamp: now
+        max_timestamp: now,
+        base_timestamp: min(batch.base_timestamp, now)
     }
-    |> case do
-      %{base_timestamp: nil} = new_batch ->
-        %{new_batch | base_timestamp: now}
-
-      new_batch ->
-        new_batch
-    end
   end
 
   defp add_waiting_pid(waiting_pids, new_pid, topic, partition) do
@@ -231,62 +387,14 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  def send_batch_to_broker(%__MODULE__{} = state, queue_position) do
-    %__MODULE__{
-      producer_config:
-        %{
-          cluster_name: cluster_name,
-          client_id: client_id,
-          acks: acks,
-          request_timeout_ms: request_timeout
-        } = pconfig,
-      current_batch: current_batch,
-      broker_id: broker_id,
-      in_flight_queue: in_flight_queue,
-      current_waiting_pids: current_waiting_pids
-    } = state
-
-    headers = %{client_id: client_id}
-
-    content = %{
-      transactional_id: nil,
-      acks: if(acks == :all, do: -1, else: acks),
-      timeout_ms: request_timeout,
-      topic_data: parse_batch_before_send(current_batch)
-    }
-
-    {:ok, task_pid} =
-      Task.Supervisor.start_child(
-        via_tuple({Klife.Producer.DispatcherTaskSupervisor, cluster_name}),
-        __MODULE__,
-        :do_send_to_broker,
-        [pconfig, content, headers, broker_id, self(), queue_position, state.current_base_time]
-      )
-
-    new_in_flight_queue =
-      List.replace_at(in_flight_queue, queue_position, %{
-        batch: current_batch,
-        waiting_pids: current_waiting_pids,
-        task_pid: task_pid
-      })
-
-    %{
-      state
-      | in_flight_queue: new_in_flight_queue,
-        current_batch: %{},
-        current_waiting_pids: %{},
-        current_base_time: nil,
-        last_batch_sent_at: System.monotonic_time(:millisecond)
-    }
-  end
-
-  def do_send_to_broker(
+  def do_dispatch_to_broker(
         pconfig,
         content,
         headers,
         broker_id,
         callback_pid,
-        queue_position,
+        delivery_confirmation_pids,
+        pool_idx,
         base_time
       ) do
     now = System.monotonic_time(:millisecond)
@@ -303,24 +411,35 @@ defmodule Klife.Producer.Dispatcher do
       case Broker.send_sync(Messages.Produce, cluster_name, broker_id, content, headers) do
         {:ok, resp} ->
           # TODO: check non retryable errors and partial errors
-          send(callback_pid, {:broker_delivery_success, queue_position, resp})
+          topic_resps = resp.content.responses
+
+          for %{name: topic_name, partition_responses: partition_resps} <- topic_resps,
+              %{base_offset: base_offset, error_code: 0, index: p_index} <- partition_resps do
+            delivery_confirmation_pids
+            |> Map.get({topic_name, p_index}, [])
+            |> Enum.each(fn {pid, batch_offset} ->
+              send(pid, {:klife_produce_sync, :ok, base_offset + batch_offset})
+            end)
+          end
+
+          send(callback_pid, {:broker_delivery_success, pool_idx})
 
         _err ->
           Process.sleep(retry_ms)
 
-          do_send_to_broker(
+          do_dispatch_to_broker(
             pconfig,
             content,
             headers,
             broker_id,
             callback_pid,
-            queue_position,
+            delivery_confirmation_pids,
+            pool_idx,
             base_time
           )
       end
     else
-      IO.inspect("ERROR")
-      send(callback_pid, {:broker_delivery_error, queue_position, :timeout})
+      send(callback_pid, {:broker_delivery_error, pool_idx, :timeout})
     end
   end
 
@@ -360,4 +479,18 @@ defmodule Klife.Producer.Dispatcher do
        ) do
     via_tuple({__MODULE__, cluster_name, broker_id, pname})
   end
+
+  defp estimate_record_size(record) do
+    # 50 extra bytes to account for other fields of the protocol
+    Enum.reduce(record, 50, fn {k, v}, acc ->
+      acc + do_estimate_size(k, v)
+    end)
+  end
+
+  defp do_estimate_size(_k, nil), do: 0
+
+  defp do_estimate_size(_k, v) when is_list(v),
+    do: Enum.reduce(v, 0, fn i, acc -> acc + estimate_record_size(i) end)
+
+  defp do_estimate_size(_k, v) when is_binary(v), do: byte_size(v)
 end

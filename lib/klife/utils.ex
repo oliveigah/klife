@@ -1,7 +1,5 @@
 defmodule Klife.Utils do
   # TODO: Everything that is in here must be moved to a proper place
-  require Logger
-
   def wait_connection!(cluster_name, timeout \\ :timer.seconds(5)) do
     deadline = System.monotonic_time() + System.convert_time_unit(timeout, :millisecond, :native)
     do_wait_connection!(cluster_name, deadline)
@@ -49,8 +47,8 @@ defmodule Klife.Utils do
         Enum.map(cluster_opts[:topics], fn input ->
           %{
             name: input[:name],
-            num_partitions: 3,
-            replication_factor: 1,
+            num_partitions: 12,
+            replication_factor: 2,
             assignments: [],
             configs: []
           }

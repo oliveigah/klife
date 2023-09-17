@@ -14,13 +14,13 @@ defmodule Klife.Producer do
     client_id: [type: :string],
     acks: [type: {:in, [:all, 0, 1]}, default: :all],
     linger_ms: [type: :non_neg_integer, default: 0],
-    batch_size_bytes: [type: :non_neg_integer, default: 32_000],
+    batch_size_bytes: [type: :non_neg_integer, default: 512_000],
     delivery_timeout_ms: [type: :non_neg_integer, default: :timer.minutes(1)],
     request_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(15)],
     retry_backoff_ms: [type: :non_neg_integer, default: :timer.seconds(1)],
     max_retries: [type: :timeout, default: :infinity],
     compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none],
-    max_inflight_requests: [type: :non_neg_integer, default: 1],
+    max_in_flight_requests: [type: :non_neg_integer, default: 1],
     enable_idempotence: [type: :boolean, default: true]
   ]
 
@@ -65,7 +65,14 @@ defmodule Klife.Producer do
   def produce_sync(record, topic, partition, cluster_name) do
     broker_id = ProducerController.get_broker_id(cluster_name, topic, partition)
     pconfig = get_producer_for_topic(cluster_name, topic)
-    Dispatcher.produce_sync(record, topic, partition, pconfig, broker_id, cluster_name)
+    :ok = Dispatcher.produce_sync(record, topic, partition, pconfig, broker_id, cluster_name)
+
+    receive do
+      {:klife_produce_sync, :ok, offset} -> {:ok, offset}
+    after
+      pconfig.delivery_timeout_ms ->
+        {:error, :timeout}
+    end
   end
 
   defp init_dispatchers(%__MODULE__{linger_ms: 0} = state) do

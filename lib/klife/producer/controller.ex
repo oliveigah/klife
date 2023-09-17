@@ -3,7 +3,6 @@ defmodule Klife.Producer.Controller do
 
   import Klife.ProcessRegistry
 
-  require Logger
   alias KlifeProtocol.Messages
   alias Klife.Connection.Broker
   alias Klife.Utils

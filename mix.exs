@@ -30,7 +30,8 @@ defmodule Klife.MixProject do
       {:nimble_options, "~> 1.0"},
       # Benchmarks and tests
       {:benchee, "~> 1.0", only: :dev, runtime: false},
-      {:kafka_ex, "~> 0.11", only: :dev}
+      {:kafka_ex, "~> 0.13", only: :dev},
+      {:brod, "~> 3.16", only: :dev}
     ]
   end
 end

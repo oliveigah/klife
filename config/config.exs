@@ -21,11 +21,13 @@ config :klife,
           linger_ms: 100
         },
         %{
-          name: :my_no_batch_producer,
-          client_id: "my_no_batch_producer",
+          name: :benchmark_producer,
+          client_id: "my_custom_client_id",
+          max_in_flight_requests: 1
         }
       ],
       topics: [
+        %{name: "benchmark_topic", producer: :benchmark_producer},
         %{
           name: "my_batch_topic",
           enable_produce: true,
@@ -41,8 +43,7 @@ config :klife,
         },
         %{
           name: "my_no_batch_topic",
-          enable_produce: true,
-          producer: :my_no_batch_producer
+          enable_produce: true
         }
       ]
     ]
