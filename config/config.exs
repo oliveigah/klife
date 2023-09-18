@@ -27,7 +27,12 @@ config :klife,
         }
       ],
       topics: [
-        %{name: "benchmark_topic", producer: :benchmark_producer},
+        %{
+          name: "benchmark_topic",
+          producer: :benchmark_producer,
+          num_partitions: 30,
+          replication_factor: 2
+        },
         %{
           name: "my_batch_topic",
           enable_produce: true,

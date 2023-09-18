@@ -236,13 +236,7 @@ defmodule Klife.Producer.Dispatcher do
 
   def dispatch_to_broker(
         %__MODULE__{
-          producer_config:
-            %{
-              cluster_name: cluster_name,
-              client_id: client_id,
-              acks: acks,
-              request_timeout_ms: request_timeout
-            } = pconfig,
+          producer_config: %{cluster_name: cluster_name} = pconfig,
           broker_id: broker_id,
           in_flight_pool: in_flight_pool,
           batch_queue: batch_queue
@@ -269,15 +263,6 @@ defmodule Klife.Producer.Dispatcher do
           current_base_time: batch_base_time
         } = data_to_send
 
-        headers = %{client_id: client_id}
-
-        content = %{
-          transactional_id: nil,
-          acks: if(acks == :all, do: -1, else: acks),
-          timeout_ms: request_timeout,
-          topic_data: parse_batch_before_send(batch_to_send)
-        }
-
         {:ok, task_pid} =
           Task.Supervisor.start_child(
             via_tuple({Klife.Producer.DispatcherTaskSupervisor, cluster_name}),
@@ -285,14 +270,14 @@ defmodule Klife.Producer.Dispatcher do
             :do_dispatch_to_broker,
             [
               pconfig,
-              content,
-              headers,
+              batch_to_send,
               broker_id,
               self(),
               waiting_pids,
               pool_idx,
               batch_base_time
-            ]
+            ],
+            restart: :transient
           )
 
         new_state = %{
@@ -389,48 +374,72 @@ defmodule Klife.Producer.Dispatcher do
 
   def do_dispatch_to_broker(
         pconfig,
-        content,
-        headers,
+        batch_to_send,
         broker_id,
         callback_pid,
         delivery_confirmation_pids,
         pool_idx,
         base_time
       ) do
-    now = System.monotonic_time(:millisecond)
-
     %Producer{
       request_timeout_ms: req_timeout,
       delivery_timeout_ms: delivery_timeout,
+      cluster_name: cluster_name,
       retry_backoff_ms: retry_ms,
-      cluster_name: cluster_name
+      client_id: client_id,
+      acks: acks
     } = pconfig
 
-    # Check if it is safe to retry one more time
+    now = System.monotonic_time(:millisecond)
+
+    headers = %{client_id: client_id}
+
+    content = %{
+      transactional_id: nil,
+      acks: if(acks == :all, do: -1, else: acks),
+      timeout_ms: req_timeout,
+      topic_data: parse_batch_before_send(batch_to_send)
+    }
+
+    # Check if it is safe to send the batch
     if now + req_timeout - base_time < delivery_timeout - :timer.seconds(5) do
-      case Broker.send_sync(Messages.Produce, cluster_name, broker_id, content, headers) do
-        {:ok, resp} ->
-          # TODO: check non retryable errors and partial errors
-          topic_resps = resp.content.responses
+      {:ok, resp} =
+        Broker.send_message(Messages.Produce, cluster_name, broker_id, content, headers)
 
-          for %{name: topic_name, partition_responses: partition_resps} <- topic_resps,
-              %{base_offset: base_offset, error_code: 0, index: p_index} <- partition_resps do
-            delivery_confirmation_pids
-            |> Map.get({topic_name, p_index}, [])
-            |> Enum.each(fn {pid, batch_offset} ->
-              send(pid, {:klife_produce_sync, :ok, base_offset + batch_offset})
-            end)
-          end
+      grouped_results =
+        for %{name: topic_name, partition_responses: partition_resps} <- resp.content.responses,
+            %{error_code: error_code, index: p_index} = p <- partition_resps do
+          {topic_name, p_index, error_code, p[:base_offset]}
+        end
+        |> Enum.group_by(&(elem(&1, 2) == 0))
 
+      success_list = grouped_results[true] || []
+      failure_list = grouped_results[false] || []
+
+      success_list
+      |> Enum.each(fn {topic, partition, 0, base_offset} ->
+        delivery_confirmation_pids
+        |> Map.get({topic, partition}, [])
+        |> Enum.each(fn {pid, batch_offset} ->
+          send(pid, {:klife_produce_sync, :ok, base_offset + batch_offset})
+        end)
+      end)
+
+      case failure_list do
+        [] ->
           send(callback_pid, {:broker_delivery_success, pool_idx})
 
-        _err ->
+        _list ->
+          # TODO: Handle specific errors by code, not just retry all not success
+          new_batch_to_send =
+            batch_to_send
+            |> Map.drop(Enum.map(success_list, fn {t, p, _, _} -> {t, p} end))
+
           Process.sleep(retry_ms)
 
           do_dispatch_to_broker(
             pconfig,
-            content,
-            headers,
+            new_batch_to_send,
             broker_id,
             callback_pid,
             delivery_confirmation_pids,
@@ -481,8 +490,8 @@ defmodule Klife.Producer.Dispatcher do
   end
 
   defp estimate_record_size(record) do
-    # 50 extra bytes to account for other fields of the protocol
-    Enum.reduce(record, 50, fn {k, v}, acc ->
+    # add 80 extra bytes to account for other fields
+    Enum.reduce(record, 80, fn {k, v}, acc ->
       acc + do_estimate_size(k, v)
     end)
   end

@@ -75,16 +75,15 @@ defmodule Klife.Connection.Broker do
     reason
   end
 
-  def send_sync(
+  def send_message(
         message_mod,
         cluster_name,
         broker_id,
         content \\ %{},
-        headers \\ %{}
+        headers \\ %{},
+        opts \\ []
       ) do
     correlation_id = Controller.get_next_correlation_id(cluster_name)
-    broker_id = get_broker_id(broker_id, cluster_name)
-    conn = get_connection(cluster_name, broker_id)
 
     input = %{
       headers: Map.put(headers, :correlation_id, correlation_id),
@@ -92,15 +91,26 @@ defmodule Klife.Connection.Broker do
     }
 
     version = MessageVersions.get(cluster_name, message_mod)
-    serialized_msg = apply(message_mod, :serialize_request, [input, version])
+    data = apply(message_mod, :serialize_request, [input, version])
 
+    if Keyword.get(opts, :async, false),
+      do: send_raw_async(data, correlation_id, broker_id, cluster_name, opts[:callback]),
+      else: send_raw_sync(data, message_mod, correlation_id, broker_id, cluster_name)
+  end
+
+  def send_raw_sync(raw_data, message_mod, correlation_id, broker_id, cluster_name) do
+    broker_id = get_broker_id(broker_id, cluster_name)
+    conn = get_connection(cluster_name, broker_id)
     true = Controller.insert_in_flight(cluster_name, correlation_id)
 
-    case Connection.write(serialized_msg, conn) do
+    case Connection.write(raw_data, conn) do
       :ok ->
         receive do
           {:broker_response, response} ->
-            apply(message_mod, :deserialize_response, [response, version])
+            apply(message_mod, :deserialize_response, [
+              response,
+              MessageVersions.get(cluster_name, message_mod)
+            ])
         after
           conn.read_timeout + 2000 ->
             Controller.take_from_in_flight(cluster_name, correlation_id)
@@ -121,32 +131,15 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  def send_async(
-        message_mod,
-        cluster_name,
-        broker_id,
-        content \\ %{},
-        headers \\ %{},
-        callback \\ nil
-      ) do
-    version = MessageVersions.get(cluster_name, message_mod)
-    correlation_id = Controller.get_next_correlation_id(cluster_name)
+  def send_raw_async(raw_data, correlation_id, broker_id, cluster_name, callback) do
     broker_id = get_broker_id(broker_id, cluster_name)
-
     conn = get_connection(cluster_name, broker_id)
 
-    input = %{
-      headers: Map.put(headers, :correlation_id, correlation_id),
-      content: content
-    }
-
-    serialized_msg = apply(message_mod, :serialize_request, [input, version])
-
-    if is_function(callback) do
+    if is_function(callback) or match?({_m, _f, _a}, callback) do
       true = Controller.insert_in_flight(cluster_name, correlation_id, callback)
     end
 
-    case Connection.write(serialized_msg, conn) do
+    case Connection.write(raw_data, conn) do
       :ok ->
         :ok
 
@@ -176,12 +169,25 @@ defmodule Klife.Connection.Broker do
         #
         # Must revisit this later.
         #
+        # For the producer case the mechanism being used to avoid this is to only
+        # retry a delivery if there is a safe time where the producing process
+        # wont give up in the middle of a request. The rule is:
+        # now + req_timeout - base_time < delivery_timeout - :timer.seconds(5)
+        #
         nil
 
       {^correlation_id, callback} when is_function(callback) ->
         Task.Supervisor.start_child(
           via_tuple({Klife.Connection.CallbackSupervisor, cluster_name}),
-          fn -> callback.() end
+          fn -> callback.(reply) end
+        )
+
+      {^correlation_id, {mod, fun, args}} ->
+        Task.Supervisor.start_child(
+          via_tuple({Klife.Connection.CallbackSupervisor, cluster_name}),
+          mod,
+          fun,
+          [reply, args]
         )
 
       {^correlation_id, waiting_pid} ->

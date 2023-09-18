@@ -47,8 +47,8 @@ defmodule Klife.Utils do
         Enum.map(cluster_opts[:topics], fn input ->
           %{
             name: input[:name],
-            num_partitions: 12,
-            replication_factor: 2,
+            num_partitions: input[:num_partitions] || 12,
+            replication_factor: input[:replication_factor] || 2,
             assignments: [],
             configs: []
           }

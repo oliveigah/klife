@@ -83,7 +83,7 @@ defmodule Klife.Producer.Controller do
     }
 
     {:ok, %{content: resp}} =
-      Broker.send_sync(Messages.Metadata, state.cluster_name, :controller, content)
+      Broker.send_message(Messages.Metadata, state.cluster_name, :controller, content)
 
     for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
         producer_name = get_producer_for_topic(state.cluster_name, topic.name),

@@ -33,7 +33,15 @@ if Mix.env() in [:dev] do
       )
     end
 
-    def do_run_bench("test_producer_sync", parallel) do
+    def do_run_bench("producer_sync", parallel) do
+      max_partition =
+        :klife
+        |> Application.fetch_env!(:clusters)
+        |> List.first()
+        |> Keyword.get(:topics)
+        |> Enum.find(&(&1.name == "benchmark_topic"))
+        |> Map.get(:num_partitions)
+
       topic = "benchmark_topic"
       val = :rand.bytes(1000)
       key = "some_key"
@@ -50,20 +58,23 @@ if Mix.env() in [:dev] do
               Klife.Producer.produce_sync(
                 record,
                 topic,
-                Enum.random(0..11),
+                Enum.random(0..(max_partition - 1)),
                 :my_test_cluster_1
               )
           end,
           "kafka_ex" => fn ->
             {:ok, offset} =
-              KafkaEx.produce(topic, Enum.random(0..11), val, key: key, required_acks: -1)
+              KafkaEx.produce(topic, Enum.random(0..(max_partition - 1)), val,
+                key: key,
+                required_acks: -1
+              )
           end,
           "brod" => fn ->
             {:ok, offset} =
               :brod.produce_sync_offset(
                 :kafka_client,
                 topic,
-                Enum.random(0..11),
+                Enum.random(0..(max_partition - 1)),
                 key,
                 val
               )

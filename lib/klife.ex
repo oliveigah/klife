@@ -4,6 +4,6 @@ defmodule Klife do
 
   def test do
     cluster_name = :my_test_cluster_1
-    {:ok, _} = Broker.send_sync(Messages.ApiVersions, cluster_name, :any)
+    {:ok, _} = Broker.send_message(Messages.ApiVersions, cluster_name, :any, %{}, %{})
   end
 end

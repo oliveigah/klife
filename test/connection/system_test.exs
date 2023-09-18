@@ -7,15 +7,18 @@ defmodule Klife.Connection.SystemTest do
   def check_broker_connection(cluster_name, broker_id) do
     parent = self()
 
-    assert {:ok, response} = Broker.send_sync(ApiVersions, cluster_name, broker_id)
+    assert {:ok, response} = Broker.send_message(ApiVersions, cluster_name, broker_id)
     assert is_list(response.content.api_keys)
 
-    assert :ok = Broker.send_async(ApiVersions, cluster_name, broker_id)
+    assert :ok = Broker.send_message(ApiVersions, cluster_name, broker_id, %{}, %{}, async: true)
 
     assert :ok =
-             Broker.send_async(ApiVersions, cluster_name, broker_id, %{}, %{}, fn ->
-               send(parent, {:ping, broker_id})
-             end)
+             Broker.send_message(ApiVersions, cluster_name, broker_id, %{}, %{},
+               async: true,
+               callback: fn _ ->
+                 send(parent, {:ping, broker_id})
+               end
+             )
 
     assert_receive {:ping, ^broker_id}, :timer.seconds(2)
   end
