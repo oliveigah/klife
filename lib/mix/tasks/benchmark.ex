@@ -43,13 +43,18 @@ if Mix.env() in [:dev] do
         |> Map.get(:num_partitions)
 
       topic = "benchmark_topic"
-      val = :rand.bytes(1000)
+      val = :rand.bytes(4000)
       key = "some_key"
 
       record = %{
         value: val,
         key: key
       }
+
+      # Warmup brod
+      Enum.map(0..(max_partition - 1), fn i ->
+        :brod.produce_sync_offset(:kafka_client, topic, i, key, val)
+      end)
 
       Benchee.run(
         %{
