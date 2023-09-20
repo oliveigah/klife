@@ -4,13 +4,13 @@
 
 ## TODOS
 
-- Add more comprehensive connection system tests
-- How to handle cluster changes system wise?
+- Add more comprehensive system tests
 - Implement Producer
-    - Partitioner
-    - Design async api
-    - Idempotence
+    - Exactly once semantics
+    - Transaction api
+    - Accept more versions of the protocol
+    - Async api
     - Handle cluster changes
-
+    
 - Implement Consumer
 
