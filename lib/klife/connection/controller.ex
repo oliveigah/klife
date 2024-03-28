@@ -80,7 +80,7 @@ defmodule Klife.Connection.Controller do
         {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
 
       {:error, _reason} ->
-        Process.send(self(), :init_bootstrap_conn, [])
+        Process.send_after(self(), :init_bootstrap_conn, 1_000)
         {:noreply, state}
     end
   end
@@ -101,10 +101,12 @@ defmodule Klife.Connection.Controller do
         )
     end)
 
-    :persistent_term.put(
-      {:known_brokers_ids, state.cluster_name},
-      Enum.map(state.known_brokers, &elem(&1, 0))
-    )
+    new_brokers =
+      (state.known_brokers ++ brokers_list)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.uniq()
+
+    :persistent_term.put({:known_brokers_ids, state.cluster_name}, new_brokers)
 
     if from != nil, do: GenServer.reply(from, :ok)
 
@@ -112,12 +114,7 @@ defmodule Klife.Connection.Controller do
   end
 
   def handle_info({:remove_brokers, brokers_list}, %__MODULE__{} = state) do
-    :persistent_term.put(
-      {:known_brokers_ids, state.cluster_name},
-      Enum.map(state.known_brokers -- brokers_list, &elem(&1, 0))
-    )
-
-    Enum.map(brokers_list, fn {broker_id, _url} ->
+    Enum.each(brokers_list, fn {broker_id, _url} ->
       case registry_lookup({Broker, broker_id, state.cluster_name}) do
         [] ->
           :ok
@@ -129,6 +126,10 @@ defmodule Klife.Connection.Controller do
           )
       end
     end)
+
+    new_brokers = Enum.map(state.known_brokers -- brokers_list, &elem(&1, 0))
+
+    :persistent_term.put({:known_brokers_ids, state.cluster_name}, new_brokers)
 
     {:noreply, state}
   end

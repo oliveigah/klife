@@ -96,7 +96,7 @@ defmodule Klife.Producer.Dispatcher do
         new_state =
           state
           |> add_record(record, topic, partition, pid, rec_size)
-          |> schedule_dispatch(20)
+          |> schedule_dispatch(10)
 
         {:reply, :ok, new_state}
 
@@ -113,7 +113,7 @@ defmodule Klife.Producer.Dispatcher do
           state
           |> add_record(record, topic, partition, pid, rec_size)
           |> dispatch_to_broker(pool_idx)
-          |> schedule_dispatch(20)
+          |> schedule_dispatch(10)
 
         {:reply, :ok, new_sate}
     end
@@ -142,7 +142,7 @@ defmodule Klife.Producer.Dispatcher do
         {:noreply, schedule_dispatch(new_state, linger_ms - (now - last_batch_sent_at))}
 
       not in_flight_available? ->
-        {:noreply, schedule_dispatch(new_state, 20)}
+        {:noreply, schedule_dispatch(new_state, 10)}
 
       should_reschedule? ->
         new_state =
@@ -161,6 +161,22 @@ defmodule Klife.Producer.Dispatcher do
     %__MODULE__{
       in_flight_pool: in_flight_pool
     } = state
+
+    {:noreply, %{state | in_flight_pool: List.replace_at(in_flight_pool, pool_idx, nil)}}
+  end
+
+  def handle_info({:broker_delivery_error, pool_idx, :timeout}, %__MODULE__{} = state) do
+    %__MODULE__{
+      in_flight_pool: in_flight_pool
+    } = state
+
+    Logger.error("""
+    Timeout error while produce to broker.
+
+    cluster: #{state.producer_config.cluster_name}
+    broker_id: #{state.broker_id}
+    producer_name: #{state.producer_config.name}
+    """)
 
     {:noreply, %{state | in_flight_pool: List.replace_at(in_flight_pool, pool_idx, nil)}}
   end

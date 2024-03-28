@@ -8,6 +8,7 @@ defmodule Klife.Connection.MessageVersions do
 
   defp do_setup_versions([], _, _), do: :ok
 
+  # TODO: Handle non required messages
   defp do_setup_versions([{mod, client_data} | rest], cluster_map, cluster_name) do
     api_key = apply(mod, :api_key, [])
 
@@ -42,7 +43,8 @@ defmodule Klife.Connection.MessageVersions do
       {M.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
       {M.CreateTopics, %{min: 0, max: 0, should_raise?: false}},
       {M.Metadata, %{min: 1, max: 1, should_raise?: true}},
-      {M.Produce, %{min: 0, max: 0, should_raise?: false}}
+      {M.Produce, %{min: 0, max: 0, should_raise?: false}},
+      {M.InitProducerId, %{min: 0, max: 0, should_raise?: false}}
     ]
   end
 
