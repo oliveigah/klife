@@ -50,7 +50,7 @@ defmodule Klife.Connection.SystemTest do
         ssl: true,
         ssl_opts: [
           verify: :verify_peer,
-          cacertfile: Path.relative("test/compose_files/truststore/ca.crt")
+          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
         ]
       ]
     ]
@@ -81,7 +81,7 @@ defmodule Klife.Connection.SystemTest do
         ssl: true,
         ssl_opts: [
           verify: :verify_peer,
-          cacertfile: Path.relative("test/compose_files/truststore/ca.crt")
+          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
         ]
       ]
     ]
