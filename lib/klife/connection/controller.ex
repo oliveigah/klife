@@ -17,7 +17,15 @@ defmodule Klife.Connection.Controller do
   @check_correlation_counter_delay :timer.seconds(300)
   @check_cluster_delay :timer.seconds(180)
 
-  defstruct [:bootstrap_servers, :cluster_name, :known_brokers, :socket_opts, :bootstrap_conn]
+  defstruct [
+    :bootstrap_servers,
+    :cluster_name,
+    :known_brokers,
+    :socket_opts,
+    :bootstrap_conn,
+    :check_cluster_timer_ref,
+    :check_cluster_waiting_pids
+  ]
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: via_tuple({__MODULE__, opts[:cluster_name]}))
@@ -49,7 +57,9 @@ defmodule Klife.Connection.Controller do
       cluster_name: cluster_name,
       socket_opts: socket_opts,
       known_brokers: [],
-      bootstrap_conn: nil
+      bootstrap_conn: nil,
+      check_cluster_timer_ref: nil,
+      check_cluster_waiting_pids: []
     }
 
     send(self(), :init_bootstrap_conn)
@@ -74,10 +84,11 @@ defmodule Klife.Connection.Controller do
         to_remove = old_brokers -- new_brokers_list
         to_start = new_brokers_list -- old_brokers
 
-        Process.send(self(), {:remove_brokers, to_remove}, [])
-        Process.send(self(), {:start_brokers, to_start, nil}, [])
-        Process.send_after(self(), :check_cluster, @check_cluster_delay)
-        {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
+        Process.send(self(), {:handle_brokers, to_start, to_remove}, [])
+        next_ref = Process.send_after(self(), :check_cluster, @check_cluster_delay)
+
+        {:noreply,
+         %__MODULE__{state | known_brokers: new_brokers_list, check_cluster_timer_ref: next_ref}}
 
       {:error, _reason} ->
         Process.send_after(self(), :init_bootstrap_conn, 1_000)
@@ -85,8 +96,8 @@ defmodule Klife.Connection.Controller do
     end
   end
 
-  def handle_info({:start_brokers, brokers_list, from}, %__MODULE__{} = state) do
-    Enum.each(brokers_list, fn {broker_id, url} ->
+  def handle_info({:handle_brokers, to_start, to_remove}, %__MODULE__{} = state) do
+    Enum.each(to_start, fn {broker_id, url} ->
       broker_opts = [
         socket_opts: state.socket_opts,
         cluster_name: state.cluster_name,
@@ -101,20 +112,7 @@ defmodule Klife.Connection.Controller do
         )
     end)
 
-    new_brokers =
-      (state.known_brokers ++ brokers_list)
-      |> Enum.map(&elem(&1, 0))
-      |> Enum.uniq()
-
-    :persistent_term.put({:known_brokers_ids, state.cluster_name}, new_brokers)
-
-    if from != nil, do: GenServer.reply(from, :ok)
-
-    {:noreply, state}
-  end
-
-  def handle_info({:remove_brokers, brokers_list}, %__MODULE__{} = state) do
-    Enum.each(brokers_list, fn {broker_id, _url} ->
+    Enum.each(to_remove, fn {broker_id, _url} ->
       case registry_lookup({Broker, broker_id, state.cluster_name}) do
         [] ->
           :ok
@@ -127,11 +125,18 @@ defmodule Klife.Connection.Controller do
       end
     end)
 
-    new_brokers = Enum.map(state.known_brokers -- brokers_list, &elem(&1, 0))
+    new_brokers =
+      ((state.known_brokers ++ to_start) -- to_remove)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.uniq()
 
     :persistent_term.put({:known_brokers_ids, state.cluster_name}, new_brokers)
 
-    {:noreply, state}
+    state.check_cluster_waiting_pids
+    |> Enum.reverse()
+    |> Enum.each(&GenServer.reply(&1, :ok))
+
+    {:noreply, %__MODULE__{state | check_cluster_waiting_pids: []}}
   end
 
   def handle_info(:check_correlation_counter, %__MODULE__{} = state) do
@@ -146,44 +151,25 @@ defmodule Klife.Connection.Controller do
   end
 
   @impl true
-  def handle_call(:check_cluster_manual, from, %__MODULE__{} = state) do
-    case get_cluster_info(state.bootstrap_conn) do
-      {:ok, %{brokers: new_brokers_list, controller: controller}} ->
-        set_cluster_controller(controller, state.cluster_name)
+  def handle_call(:trigger_check_cluster, from, %__MODULE__{} = state) do
+    case state do
+      %__MODULE__{check_cluster_waiting_pids: []} ->
+        Process.cancel_timer(state.check_cluster_timer_ref)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
 
-        old_brokers = state.known_brokers
-        to_remove = old_brokers -- new_brokers_list
-        to_start = new_brokers_list -- old_brokers
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_cluster_waiting_pids: [from],
+             check_cluster_timer_ref: new_ref
+         }}
 
-        Process.send(self(), {:remove_brokers, to_remove}, [])
-        Process.send(self(), {:start_brokers, to_start, from}, [])
-
-        {:noreply, %__MODULE__{state | known_brokers: new_brokers_list}}
-
-      {:error, _reason} ->
-        new_conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
-
-        case get_cluster_info(new_conn) do
-          {:ok, %{brokers: new_brokers_list, controller: controller}} ->
-            set_cluster_controller(controller, state.cluster_name)
-
-            old_brokers = state.known_brokers
-            to_remove = old_brokers -- new_brokers_list
-            to_start = new_brokers_list -- old_brokers
-
-            Process.send(self(), {:remove_brokers, to_remove}, [])
-            Process.send(self(), {:start_brokers, to_start, from}, [])
-
-            {:noreply,
-             %__MODULE__{
-               state
-               | known_brokers: new_brokers_list,
-                 bootstrap_conn: new_conn
-             }}
-
-          _ ->
-            {:reply, :error, state}
-        end
+      %__MODULE__{} ->
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_cluster_waiting_pids: [from | state.check_cluster_waiting_pids]
+         }}
     end
   end
 
@@ -221,7 +207,7 @@ defmodule Klife.Connection.Controller do
   end
 
   def trigger_brokers_verification(cluster_name) do
-    GenServer.call(via_tuple({__MODULE__, cluster_name}), :check_cluster_manual)
+    GenServer.call(via_tuple({__MODULE__, cluster_name}), :trigger_check_cluster)
   end
 
   def get_cluster_controller(cluster_name),
@@ -276,7 +262,7 @@ defmodule Klife.Connection.Controller do
       else:
         raise("""
         Could not connect with any boostrap server provided on configuration.
-                    Errors: #{inspect(conn)}
+        Errors: #{inspect(conn)}
         """)
   end
 

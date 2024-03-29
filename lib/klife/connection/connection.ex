@@ -1,10 +1,9 @@
 defmodule Klife.Connection do
   alias KlifeProtocol.Socket
 
-  defstruct [:socket, :host, :port, :connect_timeout, :read_timeout, :ssl]
+  defstruct [:socket, :host, :port, :read_timeout, :ssl]
 
   @default_opts %{
-    connect_timeout: :timer.seconds(15),
     read_timeout: :timer.seconds(15),
     ssl: false,
     ssl_opts: %{}
@@ -30,6 +29,8 @@ defmodule Klife.Connection do
         conn =
           %__MODULE__{socket: socket, host: host, port: port}
           |> Map.merge(filtered_opts)
+
+        :ok = set_opts(conn, keepalive: true)
 
         {:ok, conn}
 
