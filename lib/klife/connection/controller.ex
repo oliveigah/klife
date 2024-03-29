@@ -1,4 +1,13 @@
 defmodule Klife.Connection.Controller do
+  @moduledoc """
+  Controller of the connection system.
+
+  Responsible for starting broker connections, housekeeping
+  common resources that are not broker specific such as
+  in flight message ets, correlation id counter and 
+  cluster controller.
+
+  """
   use GenServer
 
   import Klife.ProcessRegistry
