@@ -46,11 +46,6 @@ defmodule Klife.Connection.Controller do
     socket_opts = Keyword.get(opts, :socket_opts, [])
     cluster_name = Keyword.fetch!(opts, :cluster_name)
 
-    :persistent_term.put(
-      {:in_flight_messages, cluster_name},
-      String.to_atom("in_flight_messages.#{cluster_name}")
-    )
-
     :ets.new(get_in_flight_messages_table_name(cluster_name), [
       :set,
       :public,
@@ -252,7 +247,7 @@ defmodule Klife.Connection.Controller do
   ## PRIVATE FUNCTIONS
 
   defp get_in_flight_messages_table_name(cluster_name),
-    do: :persistent_term.get({:in_flight_messages, cluster_name})
+    do: :"in_flight_messages.#{cluster_name}"
 
   defp connect_bootstrap_server(servers, socket_opts) do
     conn =

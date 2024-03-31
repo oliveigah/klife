@@ -10,8 +10,6 @@ defmodule Klife.Producer.Dispatcher do
   defstruct [
     :producer_config,
     :broker_id,
-    :topic_name,
-    :topic_partition,
     :current_batch,
     :current_waiting_pids,
     :current_base_time,
@@ -26,11 +24,16 @@ defmodule Klife.Producer.Dispatcher do
     pconfig = Keyword.fetch!(args, :producer_config)
     cluster_name = pconfig.cluster_name
     broker_id = Keyword.fetch!(args, :broker_id)
-    topic_name = Keyword.get(args, :topic_name)
-    topic_partition = Keyword.get(args, :topic_partition)
+    dispatcher_id = Keyword.fetch!(args, :id)
 
     GenServer.start_link(__MODULE__, args,
-      name: get_process_name(pconfig, broker_id, topic_name, topic_partition, cluster_name)
+      name:
+        get_process_name(
+          cluster_name,
+          broker_id,
+          pconfig.producer_name,
+          dispatcher_id
+        )
     )
   end
 
@@ -60,13 +63,18 @@ defmodule Klife.Producer.Dispatcher do
     {:ok, state}
   end
 
-  def produce_sync(record, topic, partition, %Producer{} = pconfig, broker_id, cluster_name) do
-    pconfig
-    |> get_process_name(broker_id, topic, partition, cluster_name)
-    |> GenServer.call(
-      {:produce_sync, record, topic, partition, estimate_record_size(record)},
-      pconfig.delivery_timeout_ms
-    )
+  def produce_sync(
+        record,
+        topic,
+        partition,
+        cluster_name,
+        broker_id,
+        producer_name,
+        dispatcher_id
+      ) do
+    cluster_name
+    |> get_process_name(broker_id, producer_name, dispatcher_id)
+    |> GenServer.call({:produce_sync, record, topic, partition, estimate_record_size(record)})
   end
 
   def handle_call(
@@ -75,7 +83,7 @@ defmodule Klife.Producer.Dispatcher do
         %__MODULE__{} = state
       ) do
     %{
-      producer_config: %{linger_ms: linger_ms},
+      producer_config: %{linger_ms: linger_ms, delivery_timeout_ms: delivery_timeout},
       last_batch_sent_at: last_batch_sent_at,
       in_flight_pool: in_flight_pool,
       batch_queue: batch_queue
@@ -90,7 +98,8 @@ defmodule Klife.Producer.Dispatcher do
 
     cond do
       not on_time? ->
-        {:reply, :ok, add_record(state, record, topic, partition, pid, rec_size)}
+        new_state = add_record(state, record, topic, partition, pid, rec_size)
+        {:reply, {:ok, delivery_timeout}, new_state}
 
       not request_in_flight_available? ->
         new_state =
@@ -98,7 +107,7 @@ defmodule Klife.Producer.Dispatcher do
           |> add_record(record, topic, partition, pid, rec_size)
           |> schedule_dispatch(10)
 
-        {:reply, :ok, new_state}
+        {:reply, {:ok, delivery_timeout}, new_state}
 
       batch_queue_is_empty? ->
         new_sate =
@@ -106,7 +115,7 @@ defmodule Klife.Producer.Dispatcher do
           |> add_record(record, topic, partition, pid, rec_size)
           |> dispatch_to_broker(pool_idx)
 
-        {:reply, :ok, new_sate}
+        {:reply, {:ok, delivery_timeout}, new_sate}
 
       not batch_queue_is_empty? ->
         new_sate =
@@ -115,7 +124,7 @@ defmodule Klife.Producer.Dispatcher do
           |> dispatch_to_broker(pool_idx)
           |> schedule_dispatch(10)
 
-        {:reply, :ok, new_sate}
+        {:reply, {:ok, delivery_timeout}, new_sate}
     end
   end
 
@@ -486,23 +495,12 @@ defmodule Klife.Producer.Dispatcher do
   end
 
   defp get_process_name(
-         %Producer{producer_name: pname, linger_ms: 0},
+         cluster_name,
          broker_id,
-         topic,
-         partition,
-         cluster_name
+         producer_name,
+         dispatcher_id
        ) do
-    via_tuple({__MODULE__, cluster_name, broker_id, pname, topic, partition})
-  end
-
-  defp get_process_name(
-         %Producer{producer_name: pname},
-         broker_id,
-         _topic,
-         _partition,
-         cluster_name
-       ) do
-    via_tuple({__MODULE__, cluster_name, broker_id, pname})
+    via_tuple({__MODULE__, cluster_name, broker_id, producer_name, dispatcher_id})
   end
 
   defp estimate_record_size(record) do

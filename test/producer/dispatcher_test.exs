@@ -38,7 +38,7 @@ defmodule Klife.Producer.DispatcherTest do
       batch_queue: :queue.new()
     }
 
-    assert {:reply, :ok, new_state} =
+    assert {:reply, {:ok, 60000}, new_state} =
              Dispatcher.handle_call(
                {:produce_sync, rec, "my_topic", 0, 100},
                {self(), nil},
@@ -64,7 +64,7 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key2", value: "header_value2"}]
       }
 
-    assert {:reply, :ok, new_state} =
+    assert {:reply, {:ok, 60000}, new_state} =
              Dispatcher.handle_call(
                {:produce_sync, rec, "my_topic", 0, 200},
                {self(), nil},
@@ -90,7 +90,7 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key3", value: "header_value3"}]
       }
 
-    assert {:reply, :ok, new_state} =
+    assert {:reply, {:ok, 60000}, new_state} =
              Dispatcher.handle_call(
                {:produce_sync, rec, "my_topic", 1, 300},
                {self(), nil},
@@ -119,7 +119,7 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key4", value: "header_value4"}]
       }
 
-    assert {:reply, :ok, new_state} =
+    assert {:reply, {:ok, 60000}, new_state} =
              Dispatcher.handle_call(
                {:produce_sync, rec, "topic_b", 0, 400},
                {self(), nil},

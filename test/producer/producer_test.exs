@@ -17,6 +17,23 @@ defmodule Klife.ProducerTest do
     assert is_number(offset)
   end
 
+  test "produce message sync using not default producer" do
+    record = %{
+      value: "abc",
+      key: "some_key",
+      headers: [%{key: "header_1", value: "header_val_1"}]
+    }
+
+    topic = "my_no_batch_topic"
+
+    assert {:ok, offset} =
+             Producer.produce_sync(record, topic, 1, :my_test_cluster_1,
+               producer: :benchmark_producer
+             )
+
+    assert is_number(offset)
+  end
+
   test "produce message sync with batch" do
     topic = "my_batch_topic"
 
@@ -37,7 +54,7 @@ defmodule Klife.ProducerTest do
       headers: [%{key: "header_2", value: "header_val_2"}]
     }
 
-    Process.sleep(1)
+    Process.sleep(5)
 
     task_2 =
       Task.async(fn ->
@@ -50,7 +67,7 @@ defmodule Klife.ProducerTest do
       headers: [%{key: "header_3", value: "header_val_3"}]
     }
 
-    Process.sleep(1)
+    Process.sleep(5)
 
     task_3 =
       Task.async(fn ->

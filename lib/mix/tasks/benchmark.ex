@@ -34,15 +34,16 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("producer_sync", parallel) do
+      topic = "benchmark_topic"
+
       max_partition =
         :klife
         |> Application.fetch_env!(:clusters)
         |> List.first()
         |> Keyword.get(:topics)
-        |> Enum.find(&(&1.name == "benchmark_topic"))
+        |> Enum.find(&(&1.name == topic))
         |> Map.get(:num_partitions)
 
-      topic = "benchmark_topic"
       val = :rand.bytes(4000)
       key = "some_key"
 
