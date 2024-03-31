@@ -90,7 +90,7 @@ defmodule Klife.Producer.Controller do
       |> :ets.insert({
         {topic.name, partition.partition_index},
         partition.leader_id,
-        config_topic[:producer_name] || @default_producer.name,
+        config_topic[:producer] || @default_producer.name,
         nil
       })
     end

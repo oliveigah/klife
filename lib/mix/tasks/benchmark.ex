@@ -8,28 +8,41 @@ if Mix.env() in [:dev] do
       apply(Mix.Tasks.Benchmark, :do_run_bench, args)
     end
 
-    defp definition(%{a: a, b: b, c: c}), do: a + b + c
+    def do_run_bench("test", parallel) do
+      :ets.new(:benchmark_table, [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true
+      ])
 
-    defp inside(map) do
-      %{a: a, b: b, c: c} = map
-      a + b + c
-    end
+      :ets.new(:benchmark_table_2, [
+        :set,
+        :public,
+        :named_table
+      ])
 
-    defp no_match(map) do
-      map.a + map.b + map.c
-    end
-
-    def do_run_bench("test") do
-      input = %{a: 1, b: 2, c: 3}
+      Enum.each(1..1000, fn i ->
+        :ets.insert(:benchmark_table, {{:test, i}, i * 2})
+        :ets.insert(:benchmark_table_2, {{:test, i}, i * 2})
+        :persistent_term.put({:test, i}, i * 2)
+      end)
 
       Benchee.run(
         %{
-          "definition" => fn -> Enum.each(1..1000, fn _ -> definition(input) end) end,
-          "inside" => fn -> Enum.each(1..1000, fn _ -> inside(input) end) end,
-          "no_match" => fn -> Enum.each(1..1000, fn _ -> no_match(input) end) end
+          "ets read_concurrency" => fn ->
+            Enum.each(1..1000, fn i -> :ets.lookup_element(:benchmark_table, {:test, i}, 2) end)
+          end,
+          "ets no read_concurrency" => fn ->
+            Enum.each(1..1000, fn i -> :ets.lookup_element(:benchmark_table_2, {:test, i}, 2) end)
+          end,
+          "persistent_term" => fn ->
+            Enum.each(1..1000, fn i -> :persistent_term.get({:test, i}) end)
+          end
         },
         time: 10,
-        memory_time: 2
+        memory_time: 2,
+        parallel: parallel |> String.to_integer()
       )
     end
 

@@ -22,14 +22,46 @@ config :klife,
         },
         %{
           name: :benchmark_producer,
+          client_id: "my_custom_client_id"
+        },
+        %{
+          name: :dispatcher_benchmark_producer_1,
           client_id: "my_custom_client_id",
-          max_in_flight_requests: 1
+          dispatchers_count: 1
+        },
+        %{
+          name: :dispatcher_benchmark_producer_2,
+          client_id: "my_custom_client_id",
+          dispatchers_count: 2
+        },
+        %{
+          name: :dispatcher_benchmark_producer_3,
+          client_id: "my_custom_client_id",
+          dispatchers_count: 3
         }
       ],
       topics: [
         %{
           name: "benchmark_topic",
           producer: :benchmark_producer,
+          num_partitions: 30,
+          replication_factor: 2
+        },
+        %{
+          name: "dispatcher_benchmark_topic_1",
+          producer: :dispatcher_benchmark_producer_1,
+          num_partitions: 30,
+          replication_factor: 2
+        },
+        %{
+          name: "dispatcher_benchmark_topic_2",
+          producer: :dispatcher_benchmark_producer_2,
+          num_partitions: 30,
+          replication_factor: 2
+        },
+        %{
+          name: "dispatcher_benchmark_topic_3",
+          producer: :dispatcher_benchmark_producer_3,
           num_partitions: 30,
           replication_factor: 2
         },

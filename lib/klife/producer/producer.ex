@@ -63,10 +63,17 @@ defmodule Klife.Producer do
     %{
       broker_id: broker_id,
       producer_name: default_producer,
-      dispatcher_id: dispatcher_id
+      dispatcher_id: default_dispatcher_id
     } = ProducerController.get_topics_partitions_metadata(cluster_name, topic, partition)
 
-    producer_name = Keyword.get(opts, :producer, default_producer)
+    {producer_name, dispatcher_id} =
+      case Keyword.get(opts, :producer) do
+        nil ->
+          {default_producer, default_dispatcher_id}
+
+        other_producer ->
+          {other_producer, get_dispatcher_id(cluster_name, other_producer, topic, partition)}
+      end
 
     {:ok, delivery_timeout_ms} =
       Dispatcher.produce_sync(
@@ -87,12 +94,9 @@ defmodule Klife.Producer do
     end
   end
 
-  # TODO: Implement dispatch group in order to have an exclusive dispatcher
-  # for some specific topics.
   defp init_dispatchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.cluster_name)
     dispatchers_per_broker = state.dispatchers_count
-
     :ok = do_init_dispatchers(state, known_brokers, dispatchers_per_broker)
     :ok = update_topic_partition_metadata(state, dispatchers_per_broker)
 
@@ -118,19 +122,46 @@ defmodule Klife.Producer do
   end
 
   defp update_topic_partition_metadata(%__MODULE__{} = state, dispatchers_per_broker) do
-    state.cluster_name
+    %__MODULE__{
+      cluster_name: cluster_name,
+      producer_name: producer_name
+    } = state
+
+    cluster_name
     |> ProducerController.get_all_topics_partitions_metadata()
     |> Enum.group_by(& &1.leader_id)
     |> Enum.map(fn {_broker_id, topics_list} ->
       topics_list
       |> Enum.with_index()
       |> Enum.map(fn {val, idx} ->
-        Map.put(val, :dispatcher_id, rem(idx, dispatchers_per_broker))
+        dipsatcher_id =
+          if dispatchers_per_broker > 1, do: rem(idx, dispatchers_per_broker), else: 0
+
+        Map.put(val, :dispatcher_id, dipsatcher_id)
       end)
     end)
     |> List.flatten()
     |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, dispatcher_id: d_id} ->
-      ProducerController.update_dispatcher_id(state.cluster_name, t_name, p_idx, d_id)
+      # Used when a record is produced by a non default producer
+      # in this case the proper dispatcher_id won't be present at
+      # main metadata ets table, therefore we need a way to 
+      # find out it's value. 
+      put_dispatcher_id(cluster_name, producer_name, t_name, p_idx, d_id)
+
+      if ProducerController.get_default_producer(cluster_name, t_name, p_idx) == producer_name do
+        ProducerController.update_dispatcher_id(cluster_name, t_name, p_idx, d_id)
+      end
     end)
+  end
+
+  defp put_dispatcher_id(cluster_name, producer_name, topic, partition, dispatcher_id) do
+    :persistent_term.put(
+      {__MODULE__, cluster_name, producer_name, topic, partition},
+      dispatcher_id
+    )
+  end
+
+  defp get_dispatcher_id(cluster_name, producer_name, topic, partition) do
+    :persistent_term.get({__MODULE__, cluster_name, producer_name, topic, partition})
   end
 end
