@@ -109,20 +109,20 @@ defmodule Klife.Producer.Dispatcher do
 
         {:reply, {:ok, delivery_timeout}, new_state}
 
-      batch_queue_is_empty? ->
-        new_sate =
-          state
-          |> add_record(record, topic, partition, pid, rec_size)
-          |> dispatch_to_broker(pool_idx)
-
-        {:reply, {:ok, delivery_timeout}, new_sate}
-
       not batch_queue_is_empty? ->
         new_sate =
           state
           |> add_record(record, topic, partition, pid, rec_size)
           |> dispatch_to_broker(pool_idx)
           |> schedule_dispatch(10)
+
+        {:reply, {:ok, delivery_timeout}, new_sate}
+
+      batch_queue_is_empty? ->
+        new_sate =
+          state
+          |> add_record(record, topic, partition, pid, rec_size)
+          |> dispatch_to_broker(pool_idx)
 
         {:reply, {:ok, delivery_timeout}, new_sate}
     end
@@ -229,10 +229,12 @@ defmodule Klife.Producer.Dispatcher do
         pid,
         estimated_size
       ) do
+    new_batch = add_record_to_batch(curr_batch, record, topic, partition, pconfig)
+
     %{
       state
-      | current_batch: add_record_to_batch(curr_batch, record, topic, partition, pconfig),
-        current_waiting_pids: add_waiting_pid(curr_pids, pid, topic, partition),
+      | current_batch: new_batch,
+        current_waiting_pids: add_waiting_pid(curr_pids, new_batch, pid, topic, partition),
         current_base_time: curr_base_time || System.monotonic_time(:millisecond),
         current_estimated_size: curr_size + estimated_size
     }
@@ -344,24 +346,6 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  defp init_partition_data(%Producer{} = _pconfig, _topic, _partition) do
-    # TODO: Use proper values here
-    %{
-      base_offset: 0,
-      partition_leader_epoch: -1,
-      magic: 2,
-      attributes: 0,
-      last_offset_delta: -1,
-      base_timestamp: nil,
-      max_timestamp: nil,
-      producer_id: -1,
-      producer_epoch: -1,
-      base_sequence: -1,
-      records: [],
-      records_length: 0
-    }
-  end
-
   defp add_record_to_batch(batch, record) do
     now = DateTime.to_unix(DateTime.utc_now())
 
@@ -381,19 +365,44 @@ defmodule Klife.Producer.Dispatcher do
       batch
       | records: [new_rec | batch.records],
         records_length: batch.records_length + 1,
-        last_offset_delta: batch.last_offset_delta + 1,
+        last_offset_delta: new_offset_delta,
         max_timestamp: now,
         base_timestamp: min(batch.base_timestamp, now)
     }
   end
 
-  defp add_waiting_pid(waiting_pids, new_pid, topic, partition) do
+  defp init_partition_data(%Producer{} = _pconfig, _topic, _partition) do
+    # TODO: Use proper values here
+    %{
+      base_offset: 0,
+      partition_leader_epoch: -1,
+      magic: 2,
+      attributes: 0,
+      last_offset_delta: -1,
+      base_timestamp: nil,
+      max_timestamp: nil,
+      producer_id: -1,
+      producer_epoch: -1,
+      base_sequence: -1,
+      records: [],
+      records_length: 0
+    }
+  end
+
+  defp add_waiting_pid(waiting_pids, _new_batch, nil, _topic, _partition), do: waiting_pids
+
+  defp add_waiting_pid(waiting_pids, new_batch, new_pid, topic, partition) when is_pid(new_pid) do
+    offset =
+      new_batch
+      |> Map.fetch!({topic, partition})
+      |> Map.fetch!(:last_offset_delta)
+
     case Map.get(waiting_pids, {topic, partition}) do
       nil ->
-        Map.put(waiting_pids, {topic, partition}, [{new_pid, 0}])
+        Map.put(waiting_pids, {topic, partition}, [{new_pid, offset}])
 
-      [{_last_pid, last_offset} | _rest] = current_pids ->
-        Map.replace!(waiting_pids, {topic, partition}, [{new_pid, last_offset + 1} | current_pids])
+      current_pids ->
+        Map.replace!(waiting_pids, {topic, partition}, [{new_pid, offset} | current_pids])
     end
   end
 
