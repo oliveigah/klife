@@ -44,7 +44,8 @@ defmodule Klife.Connection.MessageVersions do
       {M.CreateTopics, %{min: 0, max: 0, should_raise?: false}},
       {M.Metadata, %{min: 1, max: 1, should_raise?: true}},
       {M.Produce, %{min: 0, max: 0, should_raise?: false}},
-      {M.InitProducerId, %{min: 0, max: 0, should_raise?: false}}
+      {M.InitProducerId, %{min: 0, max: 0, should_raise?: false}},
+      {M.Fetch, %{min: 4, max: 4, should_raise?: true}}
     ]
   end
 

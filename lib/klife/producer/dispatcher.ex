@@ -445,6 +445,7 @@ defmodule Klife.Producer.Dispatcher do
       |> Enum.each(fn {topic, partition, 0, base_offset} ->
         delivery_confirmation_pids
         |> Map.get({topic, partition}, [])
+        |> Enum.reverse()
         |> Enum.each(fn {pid, batch_offset} ->
           send(pid, {:klife_produce_sync, :ok, base_offset + batch_offset})
         end)
@@ -487,7 +488,7 @@ defmodule Klife.Producer.Dispatcher do
           Enum.map(partitions_list, fn {partition, batch} ->
             %{
               index: partition,
-              records: Map.replace(batch, :records, Enum.reverse(batch.records))
+              records: Map.replace!(batch, :records, Enum.reverse(batch.records))
             }
           end)
       }

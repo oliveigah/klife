@@ -95,4 +95,82 @@ defmodule Klife.Utils do
         :error
     end
   end
+
+  def get_record_by_offset(cluster_name, topic, partition, offset) do
+    content = %{
+      replica_id: -1,
+      max_wait_ms: 1000,
+      min_bytes: 1,
+      max_bytes: 100_000,
+      isolation_level: 0,
+      topics: [
+        %{
+          topic: topic,
+          partitions: [
+            %{
+              partition: partition,
+              fetch_offset: offset,
+              # 1 guarantees that only the first record batch will
+              # be retrieved
+              partition_max_bytes: 1
+            }
+          ]
+        }
+      ]
+    }
+
+    broker = Klife.Producer.Controller.get_broker_id(cluster_name, topic, partition)
+
+    {:ok, %{content: content}} =
+      Klife.Connection.Broker.send_message(
+        KlifeProtocol.Messages.Fetch,
+        cluster_name,
+        broker,
+        content
+      )
+
+    topic_resp = Enum.find(content.responses, &(&1.topic == topic))
+    partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
+    [%{base_offset: base_offset, records: records}] = partition_resp.records
+    Enum.find(records, &(&1.offset_delta + base_offset == offset))
+  end
+
+  def get_record_batch_by_offset(cluster_name, topic, partition, offset) do
+    content = %{
+      replica_id: -1,
+      max_wait_ms: 1000,
+      min_bytes: 1,
+      max_bytes: 100_000,
+      isolation_level: 0,
+      topics: [
+        %{
+          topic: topic,
+          partitions: [
+            %{
+              partition: partition,
+              fetch_offset: offset,
+              # 1 guarantees that only the first record batch will
+              # be retrieved
+              partition_max_bytes: 1
+            }
+          ]
+        }
+      ]
+    }
+
+    broker = Klife.Producer.Controller.get_broker_id(cluster_name, topic, partition)
+
+    {:ok, %{content: content}} =
+      Klife.Connection.Broker.send_message(
+        KlifeProtocol.Messages.Fetch,
+        cluster_name,
+        broker,
+        content
+      )
+
+    topic_resp = Enum.find(content.responses, &(&1.topic == topic))
+    partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
+    [%{records: records}] = partition_resp.records
+    records
+  end
 end

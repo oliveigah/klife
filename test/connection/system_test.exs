@@ -4,7 +4,7 @@ defmodule Klife.Connection.SystemTest do
   alias Klife.Connection.Broker
   alias KlifeProtocol.Messages.ApiVersions
 
-  def check_broker_connection(cluster_name, broker_id) do
+  defp check_broker_connection(cluster_name, broker_id) do
     parent = self()
 
     assert {:ok, response} = Broker.send_message(ApiVersions, cluster_name, broker_id)
