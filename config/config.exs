@@ -18,7 +18,7 @@ config :klife,
         %{
           name: :my_batch_producer,
           client_id: "my_custom_client_id",
-          linger_ms: 1_000
+          linger_ms: 1_500
         },
         %{
           name: :benchmark_producer,
