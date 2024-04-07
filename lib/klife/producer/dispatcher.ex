@@ -5,10 +5,12 @@ defmodule Klife.Producer.Dispatcher do
   require Logger
   alias Klife.Producer
   alias Klife.Connection.Broker
-  alias KlifeProtocol.Messages
+  alias KlifeProtocol.Messages, as: M
 
   defstruct [
     :producer_config,
+    :producer_id,
+    :base_sequences,
     :broker_id,
     :current_batch,
     :current_waiting_pids,
@@ -41,6 +43,13 @@ defmodule Klife.Producer.Dispatcher do
     args_map = Map.new(args)
     max_in_flight = args_map.producer_config.max_in_flight_requests
     linger_ms = args_map.producer_config.linger_ms
+    idempotent? = args_map.producer_config.enable_idempotence
+    cluster_name = args_map.producer_config.cluster_name
+
+    producer_id =
+      if idempotent?,
+        do: get_producer_id(cluster_name, args_map.broker_id),
+        else: nil
 
     next_send_msg_ref =
       if linger_ms > 0,
@@ -55,12 +64,26 @@ defmodule Klife.Producer.Dispatcher do
       batch_queue: :queue.new(),
       last_batch_sent_at: System.monotonic_time(:millisecond),
       in_flight_pool: Enum.map(1..max_in_flight, fn _ -> nil end),
-      next_send_msg_ref: next_send_msg_ref
+      next_send_msg_ref: next_send_msg_ref,
+      producer_id: producer_id,
+      base_sequences: %{}
     }
 
     state = %__MODULE__{} = Map.merge(base, args_map)
 
     {:ok, state}
+  end
+
+  defp get_producer_id(cluster_name, broker_id) do
+    content = %{
+      transactional_id: nil,
+      transaction_timeout_ms: 0
+    }
+
+    {:ok, %{content: %{error_code: 0, producer_id: producer_id}}} =
+      Broker.send_message(M.InitProducerId, cluster_name, broker_id, content)
+
+    producer_id
   end
 
   def produce_sync(
@@ -233,10 +256,9 @@ defmodule Klife.Producer.Dispatcher do
   def add_record_to_current_data(
         %__MODULE__{
           current_estimated_size: curr_size,
-          producer_config: pconfig,
-          current_batch: curr_batch,
           current_waiting_pids: curr_pids,
-          current_base_time: curr_base_time
+          current_base_time: curr_base_time,
+          base_sequences: base_sequences
         } = state,
         record,
         topic,
@@ -244,12 +266,13 @@ defmodule Klife.Producer.Dispatcher do
         pid,
         estimated_size
       ) do
-    new_batch = add_record_to_batch(curr_batch, record, topic, partition, pconfig)
+    new_batch = add_record_to_current_batch(state, record, topic, partition)
 
     %{
       state
       | current_batch: new_batch,
         current_waiting_pids: add_waiting_pid(curr_pids, new_batch, pid, topic, partition),
+        base_sequences: update_base_sequence(base_sequences, new_batch, topic, partition),
         current_base_time: curr_base_time || System.monotonic_time(:millisecond),
         current_estimated_size: curr_size + estimated_size
     }
@@ -357,23 +380,62 @@ defmodule Klife.Producer.Dispatcher do
 
   ## PRIVATE FUNCTIONS
 
-  defp add_record_to_batch(current_batch, record, topic, partition, pconfig) do
-    case Map.get(current_batch, {topic, partition}) do
+  defp add_record_to_current_batch(
+         %__MODULE__{current_batch: batch} = state,
+         record,
+         topic,
+         partition
+       ) do
+    case Map.get(batch, {topic, partition}) do
       nil ->
         new_batch =
-          pconfig
+          state
           |> init_partition_data(topic, partition)
-          |> add_record_to_batch(record)
+          |> add_record_to_partition_data(record)
 
-        Map.put(current_batch, {topic, partition}, new_batch)
+        Map.put(batch, {topic, partition}, new_batch)
 
       partition_data ->
-        new_partition_data = add_record_to_batch(partition_data, record)
-        Map.replace!(current_batch, {topic, partition}, new_partition_data)
+        new_partition_data = add_record_to_partition_data(partition_data, record)
+        Map.replace!(batch, {topic, partition}, new_partition_data)
     end
   end
 
-  defp add_record_to_batch(batch, record) do
+  defp init_partition_data(
+         %__MODULE__{
+           base_sequences: bs,
+           producer_id: p_id,
+           producer_config: %{enable_idempotence: idempotent?} = pconfig
+         } = _state,
+         topic,
+         partition
+       ) do
+    %{
+      base_offset: 0,
+      partition_leader_epoch: -1,
+      magic: 2,
+      # TODO: Handle different attributes opts
+      attributes: get_attributes_byte(pconfig, []),
+      last_offset_delta: -1,
+      base_timestamp: nil,
+      max_timestamp: nil,
+      producer_id: p_id,
+      # TODO: Handle producer epoch
+      producer_epoch: -1,
+      base_sequence: if(idempotent?, do: Map.get(bs, {topic, partition}, 0) + 1, else: -1),
+      records: [],
+      records_length: 0
+    }
+  end
+
+  defp get_attributes_byte(%Producer{} = pconfig, _opts) do
+    [
+      compression: pconfig.compression_type
+    ]
+    |> KlifeProtocol.RecordBatch.encode_attributes()
+  end
+
+  defp add_record_to_partition_data(batch, record) do
     now = DateTime.to_unix(DateTime.utc_now())
 
     new_offset_delta = batch.last_offset_delta + 1
@@ -398,22 +460,13 @@ defmodule Klife.Producer.Dispatcher do
     }
   end
 
-  defp init_partition_data(%Producer{} = _pconfig, _topic, _partition) do
-    # TODO: Use proper values here
-    %{
-      base_offset: 0,
-      partition_leader_epoch: -1,
-      magic: 2,
-      attributes: 0,
-      last_offset_delta: -1,
-      base_timestamp: nil,
-      max_timestamp: nil,
-      producer_id: -1,
-      producer_epoch: -1,
-      base_sequence: -1,
-      records: [],
-      records_length: 0
-    }
+  defp update_base_sequence(curr_base_sequences, new_batch, topic, partition) do
+    new_base_sequence =
+      new_batch
+      |> Map.fetch!({topic, partition})
+      |> Map.fetch!(:base_sequence)
+
+    Map.put(curr_base_sequences, {topic, partition}, new_base_sequence)
   end
 
   defp add_waiting_pid(waiting_pids, _new_batch, nil, _topic, _partition), do: waiting_pids
@@ -465,7 +518,7 @@ defmodule Klife.Producer.Dispatcher do
     # Check if it is safe to send the batch
     if now + req_timeout - base_time < delivery_timeout - :timer.seconds(5) do
       {:ok, resp} =
-        Broker.send_message(Messages.Produce, cluster_name, broker_id, content, headers)
+        Broker.send_message(M.Produce, cluster_name, broker_id, content, headers)
 
       grouped_results =
         for %{name: topic_name, partition_responses: partition_resps} <- resp.content.responses,
@@ -493,9 +546,9 @@ defmodule Klife.Producer.Dispatcher do
 
         _list ->
           # TODO: Handle specific errors by code, not just retry all not success
-          new_batch_to_send =
-            batch_to_send
-            |> Map.drop(Enum.map(success_list, fn {t, p, _, _} -> {t, p} end))
+          # TODO: Handle out of order error for max_in_flight > 1
+          success_keys = Enum.map(success_list, fn {t, p, _, _} -> {t, p} end)
+          new_batch_to_send = Map.drop(batch_to_send, success_keys)
 
           Process.sleep(retry_ms)
 

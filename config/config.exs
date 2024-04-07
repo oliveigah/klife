@@ -21,6 +21,12 @@ config :klife,
           linger_ms: 1_500
         },
         %{
+          name: :my_batch_compressed_producer,
+          client_id: "my_custom_client_id",
+          linger_ms: 1_500,
+          compression_type: :snappy
+        },
+        %{
           name: :benchmark_producer,
           client_id: "my_custom_client_id"
         },
@@ -46,6 +52,10 @@ config :klife,
           producer: :benchmark_producer,
           num_partitions: 30,
           replication_factor: 2
+        },
+        %{
+          name: "comression_topic",
+          producer: :my_batch_compressed_producer
         },
         %{
           name: "dispatcher_benchmark_topic_1",

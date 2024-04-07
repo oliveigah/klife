@@ -173,4 +173,42 @@ defmodule Klife.Utils do
     [%{records: records}] = partition_resp.records
     records
   end
+
+  def get_partition_resp_records_by_offset(cluster_name, topic, partition, offset) do
+    content = %{
+      replica_id: -1,
+      max_wait_ms: 1000,
+      min_bytes: 1,
+      max_bytes: 100_000,
+      isolation_level: 0,
+      topics: [
+        %{
+          topic: topic,
+          partitions: [
+            %{
+              partition: partition,
+              fetch_offset: offset,
+              # 1 guarantees that only the first record batch will
+              # be retrieved
+              partition_max_bytes: 1
+            }
+          ]
+        }
+      ]
+    }
+
+    broker = Klife.Producer.Controller.get_broker_id(cluster_name, topic, partition)
+
+    {:ok, %{content: content}} =
+      Klife.Connection.Broker.send_message(
+        KlifeProtocol.Messages.Fetch,
+        cluster_name,
+        broker,
+        content
+      )
+
+    topic_resp = Enum.find(content.responses, &(&1.topic == topic))
+    partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
+    partition_resp.records
+  end
 end

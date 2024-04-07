@@ -22,7 +22,6 @@ defmodule Klife.Producer.DispatcherTest do
         enable_idempotence: true,
         linger_ms: 10_000,
         max_in_flight_requests: 2,
-        max_retries: :infinity,
         producer_name: :my_batch_producer,
         request_timeout_ms: 15000,
         retry_backoff_ms: 1000
@@ -35,7 +34,9 @@ defmodule Klife.Producer.DispatcherTest do
       last_batch_sent_at: System.monotonic_time(:millisecond),
       in_flight_pool: [nil, nil],
       next_send_msg_ref: nil,
-      batch_queue: :queue.new()
+      batch_queue: :queue.new(),
+      base_sequences: %{},
+      producer_id: 123
     }
 
     assert {:reply, {:ok, 60000}, new_state} =

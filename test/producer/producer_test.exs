@@ -12,79 +12,92 @@ defmodule Klife.ProducerTest do
     end)
   end
 
-  test "produce message sync no batch" do
-    record = %{
-      value: :rand.bytes(1_000),
-      key: :rand.bytes(1_000),
-      headers: [%{key: :rand.bytes(1_000), value: :rand.bytes(1_000)}]
+  defp wait_batch_cycle(cluster, topic) do
+    rec = %{
+      value: "wait_cycle",
+      key: "wait_cycle",
+      headers: []
     }
 
+    {:ok, _} = Producer.produce_sync(rec, topic, 1, cluster)
+  end
+
+  test "produce message sync no batch" do
+    record = %{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
+    }
+
+    cluster = :my_test_cluster_1
     topic = "my_no_batch_topic"
 
-    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, :my_test_cluster_1)
+    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
 
-    assert_offset(record, :my_test_cluster_1, topic, 1, offset)
-    record_batch = Utils.get_record_batch_by_offset(:my_test_cluster_1, topic, 1, offset)
+    assert_offset(record, cluster, topic, 1, offset)
+    record_batch = Utils.get_record_batch_by_offset(cluster, topic, 1, offset)
     assert length(record_batch) == 1
   end
 
   test "produce message sync using not default producer" do
     record = %{
-      value: :rand.bytes(1_000),
-      key: :rand.bytes(1_000),
-      headers: [%{key: :rand.bytes(1_000), value: :rand.bytes(1_000)}]
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
     }
 
+    cluster = :my_test_cluster_1
     topic = "my_no_batch_topic"
 
     assert {:ok, offset} =
-             Producer.produce_sync(record, topic, 1, :my_test_cluster_1,
-               producer: :benchmark_producer
-             )
+             Producer.produce_sync(record, topic, 1, cluster, producer: :benchmark_producer)
 
-    assert_offset(record, :my_test_cluster_1, topic, 1, offset)
-    record_batch = Utils.get_record_batch_by_offset(:my_test_cluster_1, topic, 1, offset)
+    assert_offset(record, cluster, topic, 1, offset)
+    record_batch = Utils.get_record_batch_by_offset(cluster, topic, 1, offset)
     assert length(record_batch) == 1
   end
 
   test "produce message sync with batch" do
+    cluster = :my_test_cluster_1
     topic = "my_batch_topic"
 
+    wait_batch_cycle(cluster, topic)
+
     rec_1 = %{
-      value: :rand.bytes(1_000),
-      key: :rand.bytes(1_000),
-      headers: [%{key: :rand.bytes(1_000), value: :rand.bytes(1_000)}]
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
     }
 
     task_1 =
       Task.async(fn ->
-        Producer.produce_sync(rec_1, topic, 1, :my_test_cluster_1)
+        Producer.produce_sync(rec_1, topic, 1, cluster)
       end)
 
     rec_2 = %{
-      value: :rand.bytes(1_000),
-      key: :rand.bytes(1_000),
-      headers: [%{key: :rand.bytes(1_000), value: :rand.bytes(1_000)}]
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
     }
 
     Process.sleep(5)
 
     task_2 =
       Task.async(fn ->
-        Producer.produce_sync(rec_2, topic, 1, :my_test_cluster_1)
+        Producer.produce_sync(rec_2, topic, 1, cluster)
       end)
 
     rec_3 = %{
-      value: :rand.bytes(1_000),
-      key: :rand.bytes(1_000),
-      headers: [%{key: :rand.bytes(1_000), value: :rand.bytes(1_000)}]
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
     }
 
     Process.sleep(5)
 
     task_3 =
       Task.async(fn ->
-        Producer.produce_sync(rec_3, topic, 1, :my_test_cluster_1)
+        Producer.produce_sync(rec_3, topic, 1, cluster)
       end)
 
     assert [{:ok, offset_1}, {:ok, offset_2}, {:ok, offset_3}] =
@@ -93,15 +106,81 @@ defmodule Klife.ProducerTest do
     assert offset_2 - offset_1 == 1
     assert offset_3 - offset_2 == 1
 
-    assert_offset(rec_1, :my_test_cluster_1, topic, 1, offset_1)
-    assert_offset(rec_2, :my_test_cluster_1, topic, 1, offset_2)
-    assert_offset(rec_3, :my_test_cluster_1, topic, 1, offset_3)
+    assert_offset(rec_1, cluster, topic, 1, offset_1)
+    assert_offset(rec_2, cluster, topic, 1, offset_2)
+    assert_offset(rec_3, cluster, topic, 1, offset_3)
 
-    batch_1 = Utils.get_record_batch_by_offset(:my_test_cluster_1, topic, 1, offset_1)
-    batch_2 = Utils.get_record_batch_by_offset(:my_test_cluster_1, topic, 1, offset_2)
-    batch_3 = Utils.get_record_batch_by_offset(:my_test_cluster_1, topic, 1, offset_3)
+    batch_1 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset_1)
+    batch_2 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset_2)
+    batch_3 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset_3)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
+  end
+
+  test "produce message sync with batch and compression" do
+    cluster = :my_test_cluster_1
+    topic = "comression_topic"
+
+    wait_batch_cycle(cluster, topic)
+
+    rec_1 = %{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
+    }
+
+    task_1 =
+      Task.async(fn ->
+        Producer.produce_sync(rec_1, topic, 1, cluster)
+      end)
+
+    rec_2 = %{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
+    }
+
+    Process.sleep(5)
+
+    task_2 =
+      Task.async(fn ->
+        Producer.produce_sync(rec_2, topic, 1, cluster)
+      end)
+
+    rec_3 = %{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
+    }
+
+    Process.sleep(5)
+
+    task_3 =
+      Task.async(fn ->
+        Producer.produce_sync(rec_3, topic, 1, cluster)
+      end)
+
+    assert [{:ok, offset_1}, {:ok, offset_2}, {:ok, offset_3}] =
+             Task.await_many([task_1, task_2, task_3], 2_000)
+
+    assert offset_2 - offset_1 == 1
+    assert offset_3 - offset_2 == 1
+
+    assert_offset(rec_1, cluster, topic, 1, offset_1)
+    assert_offset(rec_2, cluster, topic, 1, offset_2)
+    assert_offset(rec_3, cluster, topic, 1, offset_3)
+
+    batch_1 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset_1)
+    batch_2 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset_2)
+    batch_3 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset_3)
+
+    assert length(batch_1) == 3
+    assert batch_1 == batch_2 and batch_2 == batch_3
+
+    assert [%{attributes: attr}] =
+             Utils.get_partition_resp_records_by_offset(cluster, topic, 1, offset_1)
+
+    assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
   end
 end

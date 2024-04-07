@@ -21,12 +21,8 @@ defmodule Klife.Producer do
     retry_backoff_ms: [type: :non_neg_integer, default: :timer.seconds(1)],
     max_in_flight_requests: [type: :non_neg_integer, default: 1],
     dispatchers_count: [type: :pos_integer, default: 1],
-    # Not implemented
-    max_retries: [type: :timeout, default: :infinity],
-    # Not implemented
-    compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none],
-    # Not implemented
-    enable_idempotence: [type: :boolean, default: true]
+    enable_idempotence: [type: :boolean, default: true],
+    compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none]
   ]
 
   defstruct (Keyword.keys(@producer_options) -- [:name]) ++ [:producer_name]
@@ -145,7 +141,7 @@ defmodule Klife.Producer do
       # Used when a record is produced by a non default producer
       # in this case the proper dispatcher_id won't be present at
       # main metadata ets table, therefore we need a way to 
-      # find out it's value. 
+      # find out it's value.
       put_dispatcher_id(cluster_name, producer_name, t_name, p_idx, d_id)
 
       if ProducerController.get_default_producer(cluster_name, t_name, p_idx) == producer_name do
