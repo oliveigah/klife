@@ -10,6 +10,7 @@ defmodule Klife.Producer.Dispatcher do
   defstruct [
     :producer_config,
     :producer_id,
+    :producer_epoch,
     :base_sequences,
     :broker_id,
     :current_batch,
@@ -19,7 +20,8 @@ defmodule Klife.Producer.Dispatcher do
     :last_batch_sent_at,
     :in_flight_pool,
     :next_send_msg_ref,
-    :batch_queue
+    :batch_queue,
+    :dispatcher_id
   ]
 
   def start_link(args) do
@@ -45,6 +47,9 @@ defmodule Klife.Producer.Dispatcher do
     linger_ms = args_map.producer_config.linger_ms
     idempotent? = args_map.producer_config.enable_idempotence
     cluster_name = args_map.producer_config.cluster_name
+    broker_id = args_map.broker_id
+    dispatcher_id = args_map.id
+    producer_config = args_map.producer_config
 
     producer_id =
       if idempotent?,
@@ -56,7 +61,7 @@ defmodule Klife.Producer.Dispatcher do
         do: Process.send_after(self(), :send_to_broker, linger_ms),
         else: nil
 
-    base = %__MODULE__{
+    state = %__MODULE__{
       current_batch: %{},
       current_waiting_pids: %{},
       current_base_time: nil,
@@ -66,12 +71,30 @@ defmodule Klife.Producer.Dispatcher do
       in_flight_pool: Enum.map(1..max_in_flight, fn _ -> nil end),
       next_send_msg_ref: next_send_msg_ref,
       producer_id: producer_id,
-      base_sequences: %{}
+      base_sequences: %{},
+      producer_epoch:
+        get_producer_epoch(cluster_name, broker_id, producer_config.producer_name, dispatcher_id),
+      broker_id: broker_id,
+      dispatcher_id: dispatcher_id,
+      producer_config: producer_config
     }
 
-    state = %__MODULE__{} = Map.merge(base, args_map)
-
     {:ok, state}
+  end
+
+  # TODO: Use an unique producer epoch for each topic partition
+  defp get_producer_epoch(cluster_name, broker_id, producer_name, dispatcher_id) do
+    key = {__MODULE__, cluster_name, broker_id, producer_name, dispatcher_id, :epoch}
+
+    case :persistent_term.get(key, nil) do
+      nil ->
+        counter = :atomics.new(1, [])
+        :persistent_term.put(key, counter)
+        :atomics.add_get(counter, 1, 1)
+
+      counter ->
+        :atomics.add_get(counter, 1, 1)
+    end
   end
 
   defp get_producer_id(cluster_name, broker_id) do
@@ -222,7 +245,7 @@ defmodule Klife.Producer.Dispatcher do
 
     cluster: #{state.producer_config.cluster_name}
     broker_id: #{state.broker_id}
-    producer_name: #{state.producer_config.name}
+    producer_name: #{state.producer_config.producer_name}
     """)
 
     {:noreply, %{state | in_flight_pool: List.replace_at(in_flight_pool, pool_idx, nil)}}
@@ -405,7 +428,8 @@ defmodule Klife.Producer.Dispatcher do
          %__MODULE__{
            base_sequences: bs,
            producer_id: p_id,
-           producer_config: %{enable_idempotence: idempotent?} = pconfig
+           producer_config: %{enable_idempotence: idempotent?} = pconfig,
+           producer_epoch: p_epoch
          } = _state,
          topic,
          partition
@@ -420,9 +444,8 @@ defmodule Klife.Producer.Dispatcher do
       base_timestamp: nil,
       max_timestamp: nil,
       producer_id: p_id,
-      # TODO: Handle producer epoch
-      producer_epoch: -1,
-      base_sequence: if(idempotent?, do: Map.get(bs, {topic, partition}, 0) + 1, else: -1),
+      producer_epoch: p_epoch,
+      base_sequence: if(idempotent?, do: Map.get(bs, {topic, partition}, 0), else: -1),
       records: [],
       records_length: 0
     }
@@ -461,12 +484,20 @@ defmodule Klife.Producer.Dispatcher do
   end
 
   defp update_base_sequence(curr_base_sequences, new_batch, topic, partition) do
-    new_base_sequence =
-      new_batch
-      |> Map.fetch!({topic, partition})
-      |> Map.fetch!(:base_sequence)
+    case Map.get(curr_base_sequences, {topic, partition}) do
+      nil ->
+        new_base_sequence =
+          new_batch
+          |> Map.fetch!({topic, partition})
+          |> Map.fetch!(:base_sequence)
 
-    Map.put(curr_base_sequences, {topic, partition}, new_base_sequence)
+        if new_base_sequence != -1,
+          do: Map.put(curr_base_sequences, {topic, partition}, new_base_sequence + 1),
+          else: curr_base_sequences
+
+      curr_base_seq ->
+        Map.replace!(curr_base_sequences, {topic, partition}, curr_base_seq + 1)
+    end
   end
 
   defp add_waiting_pid(waiting_pids, _new_batch, nil, _topic, _partition), do: waiting_pids
@@ -501,7 +532,8 @@ defmodule Klife.Producer.Dispatcher do
       cluster_name: cluster_name,
       retry_backoff_ms: retry_ms,
       client_id: client_id,
-      acks: acks
+      acks: acks,
+      producer_name: producer_name
     } = pconfig
 
     now = System.monotonic_time(:millisecond)
@@ -544,7 +576,21 @@ defmodule Klife.Producer.Dispatcher do
         [] ->
           send(callback_pid, {:broker_delivery_success, pool_idx})
 
-        _list ->
+        error_list ->
+          Enum.each(error_list, fn {topic, partition, error_code, _base_offset} ->
+            Logger.warning("""
+            Error while producing message. Retrying...
+
+            topic: #{topic}
+            partition: #{partition}
+            error_code: #{error_code}
+
+            cluster: #{cluster_name}
+            broker_id: #{broker_id}
+            producer_name: #{producer_name}
+            """)
+          end)
+
           # TODO: Handle specific errors by code, not just retry all not success
           # TODO: Handle out of order error for max_in_flight > 1
           success_keys = Enum.map(success_list, fn {t, p, _, _} -> {t, p} end)

@@ -12,7 +12,13 @@ defmodule Klife.Producer.Controller do
 
   @default_producer %{name: :default_producer}
 
-  defstruct [:cluster_name, :producers, :topics]
+  defstruct [
+    :cluster_name,
+    :producers,
+    :topics,
+    :check_metadata_waiting_pids,
+    :check_metadata_timer_ref
+  ]
 
   def start_link(args) do
     cluster_name = Keyword.fetch!(args, :cluster_name)
@@ -24,10 +30,14 @@ defmodule Klife.Producer.Controller do
     cluster_name = Keyword.fetch!(args, :cluster_name)
     topics_list = Keyword.get(args, :topics, [])
 
+    timer_ref = Process.send_after(self(), :check_metadata, 0)
+
     state = %__MODULE__{
       cluster_name: cluster_name,
       producers: [@default_producer] ++ Keyword.get(args, :producers, []),
-      topics: Enum.filter(topics_list, &Map.get(&1, :enable_produce, true))
+      topics: Enum.filter(topics_list, &Map.get(&1, :enable_produce, true)),
+      check_metadata_waiting_pids: [],
+      check_metadata_timer_ref: timer_ref
     }
 
     Enum.each(topics_list, fn t ->
@@ -45,8 +55,6 @@ defmodule Klife.Producer.Controller do
     ])
 
     Utils.wait_connection!(cluster_name)
-
-    send(self(), :check_metadata)
 
     {:ok, state}
   end
@@ -74,37 +82,87 @@ defmodule Klife.Producer.Controller do
   end
 
   @impl true
-  def handle_info(:check_metadata, %__MODULE__{} = state) do
+  def handle_info(
+        :check_metadata,
+        %__MODULE__{cluster_name: cluster_name, topics: topics} = state
+      ) do
     content = %{
-      topics: Enum.map(state.topics, fn t -> %{name: t.name} end)
+      topics: Enum.map(topics, fn t -> %{name: t.name} end)
     }
 
     {:ok, %{content: resp}} =
-      Broker.send_message(Messages.Metadata, state.cluster_name, :controller, content)
+      Broker.send_message(Messages.Metadata, cluster_name, :controller, content)
 
-    for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
-        config_topic = Enum.find(state.topics, &(&1.name == topic.name)),
-        partition <- topic.partitions do
-      state.cluster_name
-      |> topics_partitions_metadata_table()
-      |> :ets.insert({
-        {topic.name, partition.partition_index},
-        partition.leader_id,
-        config_topic[:producer] || @default_producer.name,
-        nil
-      })
-    end
+    table_name = topics_partitions_metadata_table(cluster_name)
 
-    if Enum.any?(resp.topics, &(&1.error_code != 0)) do
-      Process.send_after(self(), :check_metadata, :timer.seconds(5))
-    else
+    results =
+      for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
+          config_topic = Enum.find(topics, &(&1.name == topic.name)),
+          partition <- topic.partitions do
+        case :ets.lookup(table_name, {topic, partition}) do
+          [] ->
+            :ets.insert(table_name, {
+              {topic.name, partition.partition_index},
+              partition.leader_id,
+              config_topic[:producer] || @default_producer.name,
+              nil
+            })
+
+            :new
+
+          [{{^topic, ^partition}, current_broker_id, _default_producer, _dispatcher_id}] ->
+            if current_broker_id != partition.leader_id,
+              do: :ets.update_element(table_name, {topic, partition}, {2, partition.leader_id}),
+              else: :noop
+        end
+      end
+
+    if Enum.any?(results, &(&1 == :new)) do
       send(self(), :init_producers)
     end
 
-    {:noreply, state}
+    if Enum.any?(resp.topics, &(&1.error_code != 0)) do
+      new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
+      {:noreply, %{state | check_metadata_timer_ref: new_ref}}
+    else
+      state.check_metadata_waiting_pids
+      |> Enum.reverse()
+      |> Enum.each(&GenServer.reply(&1, :ok))
+
+      new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(300))
+
+      {:noreply, %{state | check_metadata_timer_ref: new_ref, check_metadata_waiting_pids: []}}
+    end
+  end
+
+  @impl true
+  def handle_call(:trigger_check_metadata, from, %__MODULE__{} = state) do
+    case state do
+      %__MODULE__{check_metadata_waiting_pids: []} ->
+        Process.cancel_timer(state.check_metadata_timer_ref)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
+
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_metadata_waiting_pids: [from],
+             check_metadata_timer_ref: new_ref
+         }}
+
+      %__MODULE__{} ->
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_metadata_waiting_pids: [from | state.check_metadata_timer_ref]
+         }}
+    end
   end
 
   # Public Interface
+
+  def trigger_metadata_verification(cluster_name) do
+    GenServer.call(via_tuple({__MODULE__, cluster_name}), :trigger_check_metadata)
+  end
 
   def get_topics_partitions_metadata(cluster_name, topic, partition) do
     [{_key, broker_id, default_producer, dispatcher_id}] =
