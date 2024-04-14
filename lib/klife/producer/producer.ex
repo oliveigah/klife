@@ -82,8 +82,13 @@ defmodule Klife.Producer do
         dispatcher_id
       )
 
+    # TODO: Should we handle cluster change errors here by retrying after a cluster check?
     receive do
-      {:klife_produce_sync, :ok, offset} -> {:ok, offset}
+      {:klife_produce_sync, :ok, offset} ->
+        {:ok, offset}
+
+      {:klife_produce_sync, :error, err} ->
+        {:error, err}
     after
       delivery_timeout_ms ->
         {:error, :timeout}
@@ -140,7 +145,7 @@ defmodule Klife.Producer do
     |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, dispatcher_id: d_id} ->
       # Used when a record is produced by a non default producer
       # in this case the proper dispatcher_id won't be present at
-      # main metadata ets table, therefore we need a way to 
+      # main metadata ets table, therefore we need a way to
       # find out it's value.
       put_dispatcher_id(cluster_name, producer_name, t_name, p_idx, d_id)
 

@@ -36,6 +36,7 @@ defmodule Klife.Producer.DispatcherTest do
       next_send_msg_ref: nil,
       batch_queue: :queue.new(),
       base_sequences: %{},
+      producer_epochs: %{},
       producer_id: 123
     }
 
