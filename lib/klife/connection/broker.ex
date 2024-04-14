@@ -183,7 +183,7 @@ defmodule Klife.Connection.Broker do
           via_tuple({Klife.Connection.CallbackSupervisor, cluster_name}),
           mod,
           fun,
-          [reply, args]
+          [reply | args]
         )
 
       # async send with no callback
