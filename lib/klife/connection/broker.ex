@@ -16,7 +16,7 @@ defmodule Klife.Connection.Broker do
   alias Klife.Connection.Controller
   alias Klife.Connection.MessageVersions
 
-  @reconnect_delays_seconds [5, 10, 30, 60, 90, 120, 300]
+  @reconnect_delays_seconds [1, 1, 1, 1, 5, 5, 10]
 
   defstruct [:broker_id, :cluster_name, :conn, :socket_opts, :url, :reconnect_attempts]
 

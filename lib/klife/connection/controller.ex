@@ -4,7 +4,7 @@ defmodule Klife.Connection.Controller do
 
   Responsible for starting broker connections, housekeeping
   common resources that are not broker specific such as
-  in flight message ets, correlation id counter and 
+  in flight message ets, correlation id counter and
   cluster controller.
 
   """
@@ -24,7 +24,7 @@ defmodule Klife.Connection.Controller do
   # in order to avoid reaching this limit.
   @max_correlation_counter 200_000_000
   @check_correlation_counter_delay :timer.seconds(300)
-  @check_cluster_delay :timer.seconds(180)
+  @check_cluster_delay :timer.seconds(30)
 
   defstruct [
     :bootstrap_servers,
@@ -75,8 +75,8 @@ defmodule Klife.Connection.Controller do
   def handle_info(:init_bootstrap_conn, %__MODULE__{} = state) do
     conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
     negotiate_api_versions(conn, state.cluster_name)
-    Process.send(self(), :check_cluster, [])
-    {:noreply, %__MODULE__{state | bootstrap_conn: conn}}
+    new_ref = Process.send(self(), :check_cluster, [])
+    {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_cluster_timer_ref: new_ref}}
   end
 
   def handle_info(:check_cluster, %__MODULE__{} = state) do
@@ -95,7 +95,7 @@ defmodule Klife.Connection.Controller do
          %__MODULE__{state | known_brokers: new_brokers_list, check_cluster_timer_ref: next_ref}}
 
       {:error, _reason} ->
-        Process.send_after(self(), :init_bootstrap_conn, 1_000)
+        Process.send_after(self(), :init_bootstrap_conn, :timer.seconds(1))
         {:noreply, state}
     end
   end
