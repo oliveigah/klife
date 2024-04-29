@@ -1,4 +1,4 @@
-defmodule Klife.Producer.Dispatcher do
+defmodule Klife.Producer.Batcher do
   use GenServer
   import Klife.ProcessRegistry
 
@@ -21,14 +21,14 @@ defmodule Klife.Producer.Dispatcher do
     :in_flight_pool,
     :next_send_msg_ref,
     :batch_queue,
-    :dispatcher_id
+    :batcher_id
   ]
 
   def start_link(args) do
     pconfig = Keyword.fetch!(args, :producer_config)
     cluster_name = pconfig.cluster_name
     broker_id = Keyword.fetch!(args, :broker_id)
-    dispatcher_id = Keyword.fetch!(args, :id)
+    batcher_id = Keyword.fetch!(args, :id)
 
     GenServer.start_link(__MODULE__, args,
       name:
@@ -36,7 +36,7 @@ defmodule Klife.Producer.Dispatcher do
           cluster_name,
           broker_id,
           pconfig.producer_name,
-          dispatcher_id
+          batcher_id
         )
     )
   end
@@ -48,7 +48,7 @@ defmodule Klife.Producer.Dispatcher do
     idempotent? = args_map.producer_config.enable_idempotence
     cluster_name = args_map.producer_config.cluster_name
     broker_id = args_map.broker_id
-    dispatcher_id = args_map.id
+    batcher_id = args_map.id
     producer_config = args_map.producer_config
 
     producer_id =
@@ -74,7 +74,7 @@ defmodule Klife.Producer.Dispatcher do
       base_sequences: %{},
       producer_epochs: %{},
       broker_id: broker_id,
-      dispatcher_id: dispatcher_id,
+      batcher_id: batcher_id,
       producer_config: producer_config
     }
 
@@ -100,10 +100,10 @@ defmodule Klife.Producer.Dispatcher do
         cluster_name,
         broker_id,
         producer_name,
-        dispatcher_id
+        batcher_id
       ) do
     cluster_name
-    |> get_process_name(broker_id, producer_name, dispatcher_id)
+    |> get_process_name(broker_id, producer_name, batcher_id)
     |> GenServer.call({:produce_sync, record, topic, partition, estimate_record_size(record)})
   end
 
@@ -338,7 +338,7 @@ defmodule Klife.Producer.Dispatcher do
         # socket writes and move the response handler to other process.
         {:ok, task_pid} =
           Task.Supervisor.start_child(
-            via_tuple({Klife.Producer.DispatcherTaskSupervisor, cluster_name}),
+            via_tuple({Klife.Producer.BatcherTaskSupervisor, cluster_name}),
             __MODULE__,
             :do_dispatch_to_broker,
             [
@@ -683,9 +683,9 @@ defmodule Klife.Producer.Dispatcher do
          cluster_name,
          broker_id,
          producer_name,
-         dispatcher_id
+         batcher_id
        ) do
-    via_tuple({__MODULE__, cluster_name, broker_id, producer_name, dispatcher_id})
+    via_tuple({__MODULE__, cluster_name, broker_id, producer_name, batcher_id})
   end
 
   defp estimate_record_size(record) do

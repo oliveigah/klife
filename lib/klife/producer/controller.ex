@@ -116,7 +116,7 @@ defmodule Klife.Producer.Controller do
 
                 :new
 
-              [{key, current_broker_id, _default_producer, _dispatcher_id}] ->
+              [{key, current_broker_id, _default_producer, _batcher_id}] ->
                 if current_broker_id != partition.leader_id do
                   :ets.update_element(
                     table_name,
@@ -197,7 +197,7 @@ defmodule Klife.Producer.Controller do
   end
 
   def get_topics_partitions_metadata(cluster_name, topic, partition) do
-    [{_key, broker_id, default_producer, dispatcher_id}] =
+    [{_key, broker_id, default_producer, batcher_id}] =
       cluster_name
       |> topics_partitions_metadata_table()
       |> :ets.lookup({topic, partition})
@@ -205,7 +205,7 @@ defmodule Klife.Producer.Controller do
     %{
       broker_id: broker_id,
       producer_name: default_producer,
-      dispatcher_id: dispatcher_id
+      batcher_id: batcher_id
     }
   end
 
@@ -221,28 +221,28 @@ defmodule Klife.Producer.Controller do
     |> :ets.lookup_element({topic, partition}, 3)
   end
 
-  def get_dispatcher_id(cluster_name, topic, partition) do
+  def get_batcher_id(cluster_name, topic, partition) do
     cluster_name
     |> topics_partitions_metadata_table()
     |> :ets.lookup_element({topic, partition}, 4)
   end
 
-  def update_dispatcher_id(cluster_name, topic, partition, new_dispatcher_id) do
+  def update_batcher_id(cluster_name, topic, partition, new_batcher_id) do
     cluster_name
     |> topics_partitions_metadata_table()
-    |> :ets.update_element({topic, partition}, {4, new_dispatcher_id})
+    |> :ets.update_element({topic, partition}, {4, new_batcher_id})
   end
 
   def get_all_topics_partitions_metadata(cluster_name) do
     cluster_name
     |> topics_partitions_metadata_table()
     |> :ets.tab2list()
-    |> Enum.map(fn {{topic_name, partition_idx}, leader_id, _default_producer, dispatcher_id} ->
+    |> Enum.map(fn {{topic_name, partition_idx}, leader_id, _default_producer, batcher_id} ->
       %{
         topic_name: topic_name,
         partition_idx: partition_idx,
         leader_id: leader_id,
-        dispatcher_id: dispatcher_id
+        batcher_id: batcher_id
       }
     end)
   end

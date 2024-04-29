@@ -31,19 +31,19 @@ config :klife,
           client_id: "my_custom_client_id"
         },
         %{
-          name: :dispatcher_benchmark_producer_1,
+          name: :batcher_benchmark_producer_1,
           client_id: "my_custom_client_id",
-          dispatchers_count: 1
+          batchers_count: 1
         },
         %{
-          name: :dispatcher_benchmark_producer_2,
+          name: :batcher_benchmark_producer_2,
           client_id: "my_custom_client_id",
-          dispatchers_count: 2
+          batchers_count: 2
         },
         %{
-          name: :dispatcher_benchmark_producer_3,
+          name: :batcher_benchmark_producer_3,
           client_id: "my_custom_client_id",
-          dispatchers_count: 3
+          batchers_count: 3
         }
       ],
       topics: [
@@ -58,20 +58,20 @@ config :klife,
           producer: :my_batch_compressed_producer
         },
         %{
-          name: "dispatcher_benchmark_topic_1",
-          producer: :dispatcher_benchmark_producer_1,
+          name: "batcher_benchmark_topic_1",
+          producer: :batcher_benchmark_producer_1,
           num_partitions: 30,
           replication_factor: 2
         },
         %{
-          name: "dispatcher_benchmark_topic_2",
-          producer: :dispatcher_benchmark_producer_2,
+          name: "batcher_benchmark_topic_2",
+          producer: :batcher_benchmark_producer_2,
           num_partitions: 30,
           replication_factor: 2
         },
         %{
-          name: "dispatcher_benchmark_topic_3",
-          producer: :dispatcher_benchmark_producer_3,
+          name: "batcher_benchmark_topic_3",
+          producer: :batcher_benchmark_producer_3,
           num_partitions: 30,
           replication_factor: 2
         },

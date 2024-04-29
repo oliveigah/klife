@@ -1,4 +1,4 @@
-defmodule Klife.Producer.DispatcherSupervisor do
+defmodule Klife.Producer.BatcherSupervisor do
   use DynamicSupervisor
 
   import Klife.ProcessRegistry

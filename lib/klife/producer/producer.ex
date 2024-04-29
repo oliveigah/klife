@@ -3,8 +3,8 @@ defmodule Klife.Producer do
 
   import Klife.ProcessRegistry
 
-  alias Klife.Producer.Dispatcher
-  alias Klife.Producer.DispatcherSupervisor
+  alias Klife.Producer.Batcher
+  alias Klife.Producer.BatcherSupervisor
   alias Klife.Producer.Controller, as: ProducerController
   alias Klife.Connection.Controller, as: ConnController
 
@@ -20,7 +20,7 @@ defmodule Klife.Producer do
     request_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(15)],
     retry_backoff_ms: [type: :non_neg_integer, default: :timer.seconds(1)],
     max_in_flight_requests: [type: :non_neg_integer, default: 1],
-    dispatchers_count: [type: :pos_integer, default: 1],
+    batchers_count: [type: :pos_integer, default: 1],
     enable_idempotence: [type: :boolean, default: true],
     compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none]
   ]
@@ -50,7 +50,7 @@ defmodule Klife.Producer do
     filtered_args = Map.take(args_map, Map.keys(base))
     state = Map.merge(base, filtered_args)
 
-    :ok = init_dispatchers(state)
+    :ok = init_batchers(state)
 
     {:ok, state}
   end
@@ -59,27 +59,27 @@ defmodule Klife.Producer do
     %{
       broker_id: broker_id,
       producer_name: default_producer,
-      dispatcher_id: default_dispatcher_id
+      batcher_id: default_batcher_id
     } = ProducerController.get_topics_partitions_metadata(cluster_name, topic, partition)
 
-    {producer_name, dispatcher_id} =
+    {producer_name, batcher_id} =
       case Keyword.get(opts, :producer) do
         nil ->
-          {default_producer, default_dispatcher_id}
+          {default_producer, default_batcher_id}
 
         other_producer ->
-          {other_producer, get_dispatcher_id(cluster_name, other_producer, topic, partition)}
+          {other_producer, get_batcher_id(cluster_name, other_producer, topic, partition)}
       end
 
     {:ok, delivery_timeout_ms} =
-      Dispatcher.produce_sync(
+      Batcher.produce_sync(
         record,
         topic,
         partition,
         cluster_name,
         broker_id,
         producer_name,
-        dispatcher_id
+        batcher_id
       )
 
     # TODO: Should we handle cluster change errors here by retrying after a cluster check?
@@ -95,22 +95,22 @@ defmodule Klife.Producer do
     end
   end
 
-  defp init_dispatchers(%__MODULE__{} = state) do
+  defp init_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.cluster_name)
-    dispatchers_per_broker = state.dispatchers_count
-    :ok = do_init_dispatchers(state, known_brokers, dispatchers_per_broker)
-    :ok = update_topic_partition_metadata(state, dispatchers_per_broker)
+    batchers_per_broker = state.batchers_count
+    :ok = do_init_batchers(state, known_brokers, batchers_per_broker)
+    :ok = update_topic_partition_metadata(state, batchers_per_broker)
 
     :ok
   end
 
-  defp do_init_dispatchers(state, known_brokers, dispatchers_per_broker) do
+  defp do_init_batchers(state, known_brokers, batchers_per_broker) do
     for broker_id <- known_brokers,
-        dispatcher_id <- 0..(dispatchers_per_broker - 1) do
+        batcher_id <- 0..(batchers_per_broker - 1) do
       result =
         DynamicSupervisor.start_child(
-          via_tuple({DispatcherSupervisor, state.cluster_name}),
-          {Dispatcher, [{:broker_id, broker_id}, {:id, dispatcher_id}, {:producer_config, state}]}
+          via_tuple({BatcherSupervisor, state.cluster_name}),
+          {Batcher, [{:broker_id, broker_id}, {:id, batcher_id}, {:producer_config, state}]}
         )
 
       case result do
@@ -122,7 +122,7 @@ defmodule Klife.Producer do
     :ok
   end
 
-  defp update_topic_partition_metadata(%__MODULE__{} = state, dispatchers_per_broker) do
+  defp update_topic_partition_metadata(%__MODULE__{} = state, batchers_per_broker) do
     %__MODULE__{
       cluster_name: cluster_name,
       producer_name: producer_name
@@ -136,33 +136,33 @@ defmodule Klife.Producer do
       |> Enum.with_index()
       |> Enum.map(fn {val, idx} ->
         dipsatcher_id =
-          if dispatchers_per_broker > 1, do: rem(idx, dispatchers_per_broker), else: 0
+          if batchers_per_broker > 1, do: rem(idx, batchers_per_broker), else: 0
 
-        Map.put(val, :dispatcher_id, dipsatcher_id)
+        Map.put(val, :batcher_id, dipsatcher_id)
       end)
     end)
     |> List.flatten()
-    |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, dispatcher_id: d_id} ->
+    |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, batcher_id: d_id} ->
       # Used when a record is produced by a non default producer
-      # in this case the proper dispatcher_id won't be present at
+      # in this case the proper batcher_id won't be present at
       # main metadata ets table, therefore we need a way to
       # find out it's value.
-      put_dispatcher_id(cluster_name, producer_name, t_name, p_idx, d_id)
+      put_batcher_id(cluster_name, producer_name, t_name, p_idx, d_id)
 
       if ProducerController.get_default_producer(cluster_name, t_name, p_idx) == producer_name do
-        ProducerController.update_dispatcher_id(cluster_name, t_name, p_idx, d_id)
+        ProducerController.update_batcher_id(cluster_name, t_name, p_idx, d_id)
       end
     end)
   end
 
-  defp put_dispatcher_id(cluster_name, producer_name, topic, partition, dispatcher_id) do
+  defp put_batcher_id(cluster_name, producer_name, topic, partition, batcher_id) do
     :persistent_term.put(
       {__MODULE__, cluster_name, producer_name, topic, partition},
-      dispatcher_id
+      batcher_id
     )
   end
 
-  defp get_dispatcher_id(cluster_name, producer_name, topic, partition) do
+  defp get_batcher_id(cluster_name, producer_name, topic, partition) do
     :persistent_term.get({__MODULE__, cluster_name, producer_name, topic, partition})
   end
 end

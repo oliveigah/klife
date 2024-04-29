@@ -1,7 +1,7 @@
-defmodule Klife.Producer.DispatcherTest do
+defmodule Klife.Producer.BatcherTest do
   use ExUnit.Case
   alias Klife.Producer
-  alias Klife.Producer.Dispatcher
+  alias Klife.Producer.Batcher
 
   test "add records to batch" do
     %{value: rec_val, key: rec_key, headers: rec_headers} =
@@ -11,7 +11,7 @@ defmodule Klife.Producer.DispatcherTest do
         headers: [%{key: "header_key", value: "header_value"}]
       }
 
-    state = %Dispatcher{
+    state = %Batcher{
       producer_config: %Producer{
         acks: :all,
         batch_size_bytes: 16000,
@@ -41,7 +41,7 @@ defmodule Klife.Producer.DispatcherTest do
     }
 
     assert {:reply, {:ok, 60000}, new_state} =
-             Dispatcher.handle_call(
+             Batcher.handle_call(
                {:produce_sync, rec, "my_topic", 0, 100},
                {self(), nil},
                state
@@ -67,7 +67,7 @@ defmodule Klife.Producer.DispatcherTest do
       }
 
     assert {:reply, {:ok, 60000}, new_state} =
-             Dispatcher.handle_call(
+             Batcher.handle_call(
                {:produce_sync, rec, "my_topic", 0, 200},
                {self(), nil},
                new_state
@@ -93,7 +93,7 @@ defmodule Klife.Producer.DispatcherTest do
       }
 
     assert {:reply, {:ok, 60000}, new_state} =
-             Dispatcher.handle_call(
+             Batcher.handle_call(
                {:produce_sync, rec, "my_topic", 1, 300},
                {self(), nil},
                new_state
@@ -122,7 +122,7 @@ defmodule Klife.Producer.DispatcherTest do
       }
 
     assert {:reply, {:ok, 60000}, new_state} =
-             Dispatcher.handle_call(
+             Batcher.handle_call(
                {:produce_sync, rec, "topic_b", 0, 400},
                {self(), nil},
                new_state
