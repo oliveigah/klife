@@ -81,13 +81,22 @@ if Mix.env() in [:dev] do
                 :my_test_cluster_1
               )
           end,
-          "kafka_ex" => fn ->
+          "klife multi inflight" => fn ->
             {:ok, offset} =
-              KafkaEx.produce(topic, Enum.random(0..(max_partition - 1)), val,
-                key: key,
-                required_acks: -1
+              Klife.Producer.produce_sync(
+                record,
+                "benchmark_topic_in_flight",
+                Enum.random(0..(max_partition - 1)),
+                :my_test_cluster_1
               )
           end,
+          # "kafka_ex" => fn ->
+          #   {:ok, offset} =
+          #     KafkaEx.produce(topic, Enum.random(0..(max_partition - 1)), val,
+          #       key: key,
+          #       required_acks: -1
+          #     )
+          # end,
           "brod" => fn ->
             {:ok, offset} =
               :brod.produce_sync_offset(

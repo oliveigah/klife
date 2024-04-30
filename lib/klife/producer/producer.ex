@@ -8,7 +8,6 @@ defmodule Klife.Producer do
   alias Klife.Producer.Controller, as: ProducerController
   alias Klife.Connection.Controller, as: ConnController
 
-  # TODO: Implement commented options functionality
   @producer_options [
     cluster_name: [type: :atom, required: true],
     name: [type: :atom, required: true],

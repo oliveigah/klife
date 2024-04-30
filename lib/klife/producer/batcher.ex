@@ -4,6 +4,7 @@ defmodule Klife.Producer.Batcher do
 
   require Logger
   alias Klife.Producer
+  alias Klife.Producer.Dispatcher
   alias Klife.Connection.Broker
   alias KlifeProtocol.Messages, as: M
 
@@ -21,7 +22,8 @@ defmodule Klife.Producer.Batcher do
     :in_flight_pool,
     :next_send_msg_ref,
     :batch_queue,
-    :batcher_id
+    :batcher_id,
+    :dispatcher_pid
   ]
 
   def start_link(args) do
@@ -78,7 +80,23 @@ defmodule Klife.Producer.Batcher do
       producer_config: producer_config
     }
 
-    {:ok, state}
+    {:ok, dispatcher_pid} = start_dispatcher(state)
+
+    {:ok, %{state | dispatcher_pid: dispatcher_pid}}
+  end
+
+  defp start_dispatcher(%__MODULE__{} = state) do
+    args = [
+      producer_config: state.producer_config,
+      broker_id: state.broker_id,
+      batcher_id: state.batcher_id,
+      batcher_pid: self()
+    ]
+
+    case Dispatcher.start_link(args) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+    end
   end
 
   defp get_producer_id(cluster_name, broker_id) do
@@ -305,10 +323,10 @@ defmodule Klife.Producer.Batcher do
 
   def dispatch_to_broker(
         %__MODULE__{
-          producer_config: %{cluster_name: cluster_name} = pconfig,
-          broker_id: broker_id,
+          producer_config: pconfig,
           in_flight_pool: in_flight_pool,
-          batch_queue: batch_queue
+          batch_queue: batch_queue,
+          dispatcher_pid: dispatcher_pid
         } = state,
         pool_idx
       ) do
@@ -332,31 +350,23 @@ defmodule Klife.Producer.Batcher do
           current_base_time: batch_base_time
         } = data_to_send
 
-        # TODO: When in flight > 1 messages can be written on socket
-        # out of order leading to idempotency errors and added latency
-        # for idempotent producers. One way to fix this is to serialize
-        # socket writes and move the response handler to other process.
-        {:ok, task_pid} =
-          Task.Supervisor.start_child(
-            via_tuple({Klife.Producer.BatcherTaskSupervisor, cluster_name}),
-            __MODULE__,
-            :do_dispatch_to_broker,
-            [
-              pconfig,
-              batch_to_send,
-              broker_id,
-              self(),
-              waiting_pids,
-              pool_idx,
-              batch_base_time
-            ],
-            restart: :transient
-          )
+        req_ref = make_ref()
+
+        dispatcher_req = %Dispatcher.Request{
+          base_time: batch_base_time,
+          batch_to_send: batch_to_send,
+          delivery_confirmation_pids: waiting_pids,
+          pool_idx: pool_idx,
+          producer_config: pconfig,
+          request_ref: req_ref
+        }
+
+        :ok = Dispatcher.dispatch(dispatcher_pid, dispatcher_req)
 
         new_state = %{
           state
           | batch_queue: new_batch_queue,
-            in_flight_pool: List.replace_at(in_flight_pool, pool_idx, task_pid),
+            in_flight_pool: List.replace_at(in_flight_pool, pool_idx, req_ref),
             last_batch_sent_at: System.monotonic_time(:millisecond)
         }
 
@@ -508,175 +518,6 @@ defmodule Klife.Producer.Batcher do
       current_pids ->
         Map.replace!(waiting_pids, {topic, partition}, [{new_pid, offset} | current_pids])
     end
-  end
-
-  @delivery_success_codes [0, 46]
-  @delivery_discard_codes [18, 47]
-  def do_dispatch_to_broker(
-        pconfig,
-        batch_to_send,
-        broker_id,
-        callback_pid,
-        delivery_confirmation_pids,
-        pool_idx,
-        base_time
-      ) do
-    %Producer{
-      request_timeout_ms: req_timeout,
-      delivery_timeout_ms: delivery_timeout,
-      cluster_name: cluster_name,
-      retry_backoff_ms: retry_ms,
-      client_id: client_id,
-      acks: acks,
-      producer_name: producer_name
-    } = pconfig
-
-    now = System.monotonic_time(:millisecond)
-
-    headers = %{client_id: client_id}
-
-    content = %{
-      transactional_id: nil,
-      acks: if(acks == :all, do: -1, else: acks),
-      timeout_ms: req_timeout,
-      topic_data: parse_batch_before_send(batch_to_send)
-    }
-
-    before_deadline? = now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
-
-    with {:before_deadline?, true} <- {:before_deadline?, before_deadline?},
-         {:ok, resp} <- Broker.send_message(M.Produce, cluster_name, broker_id, content, headers) do
-      grouped_results =
-        for %{name: topic_name, partition_responses: partition_resps} <- resp.content.responses,
-            %{error_code: error_code, index: p_index} = p <- partition_resps do
-          {topic_name, p_index, error_code, p[:base_offset]}
-        end
-        |> Enum.group_by(&(elem(&1, 2) in @delivery_success_codes))
-
-      success_list = grouped_results[true] || []
-      failure_list = grouped_results[false] || []
-
-      success_list
-      |> Enum.each(fn {topic, partition, _code, base_offset} ->
-        delivery_confirmation_pids
-        |> Map.get({topic, partition}, [])
-        |> Enum.reverse()
-        |> Enum.each(fn {pid, batch_offset} ->
-          send(pid, {:klife_produce_sync, :ok, base_offset + batch_offset})
-        end)
-      end)
-
-      case failure_list do
-        [] ->
-          send(callback_pid, {:request_completed, pool_idx})
-
-        error_list ->
-          # TODO: Enhance specific code error handling
-          # TODO: One major problem with the current implementantion is that
-          # one bad topic can hold the in flight request spot for a long time
-          # can it be handled better without a new producer?
-          grouped_errors =
-            Enum.group_by(error_list, fn {topic, partition, error_code, _base_offset} ->
-              cond do
-                error_code in @delivery_discard_codes ->
-                  Logger.warning("""
-                  Fatal error while producing message. Message will be discarded!
-
-                  topic: #{topic}
-                  partition: #{partition}
-                  error_code: #{error_code}
-
-                  cluster: #{cluster_name}
-                  broker_id: #{broker_id}
-                  producer_name: #{producer_name}
-                  """)
-
-                  :discard
-
-                true ->
-                  Logger.warning("""
-                  Error while producing message. Message will be retried!
-
-                  topic: #{topic}
-                  partition: #{partition}
-                  error_code: #{error_code}
-
-                  cluster: #{cluster_name}
-                  broker_id: #{broker_id}
-                  producer_name: #{producer_name}
-                  """)
-
-                  :retry
-              end
-            end)
-
-          to_discard = grouped_errors[:discard] || []
-
-          Enum.each(to_discard, fn {topic, partition, error_code, _base_offset} ->
-            delivery_confirmation_pids
-            |> Map.get({topic, partition}, [])
-            |> Enum.reverse()
-            |> Enum.each(fn {pid, _batch_offset} ->
-              send(pid, {:klife_produce_sync, :error, error_code})
-            end)
-          end)
-
-          to_drop_list = List.flatten([success_list, to_discard])
-          to_drop_keys = Enum.map(to_drop_list, fn {t, p, _, _} -> {t, p} end)
-          new_batch_to_send = Map.drop(batch_to_send, to_drop_keys)
-
-          if Map.keys(new_batch_to_send) == [] do
-            send(callback_pid, {:request_completed, pool_idx})
-          else
-            Process.sleep(retry_ms)
-
-            do_dispatch_to_broker(
-              pconfig,
-              new_batch_to_send,
-              broker_id,
-              callback_pid,
-              delivery_confirmation_pids,
-              pool_idx,
-              base_time
-            )
-          end
-      end
-    else
-      {:before_deadline?, false} ->
-        failed_topic_partitions = Map.keys(batch_to_send)
-        send(callback_pid, {:bump_epoch, failed_topic_partitions})
-        send(callback_pid, {:request_completed, pool_idx})
-
-      {:error, _reason} ->
-        Process.sleep(retry_ms)
-
-        do_dispatch_to_broker(
-          pconfig,
-          batch_to_send,
-          broker_id,
-          callback_pid,
-          delivery_confirmation_pids,
-          pool_idx,
-          base_time
-        )
-    end
-  end
-
-  defp parse_batch_before_send(batch_to_send) do
-    batch_to_send
-    |> Enum.group_by(fn {k, _} -> elem(k, 0) end, fn {k, v} -> {elem(k, 1), v} end)
-    |> Enum.map(fn {topic, partitions_list} ->
-      %{
-        name: topic,
-        partition_data:
-          Enum.map(partitions_list, fn {partition, batch} ->
-            %{
-              index: partition,
-              records: Map.replace!(batch, :records, Enum.reverse(batch.records))
-            }
-          end)
-      }
-    end)
   end
 
   defp get_process_name(
