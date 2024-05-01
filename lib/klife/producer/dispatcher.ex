@@ -22,7 +22,6 @@ defmodule Klife.Producer.Dispatcher do
 
   alias Klife.Connection.Broker
   alias Klife.Producer
-  alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages, as: M
 
   require Logger
@@ -122,10 +121,14 @@ defmodule Klife.Producer.Dispatcher do
 
   @delivery_success_codes [0, 46]
   @delivery_discard_codes [18, 47]
-  def handle_info({:broker_response, req_ref, binary_resp}, %__MODULE__{} = state) do
+  def handle_info(
+        {:async_broker_response, req_ref, binary_resp, M.Produce = msg_mod, msg_version},
+        %__MODULE__{} = state
+      ) do
     %__MODULE__{
       batcher_pid: batcher_pid,
-      requests: requests
+      requests: requests,
+      broker_id: broker_id
     } = state
 
     data =
@@ -134,10 +137,10 @@ defmodule Klife.Producer.Dispatcher do
         pool_idx: pool_idx,
         request_ref: ^req_ref,
         batch_to_send: batch_to_send,
-        producer_config: %{cluster_name: cluster_name} = p_config
+        producer_config: %{producer_name: producer_name, cluster_name: cluster_name} = p_config
       } = Map.fetch!(requests, req_ref)
 
-    {:ok, resp} = M.Produce.deserialize_response(binary_resp, MV.get(cluster_name, M.Produce))
+    {:ok, resp} = apply(msg_mod, :deserialize_response, [binary_resp, msg_version])
 
     grouped_results =
       for %{name: topic_name, partition_responses: partition_resps} <- resp.content.responses,
@@ -180,9 +183,9 @@ defmodule Klife.Producer.Dispatcher do
                 partition: #{partition}
                 error_code: #{error_code}
 
-                cluster: #{p_config.cluster_name}
-                broker_id: #{state.broker_id}
-                producer_name: #{p_config.producer_name}
+                cluster: #{cluster_name}
+                broker_id: #{broker_id}
+                producer_name: #{producer_name}
                 """)
 
                 :discard
@@ -195,9 +198,9 @@ defmodule Klife.Producer.Dispatcher do
                 partition: #{partition}
                 error_code: #{error_code}
 
-                cluster: #{p_config.cluster_name}
-                broker_id: #{state.broker_id}
-                producer_name: #{p_config.producer_name}
+                cluster: #{cluster_name}
+                broker_id: #{broker_id}
+                producer_name: #{producer_name}
                 """)
 
                 :retry
@@ -272,7 +275,8 @@ defmodule Klife.Producer.Dispatcher do
   defp send_to_broker_async(cluster_name, broker_id, content, headers, req_ref) do
     opts = [
       async: true,
-      callback: {__MODULE__, :broker_callback, [req_ref, self()]}
+      callback_pid: self(),
+      callback_ref: req_ref
     ]
 
     Broker.send_message(M.Produce, cluster_name, broker_id, content, headers, opts)

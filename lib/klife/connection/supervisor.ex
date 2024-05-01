@@ -10,12 +10,9 @@ defmodule Klife.Connection.Supervisor do
 
   @impl true
   def init(opts) do
-    cluster_name = Keyword.fetch!(opts, :cluster_name)
-
     children = [
       {Klife.Connection.BrokerSupervisor, opts},
-      {Klife.Connection.Controller, opts},
-      {Task.Supervisor, name: via_tuple({Klife.Connection.CallbackSupervisor, cluster_name})}
+      {Klife.Connection.Controller, opts}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

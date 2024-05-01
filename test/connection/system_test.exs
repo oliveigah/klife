@@ -2,25 +2,32 @@ defmodule Klife.Connection.SystemTest do
   use ExUnit.Case
   alias Klife.Utils
   alias Klife.Connection.Broker
+  alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages.ApiVersions
 
   defp check_broker_connection(cluster_name, broker_id) do
     parent = self()
+    ref = make_ref()
 
-    assert {:ok, response} = Broker.send_message(ApiVersions, cluster_name, broker_id)
-    assert is_list(response.content.api_keys)
+    assert {:ok, %{content: resp_content}} =
+             Broker.send_message(ApiVersions, cluster_name, broker_id)
+
+    assert is_list(resp_content.api_keys)
 
     assert :ok = Broker.send_message(ApiVersions, cluster_name, broker_id, %{}, %{}, async: true)
 
     assert :ok =
              Broker.send_message(ApiVersions, cluster_name, broker_id, %{}, %{},
                async: true,
-               callback: fn _ ->
-                 send(parent, {:ping, broker_id})
-               end
+               callback_pid: parent,
+               callback_ref: ref
              )
 
-    assert_receive {:ping, ^broker_id}, :timer.seconds(2)
+    mv = MV.get(cluster_name, ApiVersions)
+
+    assert_receive {:async_broker_response, ^ref, binary_resp, ApiVersions, ^mv}
+
+    assert {:ok, %{content: ^resp_content}} = ApiVersions.deserialize_response(binary_resp, mv)
   end
 
   test "setup non ssl", %{test: test_name} do

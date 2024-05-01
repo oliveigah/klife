@@ -49,9 +49,7 @@ defmodule Klife.Connection.Controller do
     :ets.new(get_in_flight_messages_table_name(cluster_name), [
       :set,
       :public,
-      :named_table,
-      write_concurrency: true,
-      decentralized_counters: true
+      :named_table
     ])
 
     :persistent_term.put({:correlation_counter, cluster_name}, :atomics.new(1, []))

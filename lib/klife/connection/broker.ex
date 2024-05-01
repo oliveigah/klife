@@ -101,11 +101,12 @@ defmodule Klife.Connection.Broker do
     data = apply(message_mod, :serialize_request, [input, version])
 
     if Keyword.get(opts, :async, false),
-      do: send_raw_async(data, correlation_id, broker_id, cluster_name, opts[:callback]),
-      else: send_raw_sync(data, message_mod, correlation_id, broker_id, cluster_name)
+      do:
+        send_raw_async(data, message_mod, version, correlation_id, broker_id, cluster_name, opts),
+      else: send_raw_sync(data, message_mod, version, correlation_id, broker_id, cluster_name)
   end
 
-  def send_raw_sync(raw_data, message_mod, correlation_id, broker_id, cluster_name) do
+  def send_raw_sync(raw_data, message_mod, msg_version, correlation_id, broker_id, cluster_name) do
     broker_id = get_broker_id(broker_id, cluster_name)
     conn = get_connection(cluster_name, broker_id)
     true = Controller.insert_in_flight(cluster_name, correlation_id)
@@ -114,10 +115,7 @@ defmodule Klife.Connection.Broker do
       :ok ->
         receive do
           {:broker_response, response} ->
-            apply(message_mod, :deserialize_response, [
-              response,
-              MessageVersions.get(cluster_name, message_mod)
-            ])
+            apply(message_mod, :deserialize_response, [response, msg_version])
         after
           conn.read_timeout + 2000 ->
             Controller.take_from_in_flight(cluster_name, correlation_id)
@@ -138,16 +136,23 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  def send_raw_async(raw_data, correlation_id, broker_id, cluster_name, callback) do
+  def send_raw_async(
+        raw_data,
+        msg_mod,
+        msg_version,
+        correlation_id,
+        broker_id,
+        cluster_name,
+        opts
+      ) do
     broker_id = get_broker_id(broker_id, cluster_name)
     conn = get_connection(cluster_name, broker_id)
 
+    callback_pid = Keyword.get(opts, :callback_pid)
+    callback_ref = Keyword.get(opts, :callback_ref)
+
     in_flight_data =
-      cond do
-        is_function(callback) -> callback
-        match?({_m, _f, _a}, callback) -> callback
-        true -> :noop
-      end
+      if callback_pid, do: {callback_pid, callback_ref, msg_mod, msg_version}, else: :noop
 
     true = Controller.insert_in_flight(cluster_name, correlation_id, in_flight_data)
 
@@ -171,20 +176,8 @@ defmodule Klife.Connection.Broker do
         Process.send(waiting_pid, {:broker_response, reply}, [])
 
       # async send function callback
-      {^correlation_id, callback} when is_function(callback) ->
-        Task.Supervisor.start_child(
-          via_tuple({Klife.Connection.CallbackSupervisor, cluster_name}),
-          fn -> callback.(reply) end
-        )
-
-      # async send mfa callback
-      {^correlation_id, {mod, fun, args}} ->
-        Task.Supervisor.start_child(
-          via_tuple({Klife.Connection.CallbackSupervisor, cluster_name}),
-          mod,
-          fun,
-          [reply | args]
-        )
+      {^correlation_id, {callback_pid, callback_ref, msg_mod, msg_version}} ->
+        send(callback_pid, {:async_broker_response, callback_ref, reply, msg_mod, msg_version})
 
       # async send with no callback
       {^correlation_id, :noop} ->
