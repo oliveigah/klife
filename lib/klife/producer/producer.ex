@@ -141,15 +141,15 @@ defmodule Klife.Producer do
       end)
     end)
     |> List.flatten()
-    |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, batcher_id: d_id} ->
+    |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, batcher_id: b_id} ->
       # Used when a record is produced by a non default producer
       # in this case the proper batcher_id won't be present at
       # main metadata ets table, therefore we need a way to
       # find out it's value.
-      put_batcher_id(cluster_name, producer_name, t_name, p_idx, d_id)
+      put_batcher_id(cluster_name, producer_name, t_name, p_idx, b_id)
 
       if ProducerController.get_default_producer(cluster_name, t_name, p_idx) == producer_name do
-        ProducerController.update_batcher_id(cluster_name, t_name, p_idx, d_id)
+        ProducerController.update_batcher_id(cluster_name, t_name, p_idx, b_id)
       end
     end)
   end
