@@ -49,13 +49,13 @@ defmodule Klife.Producer do
     filtered_args = Map.take(args_map, Map.keys(base))
     state = Map.merge(base, filtered_args)
 
-    send(self(), :handle_batchers)
+    :ok = do_handle_batchers(state)
 
     {:ok, state}
   end
 
   def handle_info(:handle_batchers, %__MODULE__{} = state) do
-    :ok = handle_batchers(state)
+    :ok = do_handle_batchers(state)
     {:noreply, state}
   end
 
@@ -86,7 +86,6 @@ defmodule Klife.Producer do
         batcher_id
       )
 
-    # TODO: Should we handle cluster change errors here by retrying after a cluster check?
     receive do
       {:klife_produce_sync, :ok, offset} ->
         {:ok, offset}
@@ -99,7 +98,7 @@ defmodule Klife.Producer do
     end
   end
 
-  defp handle_batchers(%__MODULE__{} = state) do
+  defp do_handle_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.cluster_name)
     batchers_per_broker = state.batchers_count
     :ok = init_batchers(state, known_brokers, batchers_per_broker)

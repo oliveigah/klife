@@ -137,6 +137,7 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
+  # TODO: Handle more specific codes
   @delivery_success_codes [0, 46]
   @delivery_discard_codes [18, 47]
   def handle_info(

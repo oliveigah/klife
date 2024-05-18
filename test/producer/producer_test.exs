@@ -2,7 +2,9 @@ defmodule Klife.ProducerTest do
   use ExUnit.Case
 
   alias Klife.Producer
+  alias Klife.Producer.Controller, as: ProdController
   alias Klife.Utils
+  alias Klife.TestUtils
 
   defp assert_offset(expected_record, cluster, topic, partition, offset) do
     stored_record = Utils.get_record_by_offset(cluster, topic, partition, offset)
@@ -182,5 +184,40 @@ defmodule Klife.ProducerTest do
              Utils.get_partition_resp_records_by_offset(cluster, topic, 1, offset_1)
 
     assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
+  end
+
+  test "is able to recover from cluster changes" do
+    cluster = :my_test_cluster_1
+    topic = "my_no_batch_topic"
+
+    record = %{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
+    }
+
+    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
+
+    assert_offset(record, cluster, topic, 1, offset)
+
+    %{broker_id: old_broker_id} = ProdController.get_topics_partitions_metadata(cluster, topic, 1)
+
+    {:ok, service_name} = TestUtils.stop_broker(cluster, old_broker_id)
+
+    %{broker_id: new_broker_id} = ProdController.get_topics_partitions_metadata(cluster, topic, 1)
+
+    assert new_broker_id != old_broker_id
+
+    record = %{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
+    }
+
+    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
+
+    assert_offset(record, cluster, topic, 1, offset)
+
+    {:ok, _} = TestUtils.start_broker(service_name, cluster)
   end
 end
