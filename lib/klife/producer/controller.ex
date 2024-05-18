@@ -3,6 +3,8 @@ defmodule Klife.Producer.Controller do
 
   import Klife.ProcessRegistry
 
+  alias Klife.PubSub
+
   alias KlifeProtocol.Messages
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
@@ -58,10 +60,26 @@ defmodule Klife.Producer.Controller do
 
     Utils.wait_connection!(cluster_name)
 
+    :ok = PubSub.subscribe({:cluster_change, cluster_name})
+
     {:ok, state}
   end
 
-  def handle_info(:init_producers, %__MODULE__{} = state) do
+  def handle_info(
+        {{:cluster_change, cluster_name}, _event_data, _callback_data},
+        %__MODULE__{cluster_name: cluster_name} = state
+      ) do
+    Process.cancel_timer(state.check_metadata_timer_ref)
+    new_ref = Process.send_after(self(), :check_metadata, 0)
+
+    {:noreply,
+     %__MODULE__{
+       state
+       | check_metadata_timer_ref: new_ref
+     }}
+  end
+
+  def handle_info(:handle_producers, %__MODULE__{} = state) do
     for producer <- state.producers do
       opts =
         producer
@@ -76,7 +94,7 @@ defmodule Klife.Producer.Controller do
 
       case result do
         {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+        {:error, {:already_started, pid}} -> send(pid, :handle_batchers)
       end
     end
 
@@ -111,6 +129,7 @@ defmodule Klife.Producer.Controller do
                   {topic.name, partition.partition_index},
                   partition.leader_id,
                   config_topic[:producer] || @default_producer.name,
+                  # batcher_id will be defined on producer
                   nil
                 })
 
@@ -132,7 +151,7 @@ defmodule Klife.Producer.Controller do
           end
 
         if Enum.any?(results, &(&1 == :new)) do
-          send(self(), :init_producers)
+          send(self(), :handle_producers)
         end
 
         if Enum.any?(resp.topics, &(&1.error_code != 0)) do
@@ -149,41 +168,6 @@ defmodule Klife.Producer.Controller do
            %{state | check_metadata_timer_ref: new_ref, check_metadata_waiting_pids: []}}
         end
     end
-  end
-
-  @impl true
-  def handle_call(:trigger_check_metadata, from, %__MODULE__{} = state) do
-    case state do
-      %__MODULE__{check_metadata_waiting_pids: []} ->
-        Process.cancel_timer(state.check_metadata_timer_ref)
-        new_ref = Process.send_after(self(), :check_cluster, 0)
-
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_metadata_waiting_pids: [from],
-             check_metadata_timer_ref: new_ref
-         }}
-
-      %__MODULE__{} ->
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_metadata_waiting_pids: [from | state.check_metadata_timer_ref]
-         }}
-    end
-  end
-
-  @impl true
-  def handle_cast(:trigger_check_metadata, %__MODULE__{} = state) do
-    Process.cancel_timer(state.check_metadata_timer_ref)
-    new_ref = Process.send_after(self(), :check_cluster, 0)
-
-    {:noreply,
-     %__MODULE__{
-       state
-       | check_metadata_timer_ref: new_ref
-     }}
   end
 
   # Public Interface

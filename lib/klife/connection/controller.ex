@@ -12,6 +12,8 @@ defmodule Klife.Connection.Controller do
 
   import Klife.ProcessRegistry
 
+  alias Klife.PubSub
+
   alias KlifeProtocol.Messages
 
   alias Klife.Connection
@@ -24,7 +26,7 @@ defmodule Klife.Connection.Controller do
   # in order to avoid reaching this limit.
   @max_correlation_counter 200_000_000
   @check_correlation_counter_delay :timer.seconds(300)
-  @check_cluster_delay :timer.seconds(30)
+  @check_cluster_delay :timer.seconds(10)
 
   defstruct [
     :bootstrap_servers,
@@ -73,7 +75,7 @@ defmodule Klife.Connection.Controller do
   def handle_info(:init_bootstrap_conn, %__MODULE__{} = state) do
     conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
     negotiate_api_versions(conn, state.cluster_name)
-    new_ref = Process.send(self(), :check_cluster, [])
+    new_ref = Process.send_after(self(), :check_cluster, 0)
     {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_cluster_timer_ref: new_ref}}
   end
 
@@ -86,7 +88,7 @@ defmodule Klife.Connection.Controller do
         to_remove = old_brokers -- new_brokers_list
         to_start = new_brokers_list -- old_brokers
 
-        Process.send(self(), {:handle_brokers, to_start, to_remove}, [])
+        send(self(), {:handle_brokers, to_start, to_remove})
         next_ref = Process.send_after(self(), :check_cluster, @check_cluster_delay)
 
         {:noreply,
@@ -133,6 +135,13 @@ defmodule Klife.Connection.Controller do
       |> Enum.uniq()
 
     :persistent_term.put({:known_brokers_ids, state.cluster_name}, new_brokers)
+
+    if to_start != [] or to_remove != [] do
+      PubSub.publish({:cluster_change, state.cluster_name}, %{
+        added_brokers: to_start,
+        removed_brokers: to_remove
+      })
+    end
 
     state.check_cluster_waiting_pids
     |> Enum.reverse()
@@ -219,24 +228,23 @@ defmodule Klife.Connection.Controller do
     do: :persistent_term.get({:known_brokers_ids, cluster_name})
 
   def get_cluster_info(%Connection{} = conn) do
-    %{
+    req = %{
       headers: %{correlation_id: 0},
       content: %{include_cluster_authorized_operations: true, topics: []}
     }
-    |> Messages.Metadata.serialize_request(1)
-    |> Connection.write(conn)
-    |> case do
-      :ok ->
-        {:ok, received_data} = Connection.read(conn)
 
-        {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
+    serialized_req = Messages.Metadata.serialize_request(req, 1)
 
-        {:ok,
-         %{
-           brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
-           controller: resp.controller_id
-         }}
+    with :ok <- Connection.write(serialized_req, conn),
+         {:ok, received_data} <- Connection.read(conn) do
+      {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
 
+      {:ok,
+       %{
+         brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
+         controller: resp.controller_id
+       }}
+    else
       {:error, _reason} = res ->
         res
     end

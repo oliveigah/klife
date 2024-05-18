@@ -12,6 +12,7 @@ defmodule Klife.Application do
 
     children = [
       Klife.ProcessRegistry,
+      Klife.PubSub,
       handle_clusters()
     ]
 

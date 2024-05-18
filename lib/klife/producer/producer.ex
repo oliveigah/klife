@@ -49,9 +49,14 @@ defmodule Klife.Producer do
     filtered_args = Map.take(args_map, Map.keys(base))
     state = Map.merge(base, filtered_args)
 
-    :ok = init_batchers(state)
+    send(self(), :handle_batchers)
 
     {:ok, state}
+  end
+
+  def handle_info(:handle_batchers, %__MODULE__{} = state) do
+    :ok = handle_batchers(state)
+    {:noreply, state}
   end
 
   def produce_sync(record, topic, partition, cluster_name, opts \\ []) do
@@ -94,16 +99,16 @@ defmodule Klife.Producer do
     end
   end
 
-  defp init_batchers(%__MODULE__{} = state) do
+  defp handle_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.cluster_name)
     batchers_per_broker = state.batchers_count
-    :ok = do_init_batchers(state, known_brokers, batchers_per_broker)
+    :ok = init_batchers(state, known_brokers, batchers_per_broker)
     :ok = update_topic_partition_metadata(state, batchers_per_broker)
 
     :ok
   end
 
-  defp do_init_batchers(state, known_brokers, batchers_per_broker) do
+  defp init_batchers(state, known_brokers, batchers_per_broker) do
     for broker_id <- known_brokers,
         batcher_id <- 0..(batchers_per_broker - 1) do
       result =

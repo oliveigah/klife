@@ -196,9 +196,9 @@ defmodule Klife.Connection.Broker do
         # Must revisit this later.
         #
         # For the producer case the mechanism being used to avoid this is to only
-        # retry a delivery if there is a safe time where the producing process
+        # retry a delivery if there is enough time where the producing process
         # wont give up in the middle of a request. The rule is:
-        # now + req_timeout - base_time < delivery_timeout - :timer.seconds(5)
+        # now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
         #
         Logger.warning("""
         Unkown correlation id received from cluster #{inspect(cluster_name)}.
@@ -259,6 +259,8 @@ defmodule Klife.Connection.Broker do
         Logger.error("""
         Error while connecting to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
         """)
+
+        :ok = Controller.trigger_brokers_verification(state.cluster_name)
 
         Process.send_after(self(), :connect, get_reconnect_delay(state))
 

@@ -1,6 +1,8 @@
 defmodule Klife.Connection.SystemTest do
   use ExUnit.Case
   alias Klife.Utils
+  alias Klife.PubSub
+  alias Klife.TestUtils
   alias Klife.Connection.Broker
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages.ApiVersions
@@ -116,5 +118,28 @@ defmodule Klife.Connection.SystemTest do
     Enum.each(brokers_list_1, &check_broker_connection(cluster_name_1, &1))
     Enum.each(brokers_list_2, &check_broker_connection(cluster_name_2, &1))
     Enum.each(brokers_list_3, &check_broker_connection(cluster_name_3, &1))
+  end
+
+  test "cluster changes events" do
+    cluster_name = :my_test_cluster_1
+    brokers = :persistent_term.get({:known_brokers_ids, cluster_name})
+    broker_id_to_remove = List.first(brokers)
+    cb_ref = make_ref()
+
+    :ok = PubSub.subscribe({:cluster_change, cluster_name}, %{some_data: cb_ref})
+
+    {:ok, service_name} = TestUtils.stop_broker(cluster_name, broker_id_to_remove)
+
+    assert_received({{:cluster_change, ^cluster_name}, event_data, %{some_data: ^cb_ref}})
+    assert broker_id_to_remove in Enum.map(event_data.removed_brokers, fn {b, _h} -> b end)
+    assert broker_id_to_remove not in :persistent_term.get({:known_brokers_ids, cluster_name})
+
+    {:ok, broker_id} = TestUtils.start_broker(service_name, cluster_name)
+
+    assert_received({{:cluster_change, ^cluster_name}, event_data, %{some_data: ^cb_ref}})
+    assert broker_id in Enum.map(event_data.added_brokers, fn {b, _h} -> b end)
+    assert broker_id in :persistent_term.get({:known_brokers_ids, cluster_name})
+
+    :ok = PubSub.unsubscribe({:cluster_change, cluster_name})
   end
 end
