@@ -47,6 +47,7 @@ defmodule Klife.TestUtils do
 
       :ok = PubSub.unsubscribe({:cluster_change, cluster_name})
 
+      Process.sleep(10)
       result
     end)
     |> Task.await(15_000)
@@ -98,6 +99,7 @@ defmodule Klife.TestUtils do
 
       :ok = PubSub.unsubscribe({:cluster_change, cluster_name})
 
+      Process.sleep(10)
       result
     end)
     |> Task.await(25_000)
