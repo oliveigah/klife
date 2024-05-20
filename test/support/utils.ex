@@ -50,7 +50,7 @@ defmodule Klife.TestUtils do
       Process.sleep(10)
       result
     end)
-    |> Task.await(15_000)
+    |> Task.await(30_000)
   end
 
   def start_broker(service_name, cluster_name) do
@@ -102,6 +102,6 @@ defmodule Klife.TestUtils do
       Process.sleep(10)
       result
     end)
-    |> Task.await(25_000)
+    |> Task.await(30_000)
   end
 end

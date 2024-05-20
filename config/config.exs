@@ -23,7 +23,7 @@ config :klife,
         %{
           name: :benchmark_producer_in_flight,
           client_id: "my_custom_client_id",
-          max_in_flight_requests: 5
+          max_in_flight_requests: 10
         },
         %{
           name: :my_batch_compressed_producer,
