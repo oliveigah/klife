@@ -32,7 +32,7 @@ defmodule Klife.ProducerTest do
     }
 
     cluster = :my_test_cluster_1
-    topic = "my_no_batch_topic"
+    topic = "test_no_batch_topic"
 
     assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
 
@@ -49,7 +49,7 @@ defmodule Klife.ProducerTest do
     }
 
     cluster = :my_test_cluster_1
-    topic = "my_no_batch_topic"
+    topic = "test_no_batch_topic"
 
     assert {:ok, offset} =
              Producer.produce_sync(record, topic, 1, cluster, producer: :benchmark_producer)
@@ -61,7 +61,7 @@ defmodule Klife.ProducerTest do
 
   test "produce message sync with batch" do
     cluster = :my_test_cluster_1
-    topic = "my_batch_topic"
+    topic = "test_batch_topic"
 
     wait_batch_cycle(cluster, topic)
 
@@ -122,7 +122,7 @@ defmodule Klife.ProducerTest do
 
   test "produce message sync with batch and compression" do
     cluster = :my_test_cluster_1
-    topic = "comression_topic"
+    topic = "test_compression_topic"
 
     wait_batch_cycle(cluster, topic)
 
@@ -188,7 +188,7 @@ defmodule Klife.ProducerTest do
 
   test "is able to recover from cluster changes" do
     cluster = :my_test_cluster_1
-    topic = "my_no_batch_topic"
+    topic = "test_no_batch_topic"
 
     record = %{
       value: :rand.bytes(10),

@@ -173,7 +173,7 @@ defmodule Klife.Connection.Broker do
     case Controller.take_from_in_flight(cluster_name, correlation_id) do
       # sync send
       {^correlation_id, waiting_pid} when is_pid(waiting_pid) ->
-        Process.send(waiting_pid, {:broker_response, reply}, [])
+        send(waiting_pid, {:broker_response, reply})
 
       # async send function callback
       {^correlation_id, {callback_pid, callback_ref, msg_mod, msg_version}} ->
