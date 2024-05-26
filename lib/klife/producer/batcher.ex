@@ -115,7 +115,7 @@ defmodule Klife.Producer.Batcher do
   end
 
   def produce(
-        %Record{} = record,
+        [%Record{} | _] = records,
         cluster_name,
         broker_id,
         producer_name,
@@ -123,11 +123,11 @@ defmodule Klife.Producer.Batcher do
       ) do
     cluster_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenServer.call({:produce, record, Record.estimate_size(record)})
+    |> GenServer.call({:produce, records})
   end
 
   def handle_call(
-        {:produce, %Record{topic: topic, partition: partition} = record, rec_size},
+        {:produce, [%Record{} | _] = recs},
         {pid, _tag},
         %__MODULE__{} = state
       ) do
@@ -140,7 +140,11 @@ defmodule Klife.Producer.Batcher do
     now = System.monotonic_time(:millisecond)
 
     on_time? = now - last_batch_sent_at >= linger_ms
-    new_state = add_record(state, record, topic, partition, pid, rec_size)
+
+    new_state =
+      Enum.reduce(recs, state, fn rec, acc_state ->
+        add_record(acc_state, rec, pid)
+      end)
 
     if on_time? and next_ref == nil,
       do: {:reply, {:ok, delivery_timeout}, maybe_schedule_send(new_state, 0)},
@@ -248,18 +252,16 @@ defmodule Klife.Producer.Batcher do
           current_base_time: curr_base_time,
           base_sequences: base_sequences
         } = state,
-        %Record{} = record,
-        topic,
-        partition,
+        %Record{topic: topic, partition: partition} = record,
         pid,
         estimated_size
       ) do
-    new_batch = add_record_to_current_batch(state, record, topic, partition)
+    new_batch = add_record_to_current_batch(state, record)
 
     %{
       state
       | current_batch: new_batch,
-        current_waiting_pids: add_waiting_pid(curr_pids, new_batch, pid, topic, partition),
+        current_waiting_pids: add_waiting_pid(curr_pids, new_batch, pid, record),
         base_sequences: update_base_sequence(base_sequences, new_batch, topic, partition),
         current_base_time: curr_base_time || System.monotonic_time(:millisecond),
         current_estimated_size: curr_size + estimated_size
@@ -271,21 +273,18 @@ defmodule Klife.Producer.Batcher do
           producer_config: %{batch_size_bytes: batch_size_bytes},
           current_estimated_size: current_estimated_size
         } = state,
-        %Record{} = record,
-        topic,
-        partition,
-        pid,
-        rec_estimated_size
+        %Record{__estimated_size: estimated_size} = record,
+        pid
       ) do
-    if current_estimated_size + rec_estimated_size > batch_size_bytes,
+    if current_estimated_size + estimated_size > batch_size_bytes,
       do:
         state
         |> move_current_data_to_batch_queue()
-        |> add_record_to_current_data(record, topic, partition, pid, rec_estimated_size)
+        |> add_record_to_current_data(record, pid, estimated_size)
         |> maybe_schedule_send(5),
       else:
         state
-        |> add_record_to_current_data(record, topic, partition, pid, rec_estimated_size)
+        |> add_record_to_current_data(record, pid, estimated_size)
   end
 
   def dispatch_to_broker(
@@ -367,9 +366,7 @@ defmodule Klife.Producer.Batcher do
 
   defp add_record_to_current_batch(
          %__MODULE__{current_batch: batch} = state,
-         %Record{} = record,
-         topic,
-         partition
+         %Record{topic: topic, partition: partition} = record
        ) do
     case Map.get(batch, {topic, partition}) do
       nil ->
@@ -470,9 +467,15 @@ defmodule Klife.Producer.Batcher do
     end
   end
 
-  defp add_waiting_pid(waiting_pids, _new_batch, nil, _topic, _partition), do: waiting_pids
+  defp add_waiting_pid(waiting_pids, _new_batch, nil, _record), do: waiting_pids
 
-  defp add_waiting_pid(waiting_pids, new_batch, new_pid, topic, partition) when is_pid(new_pid) do
+  defp add_waiting_pid(
+         waiting_pids,
+         new_batch,
+         new_pid,
+         %Record{topic: topic, partition: partition} = rec
+       )
+       when is_pid(new_pid) do
     offset =
       new_batch
       |> Map.fetch!({topic, partition})
@@ -480,10 +483,12 @@ defmodule Klife.Producer.Batcher do
 
     case Map.get(waiting_pids, {topic, partition}) do
       nil ->
-        Map.put(waiting_pids, {topic, partition}, [{new_pid, offset}])
+        Map.put(waiting_pids, {topic, partition}, [{new_pid, offset, rec.__batch_index}])
 
       current_pids ->
-        Map.replace!(waiting_pids, {topic, partition}, [{new_pid, offset} | current_pids])
+        Map.replace!(waiting_pids, {topic, partition}, [
+          {new_pid, offset, rec.__batch_index} | current_pids
+        ])
     end
   end
 

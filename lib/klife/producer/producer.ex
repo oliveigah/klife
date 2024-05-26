@@ -61,40 +61,94 @@ defmodule Klife.Producer do
     {:noreply, state}
   end
 
-  def produce(%Record{topic: topic, partition: partition} = record, cluster_name, opts \\ []) do
-    %{
-      broker_id: broker_id,
-      producer_name: default_producer,
-      batcher_id: default_batcher_id
-    } = ProducerController.get_topics_partitions_metadata(cluster_name, topic, partition)
+  def produce(rec_or_recs, cluster_name, opts \\ [])
 
-    {producer_name, batcher_id} =
-      case Keyword.get(opts, :producer) do
-        nil ->
-          {default_producer, default_batcher_id}
+  def produce(%Record{} = record, cluster_name, opts), do: produce([record], cluster_name, opts)
 
-        other_producer ->
-          {other_producer, get_batcher_id(cluster_name, other_producer, topic, partition)}
+  def produce([%Record{} | _] = records, cluster_name, opts) do
+    opt_producer = Keyword.get(opts, :producer)
+
+    indexed_records =
+      records
+      |> Enum.with_index(1)
+      |> Enum.map(fn {r, idx} ->
+        r
+        |> Map.put(:__estimated_size, Record.estimate_size(r))
+        |> Map.put(:__batch_index, idx)
+      end)
+
+    delivery_timeout_ms =
+      indexed_records
+      |> Enum.group_by(fn r -> {r.topic, r.partition} end)
+      |> Enum.map(fn {{t, p}, recs} ->
+        %{
+          broker_id: broker_id,
+          producer_name: default_producer,
+          batcher_id: default_batcher_id
+        } = ProducerController.get_topics_partitions_metadata(cluster_name, t, p)
+
+        new_key =
+          if opt_producer,
+            do: {broker_id, opt_producer, get_batcher_id(cluster_name, opt_producer, t, p)},
+            else: {broker_id, default_producer, default_batcher_id}
+
+        {new_key, recs}
+      end)
+      |> Enum.group_by(fn {key, _recs} -> key end, fn {_key, recs} -> recs end)
+      |> Enum.map(fn {k, v} -> {k, List.flatten(v)} end)
+      |> Enum.reduce(0, fn {key, recs}, acc ->
+        {broker_id, producer, batcher_id} = key
+
+        {:ok, delivery_timeout_ms} =
+          Batcher.produce(
+            recs,
+            cluster_name,
+            broker_id,
+            producer,
+            batcher_id
+          )
+
+        if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
+      end)
+
+    max_resps = List.last(indexed_records).__batch_index
+    responses = wait_produce_response(delivery_timeout_ms, max_resps)
+
+    indexed_records
+    |> Enum.map(fn r -> Map.get(responses, r.__batch_index) end)
+    |> case do
+      [resp] -> resp
+      resps -> resps
+    end
+  end
+
+  defp wait_produce_response(timeout_ms, max_resps) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_produce_response(deadline, max_resps, 0, %{})
+  end
+
+  defp do_wait_produce_response(_deadline, max_resps, max_resps, resps), do: resps
+
+  defp do_wait_produce_response(deadline, max_resps, counter, resps) do
+    now = System.monotonic_time(:millisecond)
+
+    if deadline > now do
+      receive do
+        {:klife_produce, resp, batch_idx} ->
+          new_resps = Map.put(resps, batch_idx, resp)
+          new_counter = counter + 1
+          do_wait_produce_response(deadline, max_resps, new_counter, new_resps)
+      after
+        deadline - now ->
+          do_wait_produce_response(deadline, max_resps, counter, resps)
       end
+    else
+      new_resps =
+        Enum.reduce(1..max_resps, resps, fn idx, acc ->
+          Map.put_new(acc, idx, {:error, :timeout})
+        end)
 
-    {:ok, delivery_timeout_ms} =
-      Batcher.produce(
-        record,
-        cluster_name,
-        broker_id,
-        producer_name,
-        batcher_id
-      )
-
-    receive do
-      {:klife_produce, :ok, offset} ->
-        {:ok, offset}
-
-      {:klife_produce, :error, err} ->
-        {:error, err}
-    after
-      delivery_timeout_ms ->
-        {:error, :timeout}
+      do_wait_produce_response(deadline, max_resps, max_resps, new_resps)
     end
   end
 

@@ -61,6 +61,10 @@ config :klife,
         %{
           name: "test_no_batch_topic",
           enable_produce: true
+        },
+        %{
+          name: "test_no_batch_topic_2",
+          enable_produce: true
         }
       ]
     ]

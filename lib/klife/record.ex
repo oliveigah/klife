@@ -4,7 +4,9 @@ defmodule Klife.Record do
     :key,
     :headers,
     :topic,
-    :partition
+    :partition,
+    :__batch_index,
+    :__estimated_size
   ]
 
   def estimate_size(%__MODULE__{} = record) do
@@ -17,8 +19,7 @@ defmodule Klife.Record do
   defp get_size(v) when is_binary(v), do: byte_size(v)
 
   defp get_size(v) when is_map(v),
-    do:
-      v |> Map.to_list() |> Enum.reduce(0, fn {_k, v}, acc -> acc + get_size(v) end)
+    do: v |> Map.to_list() |> Enum.reduce(0, fn {_k, v}, acc -> acc + get_size(v) end)
 
   defp get_size(v) when is_list(v), do: Enum.reduce(v, 0, fn i, acc -> acc + get_size(i) end)
 end

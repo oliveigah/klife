@@ -177,8 +177,8 @@ defmodule Klife.Producer.Dispatcher do
       delivery_confirmation_pids
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
-      |> Enum.each(fn {pid, batch_offset} ->
-        send(pid, {:klife_produce, :ok, base_offset + batch_offset})
+      |> Enum.each(fn {pid, batch_offset, batch_idx} ->
+        send(pid, {:klife_produce, {:ok, base_offset + batch_offset}, batch_idx})
       end)
     end)
 
@@ -224,8 +224,8 @@ defmodule Klife.Producer.Dispatcher do
       delivery_confirmation_pids
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
-      |> Enum.each(fn {pid, _batch_offset} ->
-        send(pid, {:klife_produce, :error, error_code})
+      |> Enum.each(fn {pid, _batch_offset, batch_idx} ->
+        send(pid, {:klife_produce, {:error, error_code}, batch_idx})
       end)
     end)
 
@@ -236,7 +236,7 @@ defmodule Klife.Producer.Dispatcher do
       send(batcher_pid, {:request_completed, pool_idx})
       {:noreply, remove_request(state, req_ref)}
     else
-      Process.send_after(self(), {:dispatch, req_ref}, p_config.retry_ms)
+      Process.send_after(self(), {:dispatch, req_ref}, p_config.retry_backoff_ms)
       new_req_data = %{data | batch_to_send: new_batch_to_send}
 
       new_state = %{
