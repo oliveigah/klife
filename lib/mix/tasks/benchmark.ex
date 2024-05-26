@@ -74,7 +74,7 @@ if Mix.env() in [:dev] do
         %{
           "klife" => fn ->
             {:ok, offset} =
-              Klife.Producer.produce_sync(
+              Klife.Producer.produce(
                 record,
                 topic,
                 Enum.random(0..(max_partition - 1)),
@@ -83,7 +83,7 @@ if Mix.env() in [:dev] do
           end,
           "klife multi inflight" => fn ->
             {:ok, offset} =
-              Klife.Producer.produce_sync(
+              Klife.Producer.produce(
                 record,
                 "benchmark_topic_in_flight",
                 Enum.random(0..(max_partition - 1)),

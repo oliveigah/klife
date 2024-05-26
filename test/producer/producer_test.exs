@@ -21,7 +21,7 @@ defmodule Klife.ProducerTest do
       headers: []
     }
 
-    {:ok, _} = Producer.produce_sync(rec, topic, 1, cluster)
+    {:ok, _} = Producer.produce(rec, topic, 1, cluster)
   end
 
   test "produce message sync no batch" do
@@ -34,7 +34,7 @@ defmodule Klife.ProducerTest do
     cluster = :my_test_cluster_1
     topic = "test_no_batch_topic"
 
-    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
+    assert {:ok, offset} = Producer.produce(record, topic, 1, cluster)
 
     assert_offset(record, cluster, topic, 1, offset)
     record_batch = Utils.get_record_batch_by_offset(cluster, topic, 1, offset)
@@ -52,7 +52,7 @@ defmodule Klife.ProducerTest do
     topic = "test_no_batch_topic"
 
     assert {:ok, offset} =
-             Producer.produce_sync(record, topic, 1, cluster, producer: :benchmark_producer)
+             Producer.produce(record, topic, 1, cluster, producer: :benchmark_producer)
 
     assert_offset(record, cluster, topic, 1, offset)
     record_batch = Utils.get_record_batch_by_offset(cluster, topic, 1, offset)
@@ -73,7 +73,7 @@ defmodule Klife.ProducerTest do
 
     task_1 =
       Task.async(fn ->
-        Producer.produce_sync(rec_1, topic, 1, cluster)
+        Producer.produce(rec_1, topic, 1, cluster)
       end)
 
     rec_2 = %{
@@ -86,7 +86,7 @@ defmodule Klife.ProducerTest do
 
     task_2 =
       Task.async(fn ->
-        Producer.produce_sync(rec_2, topic, 1, cluster)
+        Producer.produce(rec_2, topic, 1, cluster)
       end)
 
     rec_3 = %{
@@ -99,7 +99,7 @@ defmodule Klife.ProducerTest do
 
     task_3 =
       Task.async(fn ->
-        Producer.produce_sync(rec_3, topic, 1, cluster)
+        Producer.produce(rec_3, topic, 1, cluster)
       end)
 
     assert [{:ok, offset_1}, {:ok, offset_2}, {:ok, offset_3}] =
@@ -134,7 +134,7 @@ defmodule Klife.ProducerTest do
 
     task_1 =
       Task.async(fn ->
-        Producer.produce_sync(rec_1, topic, 1, cluster)
+        Producer.produce(rec_1, topic, 1, cluster)
       end)
 
     rec_2 = %{
@@ -147,7 +147,7 @@ defmodule Klife.ProducerTest do
 
     task_2 =
       Task.async(fn ->
-        Producer.produce_sync(rec_2, topic, 1, cluster)
+        Producer.produce(rec_2, topic, 1, cluster)
       end)
 
     rec_3 = %{
@@ -160,7 +160,7 @@ defmodule Klife.ProducerTest do
 
     task_3 =
       Task.async(fn ->
-        Producer.produce_sync(rec_3, topic, 1, cluster)
+        Producer.produce(rec_3, topic, 1, cluster)
       end)
 
     assert [{:ok, offset_1}, {:ok, offset_2}, {:ok, offset_3}] =
@@ -196,7 +196,7 @@ defmodule Klife.ProducerTest do
       headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
     }
 
-    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
+    assert {:ok, offset} = Producer.produce(record, topic, 1, cluster)
 
     assert_offset(record, cluster, topic, 1, offset)
 
@@ -214,7 +214,7 @@ defmodule Klife.ProducerTest do
       headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}]
     }
 
-    assert {:ok, offset} = Producer.produce_sync(record, topic, 1, cluster)
+    assert {:ok, offset} = Producer.produce(record, topic, 1, cluster)
 
     assert_offset(record, cluster, topic, 1, offset)
 

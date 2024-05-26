@@ -59,7 +59,7 @@ defmodule Klife.Producer do
     {:noreply, state}
   end
 
-  def produce_sync(record, topic, partition, cluster_name, opts \\ []) do
+  def produce(record, topic, partition, cluster_name, opts \\ []) do
     %{
       broker_id: broker_id,
       producer_name: default_producer,
@@ -76,7 +76,7 @@ defmodule Klife.Producer do
       end
 
     {:ok, delivery_timeout_ms} =
-      Batcher.produce_sync(
+      Batcher.produce(
         record,
         topic,
         partition,
@@ -87,10 +87,10 @@ defmodule Klife.Producer do
       )
 
     receive do
-      {:klife_produce_sync, :ok, offset} ->
+      {:klife_produce, :ok, offset} ->
         {:ok, offset}
 
-      {:klife_produce_sync, :error, err} ->
+      {:klife_produce, :error, err} ->
         {:error, err}
     after
       delivery_timeout_ms ->

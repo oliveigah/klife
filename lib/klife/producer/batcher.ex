@@ -111,7 +111,7 @@ defmodule Klife.Producer.Batcher do
     producer_id
   end
 
-  def produce_sync(
+  def produce(
         record,
         topic,
         partition,
@@ -122,11 +122,11 @@ defmodule Klife.Producer.Batcher do
       ) do
     cluster_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenServer.call({:produce_sync, record, topic, partition, estimate_record_size(record)})
+    |> GenServer.call({:produce, record, topic, partition, estimate_record_size(record)})
   end
 
   def handle_call(
-        {:produce_sync, record, topic, partition, rec_size},
+        {:produce, record, topic, partition, rec_size},
         {pid, _tag},
         %__MODULE__{} = state
       ) do
