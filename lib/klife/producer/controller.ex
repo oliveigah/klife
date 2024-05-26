@@ -58,6 +58,13 @@ defmodule Klife.Producer.Controller do
       read_concurrency: true
     ])
 
+    :ets.new(partitioner_metadata_table(cluster_name), [
+      :set,
+      :public,
+      :named_table,
+      read_concurrency: true
+    ])
+
     Utils.wait_connection!(cluster_name)
 
     :ok = PubSub.subscribe({:cluster_change, cluster_name})
@@ -117,42 +124,8 @@ defmodule Klife.Producer.Controller do
         {:noreply, %{state | check_metadata_timer_ref: new_ref}}
 
       {:ok, %{content: resp}} ->
-        table_name = topics_partitions_metadata_table(cluster_name)
-
-        results =
-          for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
-              config_topic = Enum.find(topics, &(&1.name == topic.name)),
-              partition <- topic.partitions do
-            case :ets.lookup(table_name, {topic.name, partition.partition_index}) do
-              [] ->
-                :ets.insert(table_name, {
-                  {topic.name, partition.partition_index},
-                  partition.leader_id,
-                  config_topic[:producer] || @default_producer.name,
-                  # batcher_id will be defined on producer
-                  nil
-                })
-
-                :new
-
-              [{key, current_broker_id, _default_producer, _batcher_id}] ->
-                if current_broker_id != partition.leader_id do
-                  :ets.update_element(
-                    table_name,
-                    key,
-                    {2, partition.leader_id}
-                  )
-
-                  :new
-                else
-                  :noop
-                end
-            end
-          end
-
-        if Enum.any?(results, &(&1 == :new)) do
-          send(self(), :handle_producers)
-        end
+        :ok = setup_producers(state, resp)
+        :ok = setup_partitioners(state, resp)
 
         if Enum.any?(resp.topics, &(&1.error_code != 0)) do
           new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
@@ -234,8 +207,92 @@ defmodule Klife.Producer.Controller do
   def get_producer_for_topic(cluster_name, topic),
     do: :persistent_term.get({__MODULE__, cluster_name, topic})
 
+  def get_partitioner_data(cluster_name, topic) do
+    cluster_name
+    |> partitioner_metadata_table()
+    |> :ets.lookup_element(topic, 2)
+  end
+
   # Private functions
+
+  defp setup_producers(%__MODULE__{} = state, resp) do
+    %__MODULE__{
+      cluster_name: cluster_name,
+      topics: topics
+    } = state
+
+    table_name = topics_partitions_metadata_table(cluster_name)
+
+    results =
+      for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
+          config_topic = Enum.find(topics, &(&1.name == topic.name)),
+          partition <- topic.partitions do
+        case :ets.lookup(table_name, {topic.name, partition.partition_index}) do
+          [] ->
+            :ets.insert(table_name, {
+              {topic.name, partition.partition_index},
+              partition.leader_id,
+              config_topic[:producer] || @default_producer.name,
+              # batcher_id will be defined on producer
+              nil
+            })
+
+            :new
+
+          [{key, current_broker_id, _default_producer, _batcher_id}] ->
+            if current_broker_id != partition.leader_id do
+              :ets.update_element(
+                table_name,
+                key,
+                {2, partition.leader_id}
+              )
+
+              :new
+            else
+              :noop
+            end
+        end
+      end
+
+    if Enum.any?(results, &(&1 == :new)) do
+      send(self(), :handle_producers)
+    end
+
+    :ok
+  end
+
+  defp setup_partitioners(%__MODULE__{} = state, resp) do
+    %__MODULE__{
+      cluster_name: cluster_name,
+      topics: topics
+    } = state
+
+    table_name = partitioner_metadata_table(cluster_name)
+
+    for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
+        config_topic = Enum.find(topics, &(&1.name == topic.name)) do
+      max_partition =
+        topic.partitions
+        |> Enum.map(& &1.partition_index)
+        |> Enum.max()
+
+      data = %{
+        max_partition: max_partition,
+        default_partitioner: config_topic[:partitioner] || Klife.Partitioner
+      }
+
+      case :ets.lookup(table_name, topic.name) do
+        [{_key, ^data}] -> :noop
+        _ -> :ets.insert(table_name, {topic.name, data})
+      end
+    end
+
+    :ok
+  end
 
   defp topics_partitions_metadata_table(cluster_name),
     do: :"topics_partitions_metadata.#{cluster_name}"
+
+  defp partitioner_metadata_table(cluster_name),
+    do: :"partitioner_metadata.#{cluster_name}"
 end

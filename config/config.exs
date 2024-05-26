@@ -1,11 +1,13 @@
 import Config
 
 config :klife,
+  default_cluster: :my_test_cluster_1,
   clusters: [
     [
       cluster_name: :my_test_cluster_1,
       connection: [
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        # bootstrap_servers: ["localhost:19093", "localhost:29093"],
         socket_opts: [
           ssl: false
           # ssl_opts: [
@@ -64,7 +66,8 @@ config :klife,
         },
         %{
           name: "test_no_batch_topic_2",
-          enable_produce: true
+          enable_produce: true,
+          partitioner: Klife.TestCustomPartitioner
         }
       ]
     ]

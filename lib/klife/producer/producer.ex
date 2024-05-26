@@ -61,24 +61,11 @@ defmodule Klife.Producer do
     {:noreply, state}
   end
 
-  def produce(rec_or_recs, cluster_name, opts \\ [])
-
-  def produce(%Record{} = record, cluster_name, opts), do: produce([record], cluster_name, opts)
-
   def produce([%Record{} | _] = records, cluster_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
 
-    indexed_records =
-      records
-      |> Enum.with_index(1)
-      |> Enum.map(fn {r, idx} ->
-        r
-        |> Map.put(:__estimated_size, Record.estimate_size(r))
-        |> Map.put(:__batch_index, idx)
-      end)
-
     delivery_timeout_ms =
-      indexed_records
+      records
       |> Enum.group_by(fn r -> {r.topic, r.partition} end)
       |> Enum.map(fn {{t, p}, recs} ->
         %{
@@ -111,11 +98,19 @@ defmodule Klife.Producer do
         if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
       end)
 
-    max_resps = List.last(indexed_records).__batch_index
+    max_resps = List.last(records).__batch_index
     responses = wait_produce_response(delivery_timeout_ms, max_resps)
 
-    indexed_records
-    |> Enum.map(fn r -> Map.get(responses, r.__batch_index) end)
+    records
+    |> Enum.map(fn %Record{} = rec ->
+      case Map.get(responses, rec.__batch_index) do
+        {:ok, offset} ->
+          {:ok, %{rec | offset: offset}}
+
+        err ->
+          err
+      end
+    end)
     |> case do
       [resp] -> resp
       resps -> resps

@@ -5,6 +5,7 @@ defmodule Klife.Record do
     :headers,
     :topic,
     :partition,
+    :offset,
     :__batch_index,
     :__estimated_size
   ]

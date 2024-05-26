@@ -9,6 +9,7 @@ defmodule Klife.Application do
   def start(_type, _args) do
     # TODO: Refactor and rethink auto topic creation feature
     create_topics()
+    setup_default_cluster()
 
     children = [
       Klife.ProcessRegistry,
@@ -54,6 +55,16 @@ defmodule Klife.Application do
         else
           do_create_topics(init_time)
         end
+    end
+  end
+
+  defp setup_default_cluster() do
+    case Application.get_env(:klife, :default_cluster) do
+      nil ->
+        :noop
+
+      cluster ->
+        :persistent_term.put(:klife_default_cluster, cluster)
     end
   end
 end

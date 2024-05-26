@@ -88,18 +88,12 @@ if Mix.env() in [:dev] do
       Benchee.run(
         %{
           "klife" => fn ->
-            {:ok, offset} =
-              Klife.Producer.produce(
-                Enum.random(records),
-                :my_test_cluster_1
-              )
+            {:ok, rec} =
+              Klife.produce(Enum.random(records))
           end,
           "klife multi inflight" => fn ->
-            {:ok, offset} =
-              Klife.Producer.produce(
-                Enum.random(in_flight_records),
-                :my_test_cluster_1
-              )
+            {:ok, rec} =
+              Klife.produce(Enum.random(in_flight_records))
           end,
           # "kafka_ex" => fn ->
           #   {:ok, offset} =

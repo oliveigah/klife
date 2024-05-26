@@ -28,12 +28,12 @@ defmodule Klife.Utils do
     :klife
     |> Application.fetch_env!(:clusters)
     |> Enum.map(fn cluster_opts ->
-      socker_opts = cluster_opts[:connection][:socket_opts]
+      socket_opts = cluster_opts[:connection][:socket_opts]
 
       {:ok, conn} =
         Klife.Connection.new(
           cluster_opts[:connection][:bootstrap_servers] |> List.first(),
-          socker_opts
+          socket_opts
         )
 
       {:ok, %{brokers: brokers_list, controller: controller_id}} =
@@ -41,7 +41,7 @@ defmodule Klife.Utils do
 
       {_id, url} = Enum.find(brokers_list, fn {id, _} -> id == controller_id end)
 
-      {:ok, new_conn} = Klife.Connection.new(url, socker_opts)
+      {:ok, new_conn} = Klife.Connection.new(url, socket_opts)
 
       topics_input =
         Enum.map(cluster_opts[:topics], fn input ->
