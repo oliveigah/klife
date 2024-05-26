@@ -3,6 +3,9 @@ defmodule Klife.Producer.Batcher do
   import Klife.ProcessRegistry
 
   require Logger
+
+  alias Klife.Record
+
   alias Klife.Producer
   alias Klife.Producer.Dispatcher
   alias Klife.Connection.Broker
@@ -112,9 +115,7 @@ defmodule Klife.Producer.Batcher do
   end
 
   def produce(
-        record,
-        topic,
-        partition,
+        %Record{} = record,
         cluster_name,
         broker_id,
         producer_name,
@@ -122,11 +123,11 @@ defmodule Klife.Producer.Batcher do
       ) do
     cluster_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenServer.call({:produce, record, topic, partition, estimate_record_size(record)})
+    |> GenServer.call({:produce, record, Record.estimate_size(record)})
   end
 
   def handle_call(
-        {:produce, record, topic, partition, rec_size},
+        {:produce, %Record{topic: topic, partition: partition} = record, rec_size},
         {pid, _tag},
         %__MODULE__{} = state
       ) do
@@ -247,7 +248,7 @@ defmodule Klife.Producer.Batcher do
           current_base_time: curr_base_time,
           base_sequences: base_sequences
         } = state,
-        record,
+        %Record{} = record,
         topic,
         partition,
         pid,
@@ -270,7 +271,7 @@ defmodule Klife.Producer.Batcher do
           producer_config: %{batch_size_bytes: batch_size_bytes},
           current_estimated_size: current_estimated_size
         } = state,
-        record,
+        %Record{} = record,
         topic,
         partition,
         pid,
@@ -366,7 +367,7 @@ defmodule Klife.Producer.Batcher do
 
   defp add_record_to_current_batch(
          %__MODULE__{current_batch: batch} = state,
-         record,
+         %Record{} = record,
          topic,
          partition
        ) do
@@ -427,7 +428,7 @@ defmodule Klife.Producer.Batcher do
     |> KlifeProtocol.RecordBatch.encode_attributes()
   end
 
-  defp add_record_to_partition_data(batch, record) do
+  defp add_record_to_partition_data(batch, %Record{} = record) do
     now = DateTime.to_unix(DateTime.utc_now())
 
     new_offset_delta = batch.last_offset_delta + 1
@@ -437,9 +438,9 @@ defmodule Klife.Producer.Batcher do
       attributes: 0,
       timestamp_delta: timestamp_delta,
       offset_delta: new_offset_delta,
-      key: record[:key],
+      key: record.key,
       value: record.value,
-      headers: record[:headers]
+      headers: record.headers
     }
 
     %{
@@ -494,18 +495,4 @@ defmodule Klife.Producer.Batcher do
        ) do
     via_tuple({__MODULE__, cluster_name, broker_id, producer_name, batcher_id})
   end
-
-  defp estimate_record_size(record) do
-    # add 80 extra bytes to account for other fields
-    Enum.reduce(record, 80, fn {k, v}, acc ->
-      acc + do_estimate_size(k, v)
-    end)
-  end
-
-  defp do_estimate_size(_k, nil), do: 0
-
-  defp do_estimate_size(_k, v) when is_list(v),
-    do: Enum.reduce(v, 0, fn i, acc -> acc + estimate_record_size(i) end)
-
-  defp do_estimate_size(_k, v) when is_binary(v), do: byte_size(v)
 end

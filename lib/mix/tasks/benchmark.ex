@@ -60,10 +60,25 @@ if Mix.env() in [:dev] do
       val = :rand.bytes(4000)
       key = "some_key"
 
-      record = %{
-        value: val,
-        key: key
-      }
+      records =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: topic,
+            partition: p
+          }
+        end)
+
+      in_flight_records =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: "benchmark_topic_in_flight",
+            partition: p
+          }
+        end)
 
       # Warmup brod
       Enum.map(0..(max_partition - 1), fn i ->
@@ -75,18 +90,14 @@ if Mix.env() in [:dev] do
           "klife" => fn ->
             {:ok, offset} =
               Klife.Producer.produce(
-                record,
-                topic,
-                Enum.random(0..(max_partition - 1)),
+                Enum.random(records),
                 :my_test_cluster_1
               )
           end,
           "klife multi inflight" => fn ->
             {:ok, offset} =
               Klife.Producer.produce(
-                record,
-                "benchmark_topic_in_flight",
-                Enum.random(0..(max_partition - 1)),
+                Enum.random(in_flight_records),
                 :my_test_cluster_1
               )
           end,

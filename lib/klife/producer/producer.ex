@@ -3,6 +3,8 @@ defmodule Klife.Producer do
 
   import Klife.ProcessRegistry
 
+  alias Klife.Record
+
   alias Klife.Producer.Batcher
   alias Klife.Producer.BatcherSupervisor
   alias Klife.Producer.Controller, as: ProducerController
@@ -59,7 +61,7 @@ defmodule Klife.Producer do
     {:noreply, state}
   end
 
-  def produce(record, topic, partition, cluster_name, opts \\ []) do
+  def produce(%Record{topic: topic, partition: partition} = record, cluster_name, opts \\ []) do
     %{
       broker_id: broker_id,
       producer_name: default_producer,
@@ -78,8 +80,6 @@ defmodule Klife.Producer do
     {:ok, delivery_timeout_ms} =
       Batcher.produce(
         record,
-        topic,
-        partition,
         cluster_name,
         broker_id,
         producer_name,

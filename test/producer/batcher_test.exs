@@ -1,14 +1,17 @@
 defmodule Klife.Producer.BatcherTest do
   use ExUnit.Case
+  alias Klife.Record
   alias Klife.Producer
   alias Klife.Producer.Batcher
 
   test "add records to batch" do
     %{value: rec_val, key: rec_key, headers: rec_headers} =
-      rec = %{
+      rec = %Record{
         value: "1",
         key: "key_1",
-        headers: [%{key: "header_key", value: "header_value"}]
+        headers: [%{key: "header_key", value: "header_value"}],
+        topic: "my_topic",
+        partition: 0
       }
 
     state = %Batcher{
@@ -42,7 +45,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, rec, "my_topic", 0, 100},
+               {:produce, rec, 100},
                {self(), nil},
                state
              )
@@ -60,15 +63,17 @@ defmodule Klife.Producer.BatcherTest do
            } = inserted_rec_1
 
     %{value: rec_val, key: rec_key, headers: rec_headers} =
-      rec = %{
+      rec = %Record{
         value: "2",
         key: "key_2",
-        headers: [%{key: "header_key2", value: "header_value2"}]
+        headers: [%{key: "header_key2", value: "header_value2"}],
+        topic: "my_topic",
+        partition: 0
       }
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, rec, "my_topic", 0, 200},
+               {:produce, rec, 200},
                {self(), nil},
                new_state
              )
@@ -86,15 +91,17 @@ defmodule Klife.Producer.BatcherTest do
            } = inserted_rec_2
 
     %{value: rec_val, key: rec_key, headers: rec_headers} =
-      rec = %{
+      rec = %Record{
         value: "3",
         key: "key_3",
-        headers: [%{key: "header_key3", value: "header_value3"}]
+        headers: [%{key: "header_key3", value: "header_value3"}],
+        topic: "my_topic",
+        partition: 1
       }
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, rec, "my_topic", 1, 300},
+               {:produce, rec, 300},
                {self(), nil},
                new_state
              )
@@ -115,15 +122,17 @@ defmodule Klife.Producer.BatcherTest do
            } = inserted_rec_3
 
     %{value: rec_val, key: rec_key, headers: rec_headers} =
-      rec = %{
+      rec = %Record{
         value: "4",
         key: "key_4",
-        headers: [%{key: "header_key4", value: "header_value4"}]
+        headers: [%{key: "header_key4", value: "header_value4"}],
+        topic: "topic_b",
+        partition: 0
       }
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, rec, "topic_b", 0, 400},
+               {:produce, rec, 400},
                {self(), nil},
                new_state
              )
