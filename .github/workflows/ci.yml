@@ -21,4 +21,4 @@ jobs:
       - run: docker-compose -f "test/compose_files/docker-compose.yml" up -d
       - run: mix deps.get
       - run: mix compile --warning-as-errors
-      - run: mix test
+      - run: mix test --warning-as-errors

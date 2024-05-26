@@ -88,11 +88,11 @@ if Mix.env() in [:dev] do
       Benchee.run(
         %{
           "klife" => fn ->
-            {:ok, rec} =
+            {:ok, _rec} =
               Klife.produce(Enum.random(records))
           end,
           "klife multi inflight" => fn ->
-            {:ok, rec} =
+            {:ok, _rec} =
               Klife.produce(Enum.random(in_flight_records))
           end,
           # "kafka_ex" => fn ->
@@ -103,7 +103,7 @@ if Mix.env() in [:dev] do
           #     )
           # end,
           "brod" => fn ->
-            {:ok, offset} =
+            {:ok, _offset} =
               :brod.produce_sync_offset(
                 :kafka_client,
                 topic,

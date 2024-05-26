@@ -1,8 +1,9 @@
 defmodule Klife.Partitioner do
-  @behaviour __MODULE__
   alias Klife.Record
 
   @callback get_partition(record :: %Record{}, max_partition :: integer) :: integer
+
+  @behaviour __MODULE__
 
   @impl __MODULE__
   def get_partition(%Record{key: nil}, max_partition),
