@@ -119,16 +119,17 @@ defmodule Klife.Producer.Batcher do
         cluster_name,
         broker_id,
         producer_name,
-        batcher_id
+        batcher_id,
+        callback_pid
       ) do
     cluster_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenServer.call({:produce, records})
+    |> GenServer.call({:produce, records, callback_pid})
   end
 
   def handle_call(
-        {:produce, [%Record{} | _] = recs},
-        {pid, _tag},
+        {:produce, [%Record{} | _] = recs, callback_pid},
+        _from,
         %__MODULE__{} = state
       ) do
     %{
@@ -143,7 +144,7 @@ defmodule Klife.Producer.Batcher do
 
     new_state =
       Enum.reduce(recs, state, fn rec, acc_state ->
-        add_record(acc_state, rec, pid)
+        add_record(acc_state, rec, callback_pid)
       end)
 
     if on_time? and next_ref == nil,

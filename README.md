@@ -7,8 +7,9 @@
 - Implement Producer
     - Transaction api
     - Accept more versions of the protocol
-    - Async api
+    - Standardize options handling 
     - Improve test coverage
+
     
 - Implement Consumer
 

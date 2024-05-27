@@ -68,7 +68,11 @@ config :klife,
           name: "test_no_batch_topic_2",
           enable_produce: true,
           partitioner: Klife.TestCustomPartitioner
-        }
+        },
+        %{
+          name: "test_async_topic",
+          enable_produce: true
+        },
       ]
     ]
   ]

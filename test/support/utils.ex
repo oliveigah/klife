@@ -220,4 +220,37 @@ defmodule Klife.TestUtils do
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
     partition_resp.records
   end
+
+  def get_latest_offset(cluster, topic, partition, base_ts) do
+    broker = Klife.Producer.Controller.get_broker_id(cluster, topic, partition)
+
+    content = %{
+      replica_id: -1,
+      isolation_level: 1,
+      topics: [
+        %{
+          name: topic,
+          partitions: [
+            %{
+              partition_index: partition,
+              timestamp: base_ts
+            }
+          ]
+        }
+      ]
+    }
+
+    {:ok, %{content: resp}} =
+      Klife.Connection.Broker.send_message(
+        KlifeProtocol.Messages.ListOffsets,
+        cluster,
+        broker,
+        content
+      )
+
+    [%{partitions: partitions}] = resp.topics
+    [%{error_code: 0, offset: offset}] = partitions
+
+    offset
+  end
 end

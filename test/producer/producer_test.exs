@@ -42,6 +42,8 @@ defmodule Klife.ProducerTest do
     {:ok, _} = Klife.produce(rec, cluster: cluster)
   end
 
+  defp now_unix(), do: DateTime.utc_now() |> DateTime.to_unix()
+
   test "produce message sync no batching" do
     record = %Record{
       value: :rand.bytes(10),
@@ -568,6 +570,29 @@ defmodule Klife.ProducerTest do
     assert_offset(resp_rec, cluster, offset)
 
     record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, 4, offset)
+    assert length(record_batch) == 1
+  end
+
+  test "produce message async no batching" do
+    rec = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_async_topic",
+      partition: 1
+    }
+
+    cluster = :my_test_cluster_1
+
+    base_ts = now_unix()
+    assert :ok = Klife.produce(rec, async: true)
+
+    Process.sleep(5)
+
+    offset = TestUtils.get_latest_offset(cluster, rec.topic, rec.partition, base_ts)
+
+    assert_offset(rec, cluster, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(cluster, rec.topic, 1, offset)
     assert length(record_batch) == 1
   end
 end

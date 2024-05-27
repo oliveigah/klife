@@ -47,7 +47,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec]},
+               {:produce, [rec], self()},
                {self(), nil},
                state
              )
@@ -77,7 +77,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec]},
+               {:produce, [rec], self()},
                {self(), nil},
                new_state
              )
@@ -107,7 +107,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec]},
+               {:produce, [rec], self()},
                {self(), nil},
                new_state
              )
@@ -140,7 +140,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec]},
+               {:produce, [rec], self()},
                {self(), nil},
                new_state
              )
@@ -228,7 +228,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec1, rec2, rec3]},
+               {:produce, [rec1, rec2, rec3], self()},
                {self(), nil},
                state
              )
@@ -315,7 +315,7 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec1, rec2, rec3, rec4]},
+               {:produce, [rec1, rec2, rec3, rec4], self()},
                {self(), nil},
                new_state
              )

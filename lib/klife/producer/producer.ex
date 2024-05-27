@@ -63,6 +63,7 @@ defmodule Klife.Producer do
 
   def produce([%Record{} | _] = records, cluster_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
+    callback_pid = if Keyword.get(opts, :async, false), do: nil, else: self()
 
     delivery_timeout_ms =
       records
@@ -92,28 +93,33 @@ defmodule Klife.Producer do
             cluster_name,
             broker_id,
             producer,
-            batcher_id
+            batcher_id,
+            callback_pid
           )
 
         if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
       end)
 
-    max_resps = List.last(records).__batch_index
-    responses = wait_produce_response(delivery_timeout_ms, max_resps)
+    if callback_pid do
+      max_resps = List.last(records).__batch_index
+      responses = wait_produce_response(delivery_timeout_ms, max_resps)
 
-    records
-    |> Enum.map(fn %Record{} = rec ->
-      case Map.get(responses, rec.__batch_index) do
-        {:ok, offset} ->
-          {:ok, %{rec | offset: offset}}
+      records
+      |> Enum.map(fn %Record{} = rec ->
+        case Map.get(responses, rec.__batch_index) do
+          {:ok, offset} ->
+            {:ok, %{rec | offset: offset}}
 
-        err ->
-          err
+          err ->
+            err
+        end
+      end)
+      |> case do
+        [resp] -> resp
+        resps -> resps
       end
-    end)
-    |> case do
-      [resp] -> resp
-      resps -> resps
+    else
+      :ok
     end
   end
 
