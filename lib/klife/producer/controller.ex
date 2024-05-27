@@ -278,7 +278,7 @@ defmodule Klife.Producer.Controller do
 
       data = %{
         max_partition: max_partition,
-        default_partitioner: config_topic[:partitioner] || Klife.DefaultPartitioner
+        default_partitioner: config_topic[:partitioner] || Klife.Producer.DefaultPartitioner
       }
 
       case :ets.lookup(table_name, topic.name) do

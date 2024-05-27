@@ -4,12 +4,11 @@ defmodule Klife.ProducerTest do
   alias Klife.Record
 
   alias Klife.Producer.Controller, as: ProdController
-  alias Klife.Utils
   alias Klife.TestUtils
 
   defp assert_offset(expected_record, cluster, offset) do
     stored_record =
-      Utils.get_record_by_offset(
+      TestUtils.get_record_by_offset(
         cluster,
         expected_record.topic,
         expected_record.partition,
@@ -58,7 +57,7 @@ defmodule Klife.ProducerTest do
 
     assert_resp_record(record, resp_rec)
     assert_offset(record, cluster, offset)
-    record_batch = Utils.get_record_batch_by_offset(cluster, record.topic, 1, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(cluster, record.topic, 1, offset)
     assert length(record_batch) == 1
   end
 
@@ -79,7 +78,7 @@ defmodule Klife.ProducerTest do
     assert_offset(record, cluster, rec.offset)
 
     record_batch =
-      Utils.get_record_batch_by_offset(cluster, record.topic, record.partition, rec.offset)
+      TestUtils.get_record_batch_by_offset(cluster, record.topic, record.partition, rec.offset)
 
     assert length(record_batch) == 1
   end
@@ -147,9 +146,9 @@ defmodule Klife.ProducerTest do
     assert_offset(rec_2, cluster, resp_rec2.offset)
     assert_offset(rec_3, cluster, resp_rec3.offset)
 
-    batch_1 = Utils.get_record_batch_by_offset(cluster, topic, 1, resp_rec1.offset)
-    batch_2 = Utils.get_record_batch_by_offset(cluster, topic, 1, resp_rec2.offset)
-    batch_3 = Utils.get_record_batch_by_offset(cluster, topic, 1, resp_rec3.offset)
+    batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, resp_rec1.offset)
+    batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, resp_rec2.offset)
+    batch_3 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, resp_rec3.offset)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
@@ -219,15 +218,15 @@ defmodule Klife.ProducerTest do
     assert_offset(rec_2, cluster, resp_rec2.offset)
     assert_offset(rec_3, cluster, resp_rec3.offset)
 
-    batch_1 = Utils.get_record_batch_by_offset(cluster, topic, partition, resp_rec1.offset)
-    batch_2 = Utils.get_record_batch_by_offset(cluster, topic, partition, resp_rec2.offset)
-    batch_3 = Utils.get_record_batch_by_offset(cluster, topic, partition, resp_rec3.offset)
+    batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, partition, resp_rec1.offset)
+    batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, partition, resp_rec2.offset)
+    batch_3 = TestUtils.get_record_batch_by_offset(cluster, topic, partition, resp_rec3.offset)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
 
     assert [%{attributes: attr}] =
-             Utils.get_partition_resp_records_by_offset(cluster, topic, 1, resp_rec1.offset)
+             TestUtils.get_partition_resp_records_by_offset(cluster, topic, 1, resp_rec1.offset)
 
     assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
   end
@@ -310,7 +309,7 @@ defmodule Klife.ProducerTest do
     assert_offset(rec2, cluster, offset2)
     assert_offset(rec3, cluster, offset3)
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, rec1.topic, 1, offset1)
+    record_batch = TestUtils.get_record_batch_by_offset(cluster, rec1.topic, 1, offset1)
     assert length(record_batch) == 3
   end
 
@@ -371,16 +370,24 @@ defmodule Klife.ProducerTest do
     assert_offset(rec4, cluster, offset4)
     assert_offset(rec5, cluster, offset5)
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, rec1.topic, rec1.partition, offset1)
+    record_batch =
+      TestUtils.get_record_batch_by_offset(cluster, rec1.topic, rec1.partition, offset1)
+
     assert length(record_batch) == 1
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, rec2.topic, rec2.partition, offset2)
+    record_batch =
+      TestUtils.get_record_batch_by_offset(cluster, rec2.topic, rec2.partition, offset2)
+
     assert length(record_batch) == 1
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, rec3.topic, rec3.partition, offset3)
+    record_batch =
+      TestUtils.get_record_batch_by_offset(cluster, rec3.topic, rec3.partition, offset3)
+
     assert length(record_batch) == 1
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, rec4.topic, rec4.partition, offset4)
+    record_batch =
+      TestUtils.get_record_batch_by_offset(cluster, rec4.topic, rec4.partition, offset4)
+
     assert length(record_batch) == 2
   end
 
@@ -477,16 +484,16 @@ defmodule Klife.ProducerTest do
     assert_offset(rec3_1, cluster, offset3_1)
     assert_offset(rec3_2, cluster, offset3_2)
 
-    batch_1 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset1_1)
-    batch_2 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset2_1)
-    batch_3 = Utils.get_record_batch_by_offset(cluster, topic, 1, offset3_1)
+    batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, offset1_1)
+    batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, offset2_1)
+    batch_3 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, offset3_1)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
 
-    batch_1 = Utils.get_record_batch_by_offset(cluster, topic, 2, offset1_2)
-    batch_2 = Utils.get_record_batch_by_offset(cluster, topic, 2, offset2_2)
-    batch_3 = Utils.get_record_batch_by_offset(cluster, topic, 2, offset3_2)
+    batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, 2, offset1_2)
+    batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, 2, offset2_2)
+    batch_3 = TestUtils.get_record_batch_by_offset(cluster, topic, 2, offset3_2)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
@@ -512,7 +519,7 @@ defmodule Klife.ProducerTest do
     assert_resp_record(record, resp_rec)
     assert_offset(resp_rec, cluster, offset)
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, topic, partition, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, partition, offset)
     assert length(record_batch) == 1
   end
 
@@ -536,7 +543,7 @@ defmodule Klife.ProducerTest do
     assert_resp_record(record, resp_rec)
     assert_offset(resp_rec, cluster, offset)
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, topic, 3, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, 3, offset)
     assert length(record_batch) == 1
   end
 
@@ -560,7 +567,7 @@ defmodule Klife.ProducerTest do
     assert_resp_record(record, resp_rec)
     assert_offset(resp_rec, cluster, offset)
 
-    record_batch = Utils.get_record_batch_by_offset(cluster, topic, 4, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, 4, offset)
     assert length(record_batch) == 1
   end
 end

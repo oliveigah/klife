@@ -1,8 +1,8 @@
-defmodule Klife.DefaultPartitioner do
-  @behaviour Klife.Partitioner
+defmodule Klife.Producer.DefaultPartitioner do
+  @behaviour Klife.Behaviours.Partitioner
   alias Klife.Record
 
-  @impl Klife.Partitioner
+  @impl Klife.Behaviours.Partitioner
   def get_partition(%Record{key: nil}, max_partition),
     do: Enum.random(0..max_partition)
 
