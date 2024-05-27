@@ -253,7 +253,7 @@ defmodule Klife.ProducerTest do
 
     {:ok, service_name} = TestUtils.stop_broker(cluster, old_broker_id)
 
-    Process.sleep(10)
+    Process.sleep(50)
 
     %{broker_id: new_broker_id} = ProdController.get_topics_partitions_metadata(cluster, topic, 1)
 
@@ -587,7 +587,7 @@ defmodule Klife.ProducerTest do
     base_ts = now_unix()
     assert :ok = Klife.produce(rec, async: true)
 
-    Process.sleep(5)
+    Process.sleep(10)
 
     offset = TestUtils.get_latest_offset(cluster, rec.topic, rec.partition, base_ts)
 
