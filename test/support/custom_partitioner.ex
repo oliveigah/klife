@@ -1,5 +1,5 @@
 defmodule Klife.TestCustomPartitioner do
-  @behaviour Klife.Partitioner
+  @behaviour Klife.Behaviours.Partitioner
 
   alias Klife.Record
 
