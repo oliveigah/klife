@@ -1,11 +1,20 @@
 defmodule Klife do
   alias Klife.Record
   alias Klife.Producer
+  alias Klife.TxnProducer
   alias Klife.Producer.Controller, as: PController
 
   def produce(record_or_records, opts \\ [])
 
-  def produce(%Record{} = record, opts), do: produce([record], opts)
+  def produce(%Record{} = record, opts) do
+    case produce([record], opts) do
+      [resp] ->
+        resp
+
+      resp ->
+        resp
+    end
+  end
 
   def produce([%Record{} | _] = records, opts) do
     cluster = get_cluster(opts)
@@ -20,7 +29,14 @@ defmodule Klife do
         |> maybe_add_partition(cluster, opts)
       end)
 
-    Producer.produce(records, cluster, opts)
+    if TxnProducer.in_txn?(cluster),
+      do: TxnProducer.produce(records, cluster, opts),
+      else: Producer.produce(records, cluster, opts)
+  end
+
+  def transaction(fun, opts \\ []) do
+    cluster = get_cluster(opts)
+    TxnProducer.run_txn(cluster, fun)
   end
 
   defp default_cluster(), do: :persistent_term.get(:klife_default_cluster)

@@ -2,7 +2,7 @@ version: '3.3'
 
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
+    image: confluentinc/cp-zookeeper:7.6.1
     network_mode: host
     environment:
     - ZOOKEEPER_SERVER_ID=1
@@ -13,7 +13,7 @@ services:
     - ZOOKEEPER_SERVERS=zookeeper:2888:3888
 
   kafka1:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:7.6.1
     depends_on:
     - zookeeper
     network_mode: host
@@ -34,7 +34,7 @@ services:
     - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
 
   kafka2:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:7.6.1
     depends_on:
     - zookeeper
     - kafka1
@@ -56,7 +56,7 @@ services:
     - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
 
   kafka3:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:7.6.1
     depends_on:
     - zookeeper
     - kafka2

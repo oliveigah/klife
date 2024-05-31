@@ -14,6 +14,7 @@ defmodule Klife.Producer.Controller do
   alias Klife.Producer
 
   @default_producer %{name: :default_producer}
+
   @check_metadata_delay :timer.seconds(10)
 
   defstruct [
@@ -21,7 +22,8 @@ defmodule Klife.Producer.Controller do
     :producers,
     :topics,
     :check_metadata_waiting_pids,
-    :check_metadata_timer_ref
+    :check_metadata_timer_ref,
+    :txn_config
   ]
 
   def start_link(args) do
@@ -39,6 +41,7 @@ defmodule Klife.Producer.Controller do
     state = %__MODULE__{
       cluster_name: cluster_name,
       producers: [@default_producer] ++ Keyword.get(args, :producers, []),
+      txn_config: Keyword.get(args, :txn_config, []),
       topics: Enum.filter(topics_list, &Map.get(&1, :enable_produce, true)),
       check_metadata_waiting_pids: [],
       check_metadata_timer_ref: timer_ref
@@ -93,16 +96,29 @@ defmodule Klife.Producer.Controller do
         |> Map.put(:cluster_name, state.cluster_name)
         |> Map.to_list()
 
-      result =
-        DynamicSupervisor.start_child(
-          via_tuple({ProducerSupervisor, state.cluster_name}),
-          {Producer, opts}
-        )
-
-      case result do
+      DynamicSupervisor.start_child(
+        via_tuple({ProducerSupervisor, state.cluster_name}),
+        {Producer, opts}
+      )
+      |> case do
         {:ok, _pid} -> :ok
         {:error, {:already_started, pid}} -> send(pid, :handle_batchers)
       end
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info(:handle_txn_producers, %__MODULE__{} = state) do
+    result =
+      DynamicSupervisor.start_child(
+        via_tuple({ProducerSupervisor, state.cluster_name}),
+        {Klife.TxnProducer, state.txn_config ++ [cluster_name: state.cluster_name]}
+      )
+
+    case result do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
     end
 
     {:noreply, state}
@@ -256,6 +272,9 @@ defmodule Klife.Producer.Controller do
 
     if Enum.any?(results, &(&1 == :new)) do
       send(self(), :handle_producers)
+      # TODO: This need to be done here? Or can it
+      # be handled on the supervisor level?
+      send(self(), :handle_txn_producers)
     end
 
     :ok

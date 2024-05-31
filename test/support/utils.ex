@@ -51,6 +51,7 @@ defmodule Klife.TestUtils do
       result
     end)
     |> Task.await(30_000)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
   def start_broker(service_name, cluster_name) do
@@ -103,15 +104,22 @@ defmodule Klife.TestUtils do
       result
     end)
     |> Task.await(30_000)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
-  def get_record_by_offset(cluster_name, topic, partition, offset) do
+  def get_record_by_offset(cluster_name, topic, partition, offset, isolation \\ :committed) do
+    isolation_level =
+      case isolation do
+        :committed -> 1
+        :uncommitted -> 0
+      end
+
     content = %{
       replica_id: -1,
       max_wait_ms: 1000,
       min_bytes: 1,
       max_bytes: 100_000,
-      isolation_level: 0,
+      isolation_level: isolation_level,
       topics: [
         %{
           topic: topic,
@@ -140,8 +148,21 @@ defmodule Klife.TestUtils do
 
     topic_resp = Enum.find(content.responses, &(&1.topic == topic))
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
-    [%{base_offset: base_offset, records: records}] = partition_resp.records
-    Enum.find(records, &(&1.offset_delta + base_offset == offset))
+
+    aborted_offset =
+      case partition_resp.aborted_transactions do
+        [%{first_offset: aborted_offset}] -> aborted_offset
+        _ -> :infinity
+      end
+
+    case partition_resp.records do
+      [%{base_offset: base_offset, records: records}] ->
+        rec = Enum.find(records, &(&1.offset_delta + base_offset == offset))
+        if aborted_offset <= offset, do: {rec, :aborted}, else: {rec, :committed}
+
+      [] ->
+        nil
+    end
   end
 
   def get_record_batch_by_offset(cluster_name, topic, partition, offset) do

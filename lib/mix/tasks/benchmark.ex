@@ -57,7 +57,7 @@ if Mix.env() in [:dev] do
         |> Enum.find(&(&1.name == topic))
         |> Map.get(:num_partitions)
 
-      val = :rand.bytes(4000)
+      val = :rand.bytes(1_000)
       key = "some_key"
 
       records =

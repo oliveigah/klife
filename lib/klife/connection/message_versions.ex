@@ -31,7 +31,7 @@ defmodule Klife.Connection.MessageVersions do
         do_setup_versions(rest, cluster_map, cluster_name)
 
       invalid_common_version? and should_raise? ->
-        raise "Could not agree on API version for #{inspect(mod)} api_key #{api_key} for cluster #{cluster_name}"
+        raise "Could not agree on API version for #{inspect(mod)} api_key #{api_key} for cluster #{cluster_name}. Cluster "
 
       true ->
         do_setup_versions(rest, cluster_map, cluster_name)
@@ -43,10 +43,13 @@ defmodule Klife.Connection.MessageVersions do
       {M.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
       {M.CreateTopics, %{min: 0, max: 0, should_raise?: false}},
       {M.Metadata, %{min: 1, max: 1, should_raise?: true}},
-      {M.Produce, %{min: 0, max: 0, should_raise?: false}},
+      {M.Produce, %{min: 9, max: 9, should_raise?: false}},
       {M.InitProducerId, %{min: 0, max: 0, should_raise?: false}},
       {M.Fetch, %{min: 4, max: 4, should_raise?: true}},
-      {M.ListOffsets, %{min: 2, max: 2, should_raise?: true}}
+      {M.ListOffsets, %{min: 2, max: 2, should_raise?: true}},
+      {M.AddPartitionsToTxn, %{min: 4, max: 4, should_raise?: true}},
+      {M.FindCoordinator, %{min: 4, max: 4, should_raise?: true}},
+      {M.EndTxn, %{min: 3, max: 3, should_raise?: true}}
     ]
   end
 

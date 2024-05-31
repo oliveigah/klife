@@ -109,11 +109,14 @@ defmodule Klife.Connection.Controller do
         url: url
       ]
 
-      {:ok, _} =
-        DynamicSupervisor.start_child(
-          via_tuple({BrokerSupervisor, state.cluster_name}),
-          {Broker, broker_opts}
-        )
+      DynamicSupervisor.start_child(
+        via_tuple({BrokerSupervisor, state.cluster_name}),
+        {Broker, broker_opts}
+      )
+      |> case do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
+      end
     end)
 
     Enum.each(to_remove, fn {broker_id, _url} ->

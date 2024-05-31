@@ -1,25 +1,40 @@
 defmodule Klife.ProducerTest do
   use ExUnit.Case
 
+  import Klife.ProcessRegistry
   alias Klife.Record
 
   alias Klife.Producer.Controller, as: ProdController
   alias Klife.TestUtils
 
-  defp assert_offset(expected_record, cluster, offset) do
+  defp assert_offset(expected_record, cluster, offset, opts \\ []) do
+    iso_lvl = Keyword.get(opts, :isolation, :committed)
+    txn_status = Keyword.get(opts, :txn_status, :committed)
+
     stored_record =
       TestUtils.get_record_by_offset(
         cluster,
         expected_record.topic,
         expected_record.partition,
-        offset
+        offset,
+        iso_lvl
       )
 
-    Enum.each(Map.from_struct(expected_record), fn {k, v} ->
-      if k in [:value, :key, :headers] do
-        assert v == Map.get(stored_record, k)
-      end
-    end)
+    case stored_record do
+      nil ->
+        :not_found
+
+      {stored_record, status} ->
+        assert status == txn_status
+
+        Enum.each(Map.from_struct(expected_record), fn {k, v} ->
+          if k in [:value, :key, :headers] do
+            assert v == Map.get(stored_record, k)
+          end
+        end)
+
+        :ok
+    end
   end
 
   defp assert_resp_record(expected_record, response_record) do
@@ -58,7 +73,7 @@ defmodule Klife.ProducerTest do
     assert {:ok, %Record{offset: offset} = resp_rec} = Klife.produce(record)
 
     assert_resp_record(record, resp_rec)
-    assert_offset(record, cluster, offset)
+    assert :ok = assert_offset(record, cluster, offset)
     record_batch = TestUtils.get_record_batch_by_offset(cluster, record.topic, 1, offset)
     assert length(record_batch) == 1
   end
@@ -77,7 +92,7 @@ defmodule Klife.ProducerTest do
     assert {:ok, %Record{} = rec} =
              Klife.produce(record, producer: :benchmark_producer)
 
-    assert_offset(record, cluster, rec.offset)
+    assert :ok = assert_offset(record, cluster, rec.offset)
 
     record_batch =
       TestUtils.get_record_batch_by_offset(cluster, record.topic, record.partition, rec.offset)
@@ -144,9 +159,9 @@ defmodule Klife.ProducerTest do
     assert resp_rec2.offset - resp_rec1.offset == 1
     assert resp_rec3.offset - resp_rec2.offset == 1
 
-    assert_offset(rec_1, cluster, resp_rec1.offset)
-    assert_offset(rec_2, cluster, resp_rec2.offset)
-    assert_offset(rec_3, cluster, resp_rec3.offset)
+    assert :ok = assert_offset(rec_1, cluster, resp_rec1.offset)
+    assert :ok = assert_offset(rec_2, cluster, resp_rec2.offset)
+    assert :ok = assert_offset(rec_3, cluster, resp_rec3.offset)
 
     batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, resp_rec1.offset)
     batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, resp_rec2.offset)
@@ -216,9 +231,9 @@ defmodule Klife.ProducerTest do
     assert resp_rec2.offset - resp_rec1.offset == 1
     assert resp_rec3.offset - resp_rec2.offset == 1
 
-    assert_offset(rec_1, cluster, resp_rec1.offset)
-    assert_offset(rec_2, cluster, resp_rec2.offset)
-    assert_offset(rec_3, cluster, resp_rec3.offset)
+    assert :ok = assert_offset(rec_1, cluster, resp_rec1.offset)
+    assert :ok = assert_offset(rec_2, cluster, resp_rec2.offset)
+    assert :ok = assert_offset(rec_3, cluster, resp_rec3.offset)
 
     batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, partition, resp_rec1.offset)
     batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, partition, resp_rec2.offset)
@@ -247,7 +262,7 @@ defmodule Klife.ProducerTest do
 
     assert {:ok, %Record{} = resp_rec} = Klife.produce(record)
 
-    assert_offset(record, cluster, resp_rec.offset)
+    assert :ok = assert_offset(record, cluster, resp_rec.offset)
 
     %{broker_id: old_broker_id} = ProdController.get_topics_partitions_metadata(cluster, topic, 1)
 
@@ -269,7 +284,7 @@ defmodule Klife.ProducerTest do
 
     assert {:ok, %Record{} = resp_rec} = Klife.produce(record)
 
-    assert_offset(record, cluster, resp_rec.offset)
+    assert :ok = assert_offset(record, cluster, resp_rec.offset)
 
     {:ok, _} = TestUtils.start_broker(service_name, cluster)
   end
@@ -307,9 +322,9 @@ defmodule Klife.ProducerTest do
              {:ok, %Record{offset: offset3}}
            ] = Klife.produce([rec1, rec2, rec3])
 
-    assert_offset(rec1, cluster, offset1)
-    assert_offset(rec2, cluster, offset2)
-    assert_offset(rec3, cluster, offset3)
+    assert :ok = assert_offset(rec1, cluster, offset1)
+    assert :ok = assert_offset(rec2, cluster, offset2)
+    assert :ok = assert_offset(rec3, cluster, offset3)
 
     record_batch = TestUtils.get_record_batch_by_offset(cluster, rec1.topic, 1, offset1)
     assert length(record_batch) == 3
@@ -366,11 +381,11 @@ defmodule Klife.ProducerTest do
              {:ok, %Record{offset: offset5}}
            ] = Klife.produce([rec1, rec2, rec3, rec4, rec5])
 
-    assert_offset(rec1, cluster, offset1)
-    assert_offset(rec2, cluster, offset2)
-    assert_offset(rec3, cluster, offset3)
-    assert_offset(rec4, cluster, offset4)
-    assert_offset(rec5, cluster, offset5)
+    assert :ok = assert_offset(rec1, cluster, offset1)
+    assert :ok = assert_offset(rec2, cluster, offset2)
+    assert :ok = assert_offset(rec3, cluster, offset3)
+    assert :ok = assert_offset(rec4, cluster, offset4)
+    assert :ok = assert_offset(rec5, cluster, offset5)
 
     record_batch =
       TestUtils.get_record_batch_by_offset(cluster, rec1.topic, rec1.partition, offset1)
@@ -479,12 +494,12 @@ defmodule Klife.ProducerTest do
     assert offset2_2 - offset1_2 == 1
     assert offset3_2 - offset2_2 == 1
 
-    assert_offset(rec1_1, cluster, offset1_1)
-    assert_offset(rec1_2, cluster, offset1_2)
-    assert_offset(rec2_1, cluster, offset2_1)
-    assert_offset(rec2_2, cluster, offset2_2)
-    assert_offset(rec3_1, cluster, offset3_1)
-    assert_offset(rec3_2, cluster, offset3_2)
+    assert :ok = assert_offset(rec1_1, cluster, offset1_1)
+    assert :ok = assert_offset(rec1_2, cluster, offset1_2)
+    assert :ok = assert_offset(rec2_1, cluster, offset2_1)
+    assert :ok = assert_offset(rec2_2, cluster, offset2_2)
+    assert :ok = assert_offset(rec3_1, cluster, offset3_1)
+    assert :ok = assert_offset(rec3_2, cluster, offset3_2)
 
     batch_1 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, offset1_1)
     batch_2 = TestUtils.get_record_batch_by_offset(cluster, topic, 1, offset2_1)
@@ -519,7 +534,7 @@ defmodule Klife.ProducerTest do
             } = resp_rec} = Klife.produce(record)
 
     assert_resp_record(record, resp_rec)
-    assert_offset(resp_rec, cluster, offset)
+    assert :ok = assert_offset(resp_rec, cluster, offset)
 
     record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, partition, offset)
     assert length(record_batch) == 1
@@ -543,7 +558,7 @@ defmodule Klife.ProducerTest do
             } = resp_rec} = Klife.produce(record)
 
     assert_resp_record(record, resp_rec)
-    assert_offset(resp_rec, cluster, offset)
+    assert :ok = assert_offset(resp_rec, cluster, offset)
 
     record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, 3, offset)
     assert length(record_batch) == 1
@@ -567,7 +582,7 @@ defmodule Klife.ProducerTest do
             } = resp_rec} = Klife.produce(record, partitioner: Klife.TestCustomPartitioner)
 
     assert_resp_record(record, resp_rec)
-    assert_offset(resp_rec, cluster, offset)
+    assert :ok = assert_offset(resp_rec, cluster, offset)
 
     record_batch = TestUtils.get_record_batch_by_offset(cluster, topic, 4, offset)
     assert length(record_batch) == 1
@@ -591,8 +606,294 @@ defmodule Klife.ProducerTest do
 
     offset = TestUtils.get_latest_offset(cluster, rec.topic, rec.partition, base_ts)
 
-    assert_offset(rec, cluster, offset)
+    assert :ok = assert_offset(rec, cluster, offset)
     record_batch = TestUtils.get_record_batch_by_offset(cluster, rec.topic, 1, offset)
     assert length(record_batch) == 1
+  end
+
+  test "producer epoch bump" do
+    cluster_name = :my_test_cluster_1
+
+    %{
+      "test_no_batch_topic" => [t1_data | _],
+      "test_no_batch_topic_2" => [t2_data | _]
+    } =
+      ProdController.get_all_topics_partitions_metadata(cluster_name)
+      |> Enum.filter(fn data ->
+        data.topic_name in ["test_no_batch_topic", "test_no_batch_topic_2"]
+      end)
+      |> Enum.group_by(fn data -> {data.leader_id, data.batcher_id} end)
+      |> Enum.take(1)
+      |> List.first()
+      |> elem(1)
+      |> Enum.group_by(fn data -> data.topic_name end)
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: t1_data.topic_name,
+      partition: t1_data.partition_idx
+    }
+
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: t2_data.topic_name,
+      partition: t2_data.partition_idx
+    }
+
+    [{batcher_pid, _}] =
+      registry_lookup(
+        {Klife.Producer.Batcher, cluster_name, t1_data.leader_id, :default_producer,
+         t1_data.batcher_id}
+      )
+
+    assert [
+             {:ok, %Record{}},
+             {:ok, %Record{}}
+           ] = Klife.produce([rec1, rec2])
+
+    tp_key = {t1_data.topic_name, t1_data.partition_idx}
+
+    before_epoch =
+      batcher_pid
+      |> :sys.get_state()
+      |> Map.get(:producer_epochs)
+      |> Map.get(tp_key, 0)
+
+    Process.send(batcher_pid, {:bump_epoch, [tp_key]}, [])
+
+    :ok =
+      Enum.reduce_while(1..50, nil, fn _, _ ->
+        new_epoch =
+          batcher_pid
+          |> :sys.get_state()
+          |> Map.get(:producer_epochs)
+          |> Map.get(tp_key)
+
+        if new_epoch > before_epoch do
+          {:halt, :ok}
+        else
+          Process.sleep(1)
+          {:cont, nil}
+        end
+      end)
+
+    assert [{:ok, %Record{}}] = Klife.produce([rec1])
+    assert [{:ok, %Record{}}] = Klife.produce([rec2])
+  end
+
+  test "txn produce message - aborts" do
+    cluster = :my_test_cluster_1
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 1
+    }
+
+    rec3 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic_2",
+      partition: 0
+    }
+
+    rec4 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec5 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec6 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    assert {:error,
+            [
+              {:ok, %Record{offset: offset1}},
+              {:ok, %Record{offset: offset2}},
+              {:ok, %Record{offset: offset3}},
+              {:ok, %Record{offset: offset4}},
+              {:ok, %Record{offset: offset5}},
+              {:ok, %Record{offset: offset6}}
+            ]} =
+             Klife.transaction(fn ->
+               resp1 = Klife.produce([rec1, rec2, rec3])
+
+               assert [
+                        {:ok, %Record{offset: offset1}},
+                        {:ok, %Record{offset: offset2}},
+                        {:ok, %Record{offset: offset3}}
+                      ] = resp1
+
+               assert :not_found = assert_offset(rec1, cluster, offset1, isolation: :committed)
+               assert :ok = assert_offset(rec1, cluster, offset1, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec2, cluster, offset2, isolation: :committed)
+               assert :ok = assert_offset(rec2, cluster, offset2, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec3, cluster, offset3, isolation: :committed)
+               assert :ok = assert_offset(rec3, cluster, offset3, isolation: :uncommitted)
+
+               resp2 = Klife.produce([rec4, rec5, rec6])
+
+               assert [
+                        {:ok, %Record{offset: offset4}},
+                        {:ok, %Record{offset: offset5}},
+                        {:ok, %Record{offset: offset6}}
+                      ] = resp2
+
+               assert :not_found = assert_offset(rec4, cluster, offset4, isolation: :committed)
+               assert :ok = assert_offset(rec4, cluster, offset4, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec5, cluster, offset5, isolation: :committed)
+               assert :ok = assert_offset(rec5, cluster, offset5, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec6, cluster, offset6, isolation: :committed)
+               assert :ok = assert_offset(rec6, cluster, offset6, isolation: :uncommitted)
+
+               {:error, resp1 ++ resp2}
+             end)
+
+    assert_offset(rec1, cluster, offset1, txn_status: :aborted)
+    assert_offset(rec2, cluster, offset2, txn_status: :aborted)
+    assert_offset(rec3, cluster, offset3, txn_status: :aborted)
+    assert_offset(rec4, cluster, offset4, txn_status: :aborted)
+    assert_offset(rec5, cluster, offset5, txn_status: :aborted)
+    assert_offset(rec6, cluster, offset6, txn_status: :aborted)
+  end
+
+  test "txn produce message - commits" do
+    cluster = :my_test_cluster_1
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 1
+    }
+
+    rec3 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic_2",
+      partition: 0
+    }
+
+    rec4 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec5 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec6 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    assert {:ok,
+            [
+              {:ok, %Record{offset: offset1}},
+              {:ok, %Record{offset: offset2}},
+              {:ok, %Record{offset: offset3}},
+              {:ok, %Record{offset: offset4}},
+              {:ok, %Record{offset: offset5}},
+              {:ok, %Record{offset: offset6}}
+            ]} =
+             Klife.transaction(fn ->
+               resp1 = Klife.produce([rec1, rec2, rec3])
+
+               assert [
+                        {:ok, %Record{offset: offset1}},
+                        {:ok, %Record{offset: offset2}},
+                        {:ok, %Record{offset: offset3}}
+                      ] = resp1
+
+               assert :not_found = assert_offset(rec1, cluster, offset1, isolation: :committed)
+               assert :ok = assert_offset(rec1, cluster, offset1, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec2, cluster, offset2, isolation: :committed)
+               assert :ok = assert_offset(rec2, cluster, offset2, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec3, cluster, offset3, isolation: :committed)
+               assert :ok = assert_offset(rec3, cluster, offset3, isolation: :uncommitted)
+
+               resp2 = Klife.produce([rec4, rec5, rec6])
+
+               assert [
+                        {:ok, %Record{offset: offset4}},
+                        {:ok, %Record{offset: offset5}},
+                        {:ok, %Record{offset: offset6}}
+                      ] = resp2
+
+               assert :not_found = assert_offset(rec4, cluster, offset4, isolation: :committed)
+               assert :ok = assert_offset(rec4, cluster, offset4, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec5, cluster, offset5, isolation: :committed)
+               assert :ok = assert_offset(rec5, cluster, offset5, isolation: :uncommitted)
+
+               assert :not_found = assert_offset(rec6, cluster, offset6, isolation: :committed)
+               assert :ok = assert_offset(rec6, cluster, offset6, isolation: :uncommitted)
+
+               {:ok, resp1 ++ resp2}
+             end)
+
+    assert_offset(rec1, cluster, offset1, txn_status: :committed)
+    assert_offset(rec2, cluster, offset2, txn_status: :committed)
+    assert_offset(rec3, cluster, offset3, txn_status: :committed)
+    assert_offset(rec4, cluster, offset4, txn_status: :committed)
+    assert_offset(rec5, cluster, offset5, txn_status: :committed)
+    assert_offset(rec6, cluster, offset6, txn_status: :committed)
   end
 end

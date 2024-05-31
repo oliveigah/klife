@@ -114,10 +114,6 @@ defmodule Klife.Producer do
             err
         end
       end)
-      |> case do
-        [resp] -> resp
-        resps -> resps
-      end
     else
       :ok
     end
