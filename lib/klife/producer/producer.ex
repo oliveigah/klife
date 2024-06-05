@@ -6,9 +6,11 @@ defmodule Klife.Producer do
   alias Klife.Record
 
   alias Klife.Producer.Batcher
-  alias Klife.Producer.BatcherSupervisor
   alias Klife.Producer.Controller, as: ProducerController
+  alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
+
+  alias KlifeProtocol.Messages, as: M
 
   @producer_options [
     cluster_name: [type: :atom, required: true],
@@ -23,10 +25,12 @@ defmodule Klife.Producer do
     max_in_flight_requests: [type: :non_neg_integer, default: 1],
     batchers_count: [type: :pos_integer, default: 1],
     enable_idempotence: [type: :boolean, default: true],
-    compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none]
+    compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none],
+    txn_id: [type: :string],
+    txn_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(60)]
   ]
 
-  defstruct (Keyword.keys(@producer_options) -- [:name]) ++ [:producer_name]
+  defstruct (Keyword.keys(@producer_options) -- [:name]) ++ [:producer_name, :producer_id]
 
   def opts_schema(), do: @producer_options
 
@@ -49,7 +53,11 @@ defmodule Klife.Producer do
     }
 
     filtered_args = Map.take(args_map, Map.keys(base))
-    state = Map.merge(base, filtered_args)
+
+    state =
+      base
+      |> Map.merge(filtered_args)
+      |> set_producer_id()
 
     :ok = do_handle_batchers(state)
 
@@ -59,6 +67,39 @@ defmodule Klife.Producer do
   def handle_info(:handle_batchers, %__MODULE__{} = state) do
     :ok = do_handle_batchers(state)
     {:noreply, state}
+  end
+
+  defp set_producer_id(%__MODULE__{enable_idempotence: false}), do: nil
+
+  defp set_producer_id(%__MODULE__{enable_idempotence: true} = state) do
+    broker =
+      case state do
+        %{txn_id: nil} ->
+          :any
+
+        %{txn_id: txn_id} ->
+          content = %{
+            key_type: 1,
+            coordinator_keys: [txn_id]
+          }
+
+          {:ok, %{content: resp}} =
+            Broker.send_message(M.FindCoordinator, state.cluster_name, :any, content)
+
+          [%{node_id: broker_id}] = resp.coordinators
+
+          broker_id
+      end
+
+    content = %{
+      transactional_id: state.txn_id,
+      transaction_timeout_ms: state.txn_timeout_ms
+    }
+
+    {:ok, %{content: %{error_code: 0, producer_id: producer_id}}} =
+      Broker.send_message(M.InitProducerId, state.cluster_name, broker, content)
+
+    %__MODULE__{state | producer_id: producer_id}
   end
 
   def produce([%Record{} | _] = records, cluster_name, opts) do
@@ -162,10 +203,11 @@ defmodule Klife.Producer do
     for broker_id <- known_brokers,
         batcher_id <- 0..(batchers_per_broker - 1) do
       result =
-        DynamicSupervisor.start_child(
-          via_tuple({BatcherSupervisor, state.cluster_name}),
-          {Batcher, [{:broker_id, broker_id}, {:id, batcher_id}, {:producer_config, state}]}
-        )
+        Batcher.start_link([
+          {:broker_id, broker_id},
+          {:id, batcher_id},
+          {:producer_config, state}
+        ])
 
       case result do
         {:ok, _pid} -> :ok

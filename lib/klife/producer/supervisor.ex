@@ -12,7 +12,6 @@ defmodule Klife.Producer.Supervisor do
   def init(opts) do
     children = [
       {Klife.Producer.ProducerSupervisor, opts},
-      {Klife.Producer.BatcherSupervisor, opts},
       {Klife.Producer.Controller, opts}
     ]
 

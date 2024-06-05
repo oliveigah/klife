@@ -8,12 +8,9 @@ defmodule Klife.Producer.Batcher do
 
   alias Klife.Producer
   alias Klife.Producer.Dispatcher
-  alias Klife.Connection.Broker
-  alias KlifeProtocol.Messages, as: M
 
   defstruct [
     :producer_config,
-    :producer_id,
     :producer_epochs,
     :base_sequences,
     :broker_id,
@@ -50,16 +47,9 @@ defmodule Klife.Producer.Batcher do
     args_map = Map.new(args)
     max_in_flight = args_map.producer_config.max_in_flight_requests
     linger_ms = args_map.producer_config.linger_ms
-    idempotent? = args_map.producer_config.enable_idempotence
-    cluster_name = args_map.producer_config.cluster_name
     broker_id = args_map.broker_id
     batcher_id = args_map.id
     producer_config = args_map.producer_config
-
-    producer_id =
-      if idempotent?,
-        do: get_producer_id(cluster_name, args_map.broker_id),
-        else: nil
 
     next_send_msg_ref =
       if linger_ms > 0,
@@ -75,7 +65,6 @@ defmodule Klife.Producer.Batcher do
       last_batch_sent_at: System.monotonic_time(:millisecond),
       in_flight_pool: Enum.map(1..max_in_flight, fn _ -> nil end),
       next_send_msg_ref: next_send_msg_ref,
-      producer_id: producer_id,
       base_sequences: %{},
       producer_epochs: %{},
       broker_id: broker_id,
@@ -100,18 +89,6 @@ defmodule Klife.Producer.Batcher do
       {:ok, pid} -> {:ok, pid}
       {:error, {:already_started, pid}} -> {:ok, pid}
     end
-  end
-
-  defp get_producer_id(cluster_name, broker_id) do
-    content = %{
-      transactional_id: nil,
-      transaction_timeout_ms: 0
-    }
-
-    {:ok, %{content: %{error_code: 0, producer_id: producer_id}}} =
-      Broker.send_message(M.InitProducerId, cluster_name, broker_id, content)
-
-    producer_id
   end
 
   def produce(
@@ -387,15 +364,14 @@ defmodule Klife.Producer.Batcher do
   defp init_partition_data(
          %__MODULE__{
            base_sequences: bs,
-           producer_id: p_id,
-           producer_config: %{enable_idempotence: idempotent?} = pconfig,
+           producer_config: %{producer_id: p_id} = pconfig,
            producer_epochs: p_epochs
          } = _state,
          topic,
          partition
        ) do
     {p_epoch, base_seq} =
-      if idempotent? do
+      if p_id do
         key = {topic, partition}
         {Map.get(p_epochs, key, 0), Map.get(bs, key, 0)}
       else
@@ -421,7 +397,8 @@ defmodule Klife.Producer.Batcher do
   defp get_attributes_byte(%Producer{} = pconfig, _opts) do
     # TODO: Handle different attributes opts
     [
-      compression: pconfig.compression_type
+      compression: pconfig.compression_type,
+      is_transactional: pconfig.txn_id != nil
     ]
     |> KlifeProtocol.RecordBatch.encode_attributes()
   end

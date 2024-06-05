@@ -30,8 +30,7 @@ defmodule Klife.Producer.BatcherTest do
       next_send_msg_ref: nil,
       batch_queue: :queue.new(),
       base_sequences: %{},
-      producer_epochs: %{},
-      producer_id: 123
+      producer_epochs: %{}
     }
 
     %{value: rec_val, key: rec_key, headers: rec_headers} =
@@ -189,8 +188,7 @@ defmodule Klife.Producer.BatcherTest do
       next_send_msg_ref: nil,
       batch_queue: :queue.new(),
       base_sequences: %{},
-      producer_epochs: %{},
-      producer_id: 123
+      producer_epochs: %{}
     }
 
     %{value: rec1_val, key: rec1_key, headers: rec1_headers} =
