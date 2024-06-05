@@ -248,6 +248,7 @@ defmodule Klife.ProducerTest do
     assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
   end
 
+  @tag :cluster_change
   test "is able to recover from cluster changes" do
     cluster = :my_test_cluster_1
     topic = "test_no_batch_topic"

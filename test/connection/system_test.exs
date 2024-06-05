@@ -120,6 +120,7 @@ defmodule Klife.Connection.SystemTest do
     Enum.each(brokers_list_3, &check_broker_connection(cluster_name_3, &1))
   end
 
+  @tag :cluster_change
   test "cluster changes events" do
     cluster_name = :my_test_cluster_1
     brokers = :persistent_term.get({:known_brokers_ids, cluster_name})
