@@ -5,6 +5,10 @@ config :klife,
   clusters: [
     [
       cluster_name: :my_test_cluster_1,
+      txn_pools: [
+        %{name: :my_pool_1},
+        %{name: :my_pool_2}
+      ],
       connection: [
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         # bootstrap_servers: ["localhost:19093", "localhost:29093"],
@@ -72,7 +76,7 @@ config :klife,
         %{
           name: "test_async_topic",
           enable_produce: true
-        },
+        }
       ]
     ]
   ]

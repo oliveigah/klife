@@ -647,9 +647,12 @@ defmodule Klife.ProducerTest do
 
     [{batcher_pid, _}] =
       registry_lookup(
-        {Klife.Producer.Batcher, cluster_name, t1_data.leader_id, :default_producer,
+        {Klife.Producer.Batcher, cluster_name, t1_data.leader_id, :klife_default_producer,
          t1_data.batcher_id}
       )
+
+    [{producer_pid, _}] =
+      registry_lookup({Klife.Producer, cluster_name, :klife_default_producer})
 
     assert [
              {:ok, %Record{}},
@@ -662,25 +665,47 @@ defmodule Klife.ProducerTest do
       batcher_pid
       |> :sys.get_state()
       |> Map.get(:producer_epochs)
-      |> Map.get(tp_key, 0)
+      |> Map.fetch!(tp_key)
+
+    producer_state = :sys.get_state(producer_pid)
+
+    assert {^before_epoch, ^batcher_pid} =
+             producer_state
+             |> Map.get(:epochs)
+             |> Map.get(tp_key)
 
     Process.send(batcher_pid, {:bump_epoch, [tp_key]}, [])
 
     :ok =
       Enum.reduce_while(1..50, nil, fn _, _ ->
+        state = :sys.get_state(batcher_pid)
+
         new_epoch =
-          batcher_pid
-          |> :sys.get_state()
+          state
           |> Map.get(:producer_epochs)
           |> Map.get(tp_key)
 
-        if new_epoch > before_epoch do
+        new_bs =
+          state
+          |> Map.get(:base_sequences)
+          |> Map.get(tp_key)
+
+        if new_epoch > before_epoch and new_bs == 0 do
           {:halt, :ok}
         else
           Process.sleep(1)
           {:cont, nil}
         end
       end)
+
+    producer_state = :sys.get_state(producer_pid)
+
+    expected_epoch = before_epoch + 1
+
+    assert {^expected_epoch, ^batcher_pid} =
+             producer_state
+             |> Map.get(:epochs)
+             |> Map.get(tp_key)
 
     assert [{:ok, %Record{}}] = Klife.produce([rec1])
     assert [{:ok, %Record{}}] = Klife.produce([rec2])

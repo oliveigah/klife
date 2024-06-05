@@ -178,14 +178,31 @@ defmodule Klife.Producer.Batcher do
   end
 
   def handle_info({:bump_epoch, topics_partitions_list}, %__MODULE__{} = state) do
-    %{producer_epochs: pe, base_sequences: bs} = state
+    %__MODULE__{
+      producer_epochs: pe,
+      base_sequences: bs,
+      producer_config: %Producer{
+        cluster_name: cluster_name,
+        producer_name: producer_name
+      }
+    } = state
 
     {new_pe, new_bs} =
-      Enum.reduce(topics_partitions_list, {pe, bs}, fn key, {acc_pe, acc_bs} ->
-        new_pe = Map.put(acc_pe, key, Map.get(acc_pe, key, 0) + 1)
+      Enum.reduce(topics_partitions_list, {pe, bs}, fn {topic, partition}, {acc_pe, acc_bs} ->
+        key = {topic, partition}
+        new_pe_val = Producer.new_epoch(cluster_name, producer_name, topic, partition)
+        new_pe = Map.put(acc_pe, key, new_pe_val)
         new_bs = Map.replace!(acc_bs, key, 0)
         {new_pe, new_bs}
       end)
+
+    {:noreply, %{state | producer_epochs: new_pe, base_sequences: new_bs}}
+  end
+
+  def handle_info({:remove_topic_partition, topic, partition}, %__MODULE__{} = state) do
+    key = {topic, partition}
+    new_pe = Map.delete(state.producer_epochs, key)
+    new_bs = Map.delete(state.base_sequences, key)
 
     {:noreply, %{state | producer_epochs: new_pe, base_sequences: new_bs}}
   end
@@ -228,7 +245,8 @@ defmodule Klife.Producer.Batcher do
           current_estimated_size: curr_size,
           current_waiting_pids: curr_pids,
           current_base_time: curr_base_time,
-          base_sequences: base_sequences
+          base_sequences: base_sequences,
+          producer_epochs: producer_epochs
         } = state,
         %Record{topic: topic, partition: partition} = record,
         pid,
@@ -241,6 +259,7 @@ defmodule Klife.Producer.Batcher do
       | current_batch: new_batch,
         current_waiting_pids: add_waiting_pid(curr_pids, new_batch, pid, record),
         base_sequences: update_base_sequence(base_sequences, new_batch, topic, partition),
+        producer_epochs: maybe_update_epoch(producer_epochs, new_batch, topic, partition),
         current_base_time: curr_base_time || System.monotonic_time(:millisecond),
         current_estimated_size: curr_size + estimated_size
     }
@@ -364,7 +383,9 @@ defmodule Klife.Producer.Batcher do
   defp init_partition_data(
          %__MODULE__{
            base_sequences: bs,
-           producer_config: %{producer_id: p_id} = pconfig,
+           producer_config:
+             %{cluster_name: cluster_name, producer_name: producer_name, producer_id: p_id} =
+               pconfig,
            producer_epochs: p_epochs
          } = _state,
          topic,
@@ -373,7 +394,17 @@ defmodule Klife.Producer.Batcher do
     {p_epoch, base_seq} =
       if p_id do
         key = {topic, partition}
-        {Map.get(p_epochs, key, 0), Map.get(bs, key, 0)}
+
+        epoch =
+          case Map.get(p_epochs, key) do
+            nil ->
+              Producer.new_epoch(cluster_name, producer_name, topic, partition)
+
+            val ->
+              val
+          end
+
+        {epoch, Map.get(bs, key, 0)}
       else
         {-1, -1}
       end
@@ -442,6 +473,23 @@ defmodule Klife.Producer.Batcher do
 
       curr_base_seq ->
         Map.replace!(curr_base_sequences, {topic, partition}, curr_base_seq + 1)
+    end
+  end
+
+  defp maybe_update_epoch(curr_epochs, new_batch, topic, partition) do
+    case Map.get(curr_epochs, {topic, partition}) do
+      nil ->
+        epoch =
+          new_batch
+          |> Map.fetch!({topic, partition})
+          |> Map.fetch!(:producer_epoch)
+
+        if epoch != -1,
+          do: Map.put(curr_epochs, {topic, partition}, epoch),
+          else: curr_epochs
+
+      _ ->
+        curr_epochs
     end
   end
 

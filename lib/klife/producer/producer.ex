@@ -30,7 +30,8 @@ defmodule Klife.Producer do
     txn_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(60)]
   ]
 
-  defstruct (Keyword.keys(@producer_options) -- [:name]) ++ [:producer_name, :producer_id]
+  defstruct (Keyword.keys(@producer_options) -- [:name]) ++
+              [:producer_name, :producer_id, :epochs]
 
   def opts_schema(), do: @producer_options
 
@@ -49,7 +50,8 @@ defmodule Klife.Producer do
 
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.cluster_name}.#{args_map.name}",
-      producer_name: args_map.name
+      producer_name: args_map.name,
+      epochs: %{}
     }
 
     filtered_args = Map.take(args_map, Map.keys(base))
@@ -64,9 +66,38 @@ defmodule Klife.Producer do
     {:ok, state}
   end
 
+  def new_epoch(cluster_name, producer_name, topic, partition) do
+    {__MODULE__, cluster_name, producer_name}
+    |> via_tuple()
+    |> GenServer.call({:new_epoch, topic, partition})
+  end
+
   def handle_info(:handle_batchers, %__MODULE__{} = state) do
     :ok = do_handle_batchers(state)
     {:noreply, state}
+  end
+
+  def handle_call(
+        {:new_epoch, topic, partition},
+        {called_pid, _tag},
+        %__MODULE__{epochs: epochs} = state
+      ) do
+    case Map.get(epochs, {topic, partition}) do
+      nil ->
+        epoch = 0
+        new_state = %{state | epochs: Map.put(epochs, {topic, partition}, {epoch, called_pid})}
+        {:reply, epoch, new_state}
+
+      {curr_epoch, last_known_pid} ->
+        epoch = curr_epoch + 1
+        new_state = %{state | epochs: Map.put(epochs, {topic, partition}, {epoch, called_pid})}
+
+        if last_known_pid != called_pid do
+          send(last_known_pid, {:remove_topic_partition, topic, partition})
+        end
+
+        {:reply, epoch, new_state}
+    end
   end
 
   defp set_producer_id(%__MODULE__{enable_idempotence: false}), do: nil
