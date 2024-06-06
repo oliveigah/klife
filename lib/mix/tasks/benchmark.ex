@@ -47,25 +47,47 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("producer_sync", parallel) do
-      topic = "benchmark_topic"
+      topic0 = "benchmark_topic_0"
+      topic1 = "benchmark_topic_1"
+      topic2 = "benchmark_topic_2"
 
       max_partition =
         :klife
         |> Application.fetch_env!(:clusters)
         |> List.first()
         |> Keyword.get(:topics)
-        |> Enum.find(&(&1.name == topic))
+        |> Enum.find(&(&1.name == topic0))
         |> Map.get(:num_partitions)
 
       val = :rand.bytes(1_000)
       key = "some_key"
 
-      records =
+      records_0 =
         Enum.map(0..(max_partition - 1), fn p ->
           %Klife.Record{
             value: val,
             key: key,
-            topic: topic,
+            topic: topic0,
+            partition: p
+          }
+        end)
+
+      records_1 =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: topic1,
+            partition: p
+          }
+        end)
+
+      records_2 =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: topic2,
             partition: p
           }
         end)
@@ -82,35 +104,178 @@ if Mix.env() in [:dev] do
 
       # Warmup brod
       Enum.map(0..(max_partition - 1), fn i ->
-        :brod.produce_sync_offset(:kafka_client, topic, i, key, val)
+        :brod.produce_sync_offset(:kafka_client, topic0, i, key, val)
+        :brod.produce_sync_offset(:kafka_client, topic1, i, key, val)
+        :brod.produce_sync_offset(:kafka_client, topic2, i, key, val)
       end)
 
       Benchee.run(
         %{
           "klife" => fn ->
-            {:ok, _rec} =
-              Klife.produce(Enum.random(records))
+            rec0 = Enum.random(records_0)
+            rec1 = Enum.random(records_1)
+            rec2 = Enum.random(records_2)
+
+            t0 = Task.async(fn -> Klife.produce(rec0) end)
+            t1 = Task.async(fn -> Klife.produce(rec1) end)
+            t2 = Task.async(fn -> Klife.produce(rec2) end)
+
+            [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
           end,
-          "klife multi inflight" => fn ->
-            {:ok, _rec} =
-              Klife.produce(Enum.random(in_flight_records))
-          end,
-          # "kafka_ex" => fn ->
-          #   {:ok, offset} =
-          #     KafkaEx.produce(topic, Enum.random(0..(max_partition - 1)), val,
-          #       key: key,
-          #       required_acks: -1
-          #     )
+          # "klife multi inflight" => fn ->
+          #   {:ok, _rec} =
+          #     Klife.produce(Enum.random(in_flight_records))
           # end,
+          "kafka_ex" => fn ->
+            p0 = Enum.random(0..(max_partition - 1))
+            p1 = Enum.random(0..(max_partition - 1))
+            p2 = Enum.random(0..(max_partition - 1))
+
+            t0 =
+              Task.async(fn ->
+                KafkaEx.produce(topic0, p0, val,
+                  key: key,
+                  required_acks: -1
+                )
+              end)
+
+            t1 =
+              Task.async(fn ->
+                KafkaEx.produce(topic1, p1, val,
+                  key: key,
+                  required_acks: -1
+                )
+              end)
+
+            t2 =
+              Task.async(fn ->
+                KafkaEx.produce(topic2, p2, val,
+                  key: key,
+                  required_acks: -1
+                )
+              end)
+
+            [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
+          end,
           "brod" => fn ->
-            {:ok, _offset} =
-              :brod.produce_sync_offset(
-                :kafka_client,
-                topic,
-                Enum.random(0..(max_partition - 1)),
-                key,
-                val
-              )
+            p0 = Enum.random(0..(max_partition - 1))
+            p1 = Enum.random(0..(max_partition - 1))
+            p2 = Enum.random(0..(max_partition - 1))
+
+            t0 =
+              Task.async(fn ->
+                :brod.produce_sync_offset(
+                  :kafka_client,
+                  topic0,
+                  p0,
+                  key,
+                  val
+                )
+              end)
+
+            t1 =
+              Task.async(fn ->
+                :brod.produce_sync_offset(
+                  :kafka_client,
+                  topic1,
+                  p1,
+                  key,
+                  val
+                )
+              end)
+
+            t2 =
+              Task.async(fn ->
+                :brod.produce_sync_offset(
+                  :kafka_client,
+                  topic2,
+                  p2,
+                  key,
+                  val
+                )
+              end)
+
+            [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
+          end
+        },
+        time: 15,
+        memory_time: 2,
+        parallel: parallel |> String.to_integer()
+      )
+    end
+
+    def do_run_bench("producer_txn", parallel) do
+      topic0 = "benchmark_topic_0"
+      topic1 = "benchmark_topic_1"
+      topic2 = "benchmark_topic_2"
+
+      max_partition =
+        :klife
+        |> Application.fetch_env!(:clusters)
+        |> List.first()
+        |> Keyword.get(:topics)
+        |> Enum.find(&(&1.name == topic0))
+        |> Map.get(:num_partitions)
+
+      val = :rand.bytes(1_000)
+      key = "some_key"
+
+      records_0 =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: topic0,
+            partition: p
+          }
+        end)
+
+      records_1 =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: topic1,
+            partition: p
+          }
+        end)
+
+      records_2 =
+        Enum.map(0..(max_partition - 1), fn p ->
+          %Klife.Record{
+            value: val,
+            key: key,
+            topic: topic2,
+            partition: p
+          }
+        end)
+
+      Benchee.run(
+        %{
+          "klife with batch no txn" => fn ->
+            rec0 = Enum.random(records_0)
+            rec1 = Enum.random(records_1)
+            rec2 = Enum.random(records_2)
+
+            [{:ok, _}, {:ok, _}, {:ok, _}] = Klife.produce([rec0, rec1, rec2])
+          end,
+          "klife with batch with txn" => fn ->
+            rec0 = Enum.random(records_0)
+            rec1 = Enum.random(records_1)
+            rec2 = Enum.random(records_2)
+
+            [{:ok, _}, {:ok, _}, {:ok, _}] = Klife.produce([rec0, rec1, rec2], with_txn: true)
+          end,
+          "klife no batch no txn" => fn ->
+            rec0 = Enum.random(records_0)
+            rec1 = Enum.random(records_1)
+            rec2 = Enum.random(records_2)
+
+            t0 = Task.async(fn -> Klife.produce(rec0) end)
+            t1 = Task.async(fn -> Klife.produce(rec1) end)
+            t2 = Task.async(fn -> Klife.produce(rec2) end)
+
+            [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
           end
         },
         time: 15,
