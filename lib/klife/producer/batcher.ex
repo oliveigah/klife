@@ -426,7 +426,6 @@ defmodule Klife.Producer.Batcher do
   end
 
   defp get_attributes_byte(%Producer{} = pconfig, _opts) do
-    # TODO: Handle different attributes opts
     [
       compression: pconfig.compression_type,
       is_transactional: pconfig.txn_id != nil

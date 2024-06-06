@@ -11,11 +11,26 @@ defmodule Klife.Producer.Controller do
   alias Klife.Utils
   alias Klife.Producer.ProducerSupervisor
 
+  alias Klife.TxnProducerPool
+
   alias Klife.Producer
 
-  @default_producer %{name: :default_producer}
+  @default_producer %{name: :klife_default_producer}
+
+  @default_txn_pool %{name: :klife_txn_pool}
 
   @check_metadata_delay :timer.seconds(10)
+
+  @txn_pool_options [
+    name: [type: :atom, required: true, default: :klife_txn_pool],
+    pool_size: [type: :non_neg_integer, default: 10],
+    delivery_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(30)],
+    request_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(15)],
+    retry_backoff_ms: [type: :non_neg_integer, default: :timer.seconds(1)],
+    txn_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(60)],
+    base_txn_id: [type: :string, default: ""],
+    compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none]
+  ]
 
   defstruct [
     :cluster_name,
@@ -23,12 +38,26 @@ defmodule Klife.Producer.Controller do
     :topics,
     :check_metadata_waiting_pids,
     :check_metadata_timer_ref,
-    :txn_config
+    :txn_pools
   ]
 
   def start_link(args) do
     cluster_name = Keyword.fetch!(args, :cluster_name)
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, cluster_name}))
+
+    validated_pool_args =
+      args
+      |> Keyword.get(:txn_pools, [])
+      |> Enum.concat([@default_txn_pool])
+      |> Enum.map(fn pool_config ->
+        pool_config
+        |> Map.to_list()
+        |> NimbleOptions.validate!(@txn_pool_options)
+        |> Map.new()
+      end)
+
+    validated_args = Keyword.put(args, :txn_pools, validated_pool_args)
+
+    GenServer.start_link(__MODULE__, validated_args, name: via_tuple({__MODULE__, cluster_name}))
   end
 
   @impl true
@@ -41,7 +70,7 @@ defmodule Klife.Producer.Controller do
     state = %__MODULE__{
       cluster_name: cluster_name,
       producers: [@default_producer] ++ Keyword.get(args, :producers, []),
-      txn_config: Keyword.get(args, :txn_config, []),
+      txn_pools: Keyword.get(args, :txn_pools, []),
       topics: Enum.filter(topics_list, &Map.get(&1, :enable_produce, true)),
       check_metadata_waiting_pids: [],
       check_metadata_timer_ref: timer_ref
@@ -106,19 +135,62 @@ defmodule Klife.Producer.Controller do
       end
     end
 
+    send(self(), :handle_txn_producers)
+
     {:noreply, state}
   end
 
   def handle_info(:handle_txn_producers, %__MODULE__{} = state) do
-    result =
+    for txn_pool <- state.txn_pools,
+        txn_producer_count <- 1..txn_pool.pool_size do
+      txn_id =
+        if txn_pool.base_txn_id != "" do
+          txn_pool.base_txn_id <> "_#{txn_producer_count}"
+        else
+          :crypto.strong_rand_bytes(15)
+          |> Base.url_encode64()
+          |> binary_part(0, 15)
+          |> Kernel.<>("_#{txn_producer_count}")
+        end
+
+      txn_producer_configs = %{
+        cluster_name: state.cluster_name,
+        name: :"klife_txn_producer.#{txn_pool.name}.#{txn_producer_count}",
+        acks: :all,
+        linger_ms: 0,
+        delivery_timeout_ms: txn_pool.delivery_timeout_ms,
+        request_timeout_ms: txn_pool.request_timeout_ms,
+        retry_backoff_ms: txn_pool.retry_backoff_ms,
+        max_in_flight_requests: 1,
+        batchers_count: 1,
+        enable_idempotence: true,
+        compression_type: txn_pool.compression_type,
+        txn_id: txn_id,
+        txn_timeout_ms: txn_pool.txn_timeout_ms
+      }
+
       DynamicSupervisor.start_child(
         via_tuple({ProducerSupervisor, state.cluster_name}),
-        {Klife.TxnProducer, state.txn_config ++ [cluster_name: state.cluster_name]}
+        {Producer, Map.to_list(txn_producer_configs)}
       )
+      |> case do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, pid}} -> send(pid, :handle_batchers)
+      end
+    end
 
-    case result do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
+    for txn_pool <- state.txn_pools do
+      DynamicSupervisor.start_child(
+        via_tuple({ProducerSupervisor, state.cluster_name}),
+        {TxnProducerPool, Map.to_list(txn_pool) ++ [cluster_name: state.cluster_name]}
+      )
+      |> case do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
+      end
     end
 
     {:noreply, state}
@@ -272,9 +344,6 @@ defmodule Klife.Producer.Controller do
 
     if Enum.any?(results, &(&1 == :new)) do
       send(self(), :handle_producers)
-      # TODO: This need to be done here? Or can it
-      # be handled on the supervisor level?
-      send(self(), :handle_txn_producers)
     end
 
     :ok

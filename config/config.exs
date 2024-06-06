@@ -6,8 +6,7 @@ config :klife,
     [
       cluster_name: :my_test_cluster_1,
       txn_pools: [
-        %{name: :my_pool_1},
-        %{name: :my_pool_2}
+        %{name: :my_test_pool_1, pool_size: 1}
       ],
       connection: [
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
@@ -44,7 +43,19 @@ config :klife,
       ],
       topics: [
         %{
-          name: "benchmark_topic",
+          name: "benchmark_topic_0",
+          producer: :benchmark_producer,
+          num_partitions: 30,
+          replication_factor: 2
+        },
+        %{
+          name: "benchmark_topic_1",
+          producer: :benchmark_producer,
+          num_partitions: 30,
+          replication_factor: 2
+        },
+        %{
+          name: "benchmark_topic_2",
           producer: :benchmark_producer,
           num_partitions: 30,
           replication_factor: 2

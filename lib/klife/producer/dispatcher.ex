@@ -99,7 +99,7 @@ defmodule Klife.Producer.Dispatcher do
     data =
       %__MODULE__.Request{
         request_ref: request_ref,
-        producer_config: %{retry_ms: retry_ms},
+        producer_config: %Producer{retry_backoff_ms: retry_ms},
         pool_idx: pool_idx,
         batch_to_send: batch_to_send
       } = Map.fetch!(state.requests, req_ref)
@@ -256,7 +256,8 @@ defmodule Klife.Producer.Dispatcher do
         delivery_timeout_ms: delivery_timeout,
         cluster_name: cluster_name,
         client_id: client_id,
-        acks: acks
+        acks: acks,
+        txn_id: txn_id
       },
       batch_to_send: batch_to_send,
       base_time: base_time,
@@ -267,7 +268,7 @@ defmodule Klife.Producer.Dispatcher do
     headers = %{client_id: client_id}
 
     content = %{
-      transactional_id: nil,
+      transactional_id: txn_id,
       acks: if(acks == :all, do: -1, else: acks),
       timeout_ms: req_timeout,
       topic_data: parse_batch_before_send(batch_to_send)

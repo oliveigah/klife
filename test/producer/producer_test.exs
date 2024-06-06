@@ -59,6 +59,11 @@ defmodule Klife.ProducerTest do
 
   defp now_unix(), do: DateTime.utc_now() |> DateTime.to_unix()
 
+  setup_all do
+    :ok = TestUtils.wait_producer(:my_test_cluster_1, :"klife_txn_producer.klife_txn_pool.10")
+    %{}
+  end
+
   test "produce message sync no batching" do
     record = %Record{
       value: :rand.bytes(10),
@@ -921,5 +926,224 @@ defmodule Klife.ProducerTest do
     assert_offset(rec4, cluster, offset4, txn_status: :committed)
     assert_offset(rec5, cluster, offset5, txn_status: :committed)
     assert_offset(rec6, cluster, offset6, txn_status: :committed)
+  end
+
+  test "txn produce message - multiple transactions using the same worker" do
+    cluster = :my_test_cluster_1
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 1
+    }
+
+    rec3 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic_2",
+      partition: 0
+    }
+
+    rec4 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec5 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec6 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    assert {:ok,
+            [
+              {:ok, %Record{offset: offset1}},
+              {:ok, %Record{offset: offset2}}
+            ]} =
+             Klife.transaction(
+               fn ->
+                 resp = Klife.produce([rec1, rec2])
+
+                 assert [
+                          {:ok, %Record{offset: offset1}},
+                          {:ok, %Record{offset: offset2}}
+                        ] = resp
+
+                 assert :not_found = assert_offset(rec1, cluster, offset1, isolation: :committed)
+                 assert :ok = assert_offset(rec1, cluster, offset1, isolation: :uncommitted)
+
+                 assert :not_found = assert_offset(rec2, cluster, offset2, isolation: :committed)
+                 assert :ok = assert_offset(rec2, cluster, offset2, isolation: :uncommitted)
+
+                 {:ok, resp}
+               end,
+               txn_pool: :my_test_pool_1
+             )
+
+    assert_offset(rec1, cluster, offset1, txn_status: :committed)
+    assert_offset(rec2, cluster, offset2, txn_status: :committed)
+
+    assert {:error, %RuntimeError{message: "crazy error"}} =
+             Klife.transaction(
+               fn ->
+                 resp = Klife.produce([rec3, rec4, rec5])
+
+                 assert [
+                          {:ok, %Record{offset: offset3}},
+                          {:ok, %Record{offset: offset4}},
+                          {:ok, %Record{offset: offset5}}
+                        ] = resp
+
+                 assert :not_found = assert_offset(rec3, cluster, offset3, isolation: :committed)
+                 assert :ok = assert_offset(rec3, cluster, offset3, isolation: :uncommitted)
+
+                 assert :not_found = assert_offset(rec4, cluster, offset4, isolation: :committed)
+                 assert :ok = assert_offset(rec4, cluster, offset4, isolation: :uncommitted)
+
+                 assert :not_found = assert_offset(rec5, cluster, offset5, isolation: :committed)
+                 assert :ok = assert_offset(rec5, cluster, offset5, isolation: :uncommitted)
+
+                 Process.put(:raised_offsets, {offset3, offset4, offset5})
+                 raise "crazy error"
+               end,
+               txn_pool: :my_test_pool_1
+             )
+
+    {offset3, offset4, offset5} = Process.get(:raised_offsets)
+    assert_offset(rec3, cluster, offset3, txn_status: :aborted)
+    assert_offset(rec4, cluster, offset4, txn_status: :aborted)
+    assert_offset(rec5, cluster, offset5, txn_status: :aborted)
+
+    assert {:ok, {:ok, %Record{offset: offset6}}} =
+             Klife.transaction(
+               fn ->
+                 resp = Klife.produce(rec6)
+
+                 assert {:ok, %Record{offset: offset6}} = resp
+
+                 assert :not_found = assert_offset(rec6, cluster, offset6, isolation: :committed)
+                 assert :ok = assert_offset(rec6, cluster, offset6, isolation: :uncommitted)
+
+                 {:ok, resp}
+               end,
+               txn_pool: :my_test_pool_1
+             )
+
+    assert_offset(rec6, cluster, offset6, txn_status: :committed)
+  end
+
+  # TODO: How to ensure transactional behaviour here?
+  test "txn produce message - with_txn opt" do
+    cluster = :my_test_cluster_1
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 1
+    }
+
+    rec3 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic_2",
+      partition: 0
+    }
+
+    rec4 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec5 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec6 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    assert [
+             {:ok, %Record{offset: offset1}},
+             {:ok, %Record{offset: offset2}},
+             {:ok, %Record{offset: offset3}}
+           ] = Klife.produce([rec1, rec2, rec3], with_txn: true)
+
+    assert_offset(rec1, cluster, offset1, txn_status: :committed)
+    assert_offset(rec2, cluster, offset2, txn_status: :committed)
+    assert_offset(rec3, cluster, offset3, txn_status: :committed)
+
+    assert [
+             {:ok, %Record{offset: offset4}},
+             {:ok, %Record{offset: offset5}},
+             {:ok, %Record{offset: offset6}}
+           ] = Klife.produce([rec4, rec5, rec6], with_txn: true)
+
+    assert_offset(rec4, cluster, offset4, txn_status: :committed)
+    assert_offset(rec5, cluster, offset5, txn_status: :committed)
+    assert_offset(rec6, cluster, offset6, txn_status: :committed)
+
+    rec7 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 0
+    }
+
+    rec8 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "unkown_topic",
+      partition: 0
+    }
+
+    assert {:error, _} = Klife.produce([rec7, rec8], with_txn: true)
   end
 end

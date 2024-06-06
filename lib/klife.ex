@@ -1,7 +1,7 @@
 defmodule Klife do
   alias Klife.Record
   alias Klife.Producer
-  alias Klife.TxnProducer
+  alias Klife.TxnProducerPool
   alias Klife.Producer.Controller, as: PController
 
   def produce(record_or_records, opts \\ [])
@@ -29,18 +29,43 @@ defmodule Klife do
         |> maybe_add_partition(cluster, opts)
       end)
 
-    if TxnProducer.in_txn?(cluster),
-      do: TxnProducer.produce(records, cluster, opts),
-      else: Producer.produce(records, cluster, opts)
+    in_txn? = TxnProducerPool.in_txn?(cluster)
+    with_txn_opt = Keyword.get(opts, :with_txn, false)
+
+    cond do
+      in_txn? ->
+        TxnProducerPool.produce(records, cluster, opts)
+
+      with_txn_opt ->
+        transaction(
+          fn ->
+            resp = produce(records, opts)
+
+            # Do we really need this match?
+            if Enum.all?(resp, &match?({:ok, _}, &1)),
+              do: {:ok, resp},
+              else: {:error, :abort}
+          end,
+          opts
+        )
+        |> case do
+          {:ok, resp} -> resp
+          err -> err
+        end
+
+      true ->
+        Producer.produce(records, cluster, opts)
+    end
   end
 
   def transaction(fun, opts \\ []) do
     cluster = get_cluster(opts)
-    TxnProducer.run_txn(cluster, fun)
+    TxnProducerPool.run_txn(cluster, get_txn_pool(opts), fun)
   end
 
   defp default_cluster(), do: :persistent_term.get(:klife_default_cluster)
   defp get_cluster(opts), do: Keyword.get(opts, :cluster, default_cluster())
+  defp get_txn_pool(opts), do: Keyword.get(opts, :txn_pool, :klife_txn_pool)
 
   defp maybe_add_partition(%Record{} = record, cluster, opts) do
     case record do

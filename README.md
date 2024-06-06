@@ -8,9 +8,9 @@
     - SASL
 
 - Producer System
-    - Transaction api
-    - Accept more versions of the protocol
+    - Improve input errors handling 
     - Standardize options handling 
+    - Accept more versions of the protocol
     - Improve test coverage
 
 - Consumer System (TBD)

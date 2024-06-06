@@ -1,4 +1,6 @@
 defmodule Klife.TestUtils do
+  import Klife.ProcessRegistry
+
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
   alias KlifeProtocol.Messages, as: M
@@ -273,5 +275,25 @@ defmodule Klife.TestUtils do
     [%{error_code: 0, offset: offset}] = partitions
 
     offset
+  end
+
+  def wait_producer(cluster_name, producer_name) do
+    deadline = System.monotonic_time(:millisecond) + 5_000
+    do_wait_producer(deadline, cluster_name, producer_name)
+  end
+
+  defp do_wait_producer(deadline, cluster_name, producer_name) do
+    if System.monotonic_time(:millisecond) < deadline do
+      case registry_lookup({Klife.Producer, cluster_name, producer_name}) do
+        [] ->
+          Process.sleep(5)
+          do_wait_producer(deadline, cluster_name, producer_name)
+
+        [_] ->
+          :ok
+      end
+    else
+      raise "error waiting for producer. #{producer_name} #{cluster_name}"
+    end
   end
 end

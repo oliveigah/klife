@@ -31,7 +31,7 @@ defmodule Klife.Producer do
   ]
 
   defstruct (Keyword.keys(@producer_options) -- [:name]) ++
-              [:producer_name, :producer_id, :epochs]
+              [:producer_name, :producer_id, :producer_epoch, :epochs, :coordinator_id]
 
   def opts_schema(), do: @producer_options
 
@@ -72,9 +72,31 @@ defmodule Klife.Producer do
     |> GenServer.call({:new_epoch, topic, partition})
   end
 
+  def get_txn_pool_data(cluster_name, producer_name) do
+    {__MODULE__, cluster_name, producer_name}
+    |> via_tuple()
+    |> GenServer.call(:get_txn_pool_data)
+  end
+
   def handle_info(:handle_batchers, %__MODULE__{} = state) do
     :ok = do_handle_batchers(state)
     {:noreply, state}
+  end
+
+  def handle_call(:get_txn_pool_data, _from, %__MODULE__{txn_id: nil} = state) do
+    {:reply, {:error, :not_txn_producer}, state}
+  end
+
+  def handle_call(:get_txn_pool_data, _from, %__MODULE__{} = state) do
+    data = %{
+      producer_id: state.producer_id,
+      producer_epoch: state.producer_epoch,
+      coordinator_id: state.coordinator_id,
+      txn_id: state.txn_id,
+      client_id: state.client_id
+    }
+
+    {:reply, {:ok, data}, state}
   end
 
   def handle_call(
@@ -84,7 +106,7 @@ defmodule Klife.Producer do
       ) do
     case Map.get(epochs, {topic, partition}) do
       nil ->
-        epoch = 0
+        epoch = state.producer_epoch
         new_state = %{state | epochs: Map.put(epochs, {topic, partition}, {epoch, called_pid})}
         {:reply, epoch, new_state}
 
@@ -114,12 +136,17 @@ defmodule Klife.Producer do
             coordinator_keys: [txn_id]
           }
 
-          {:ok, %{content: resp}} =
-            Broker.send_message(M.FindCoordinator, state.cluster_name, :any, content)
+          fun = fn ->
+            case Broker.send_message(M.FindCoordinator, state.cluster_name, :any, content) do
+              {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
+                broker_id
 
-          [%{node_id: broker_id}] = resp.coordinators
+              _data ->
+                :retry
+            end
+          end
 
-          broker_id
+          with_timeout(:timer.seconds(10), fun)
       end
 
     content = %{
@@ -127,10 +154,24 @@ defmodule Klife.Producer do
       transaction_timeout_ms: state.txn_timeout_ms
     }
 
-    {:ok, %{content: %{error_code: 0, producer_id: producer_id}}} =
-      Broker.send_message(M.InitProducerId, state.cluster_name, broker, content)
+    fun = fn ->
+      case Broker.send_message(M.InitProducerId, state.cluster_name, broker, content) do
+        {:ok, %{content: %{error_code: 0, producer_id: producer_id, producer_epoch: p_epoch}}} ->
+          {producer_id, p_epoch}
 
-    %__MODULE__{state | producer_id: producer_id}
+        _data ->
+          :retry
+      end
+    end
+
+    {producer_id, p_epoch} = with_timeout(:timer.seconds(10), fun)
+
+    %__MODULE__{
+      state
+      | producer_id: producer_id,
+        producer_epoch: p_epoch,
+        coordinator_id: if(broker != :any, do: broker, else: nil)
+    }
   end
 
   def produce([%Record{} | _] = records, cluster_name, opts) do
@@ -291,5 +332,25 @@ defmodule Klife.Producer do
 
   defp get_batcher_id(cluster_name, producer_name, topic, partition) do
     :persistent_term.get({__MODULE__, cluster_name, producer_name, topic, partition})
+  end
+
+  defp with_timeout(timeout, fun) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_with_timeout(deadline, fun)
+  end
+
+  defp do_with_timeout(deadline, fun) do
+    if System.monotonic_time(:millisecond) < deadline do
+      case fun.() do
+        :retry ->
+          Process.sleep(Enum.random(50..150))
+          do_with_timeout(deadline, fun)
+
+        val ->
+          val
+      end
+    else
+      raise "timeout while waiting for broker response"
+    end
   end
 end
