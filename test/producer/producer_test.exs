@@ -228,7 +228,7 @@ defmodule Klife.ProducerTest do
     assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
   end
 
-  @tag :cluster_change
+  @tag cluster_change: true, capture_log: true
   test "is able to recover from cluster changes" do
     cluster = :my_test_cluster_1
     topic = "test_no_batch_topic"
@@ -905,6 +905,7 @@ defmodule Klife.ProducerTest do
     assert_offset(cluster, rec6, offset6, txn_status: :committed)
   end
 
+  @tag capture_log: true
   test "txn produce message - multiple transactions using the same worker" do
     cluster = :my_test_cluster_1
 
