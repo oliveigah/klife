@@ -4,19 +4,14 @@ defmodule Klife do
   alias Klife.TxnProducerPool
   alias Klife.Producer.Controller, as: PController
 
-  def produce(record_or_records, opts \\ [])
-
-  def produce(%Record{} = record, opts) do
-    case produce([record], opts) do
-      [resp] ->
-        resp
-
-      resp ->
-        resp
+  def produce(%Record{} = record, opts \\ []) do
+    case produce_batch([record], opts) do
+      [resp] -> resp
+      resp -> resp
     end
   end
 
-  def produce([%Record{} | _] = records, opts) do
+  def produce_batch([%Record{} | _] = records, opts \\ []) do
     cluster = get_cluster(opts)
 
     records =
@@ -29,38 +24,35 @@ defmodule Klife do
         |> maybe_add_partition(cluster, opts)
       end)
 
-    in_txn? = TxnProducerPool.in_txn?(cluster)
-    with_txn_opt = Keyword.get(opts, :with_txn, false)
+    if TxnProducerPool.in_txn?(cluster),
+      do: TxnProducerPool.produce(records, cluster, opts),
+      else: Producer.produce(records, cluster, opts)
+  end
 
-    cond do
-      in_txn? ->
-        TxnProducerPool.produce(records, cluster, opts)
-
-      with_txn_opt ->
-        transaction(
-          fn ->
-            resp = produce(records, opts)
-
-            # Do we really need this match?
-            if Enum.all?(resp, &match?({:ok, _}, &1)),
-              do: {:ok, resp},
-              else: {:error, :abort}
-          end,
-          opts
-        )
-        |> case do
-          {:ok, resp} -> resp
-          err -> err
-        end
-
-      true ->
-        Producer.produce(records, cluster, opts)
-    end
+  def produce_batch_txn([%Record{} | _] = records, opts \\ []) do
+    transaction(fn -> records |> produce_batch(opts) |> verify_batch() end, opts)
   end
 
   def transaction(fun, opts \\ []) do
     cluster = get_cluster(opts)
     TxnProducerPool.run_txn(cluster, get_txn_pool(opts), fun)
+  end
+
+  def verify_batch(produce_resps) do
+    case Enum.group_by(produce_resps, &elem(&1, 0), &elem(&1, 1)) do
+      %{error: error_list} ->
+        {:error, error_list}
+
+      %{ok: resp} ->
+        {:ok, resp}
+    end
+  end
+
+  def verify_batch!(produce_resps) do
+    case verify_batch(produce_resps) do
+      {:ok, resp} -> resp
+      {:error, errors} -> raise "Error on batch verification. #{inspect(errors)}"
+    end
   end
 
   defp default_cluster(), do: :persistent_term.get(:klife_default_cluster)

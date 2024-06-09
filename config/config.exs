@@ -30,6 +30,12 @@ config :klife,
           max_in_flight_requests: 10
         },
         %{
+          name: :benchmark_producer_in_flight_linger,
+          client_id: "my_custom_client_id",
+          max_in_flight_requests: 10,
+          linger_ms: 1
+        },
+        %{
           name: :test_batch_producer,
           client_id: "my_custom_client_id",
           linger_ms: 1_500
@@ -63,6 +69,12 @@ config :klife,
         %{
           name: "benchmark_topic_in_flight",
           producer: :benchmark_producer_in_flight,
+          num_partitions: 30,
+          replication_factor: 2
+        },
+        %{
+          name: "benchmark_topic_in_flight_linger",
+          producer: :benchmark_producer_in_flight_linger,
           num_partitions: 30,
           replication_factor: 2
         },

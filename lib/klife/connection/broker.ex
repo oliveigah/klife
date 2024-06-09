@@ -260,7 +260,7 @@ defmodule Klife.Connection.Broker do
         Error while connecting to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
         """)
 
-        :ok = Controller.trigger_brokers_verification(state.cluster_name)
+        :ok = Controller.trigger_brokers_verification_async(state.cluster_name)
 
         Process.send_after(self(), :connect, get_reconnect_delay(state))
 

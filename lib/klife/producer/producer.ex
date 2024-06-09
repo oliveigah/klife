@@ -41,9 +41,11 @@ defmodule Klife.Producer do
     cluster_name = Keyword.fetch!(validated_args, :cluster_name)
 
     GenServer.start_link(__MODULE__, validated_args,
-      name: via_tuple({__MODULE__, cluster_name, producer_name})
+      name: via_tuple(get_process_name(cluster_name, producer_name))
     )
   end
+
+  defp get_process_name(cluster, producer), do: {__MODULE__, cluster, producer}
 
   def init(validated_args) do
     args_map = Map.new(validated_args)
@@ -61,7 +63,7 @@ defmodule Klife.Producer do
       |> Map.merge(filtered_args)
       |> set_producer_id()
 
-    :ok = do_handle_batchers(state)
+    :ok = handle_batchers(state)
 
     {:ok, state}
   end
@@ -78,9 +80,16 @@ defmodule Klife.Producer do
     |> GenServer.call(:get_txn_pool_data)
   end
 
-  def handle_info(:handle_batchers, %__MODULE__{} = state) do
-    :ok = do_handle_batchers(state)
-    {:noreply, state}
+  def get_pid(cluster_name, producer_name) do
+    get_process_name(cluster_name, producer_name)
+    |> registry_lookup()
+    |> List.first()
+  end
+
+  def handle_info(:handle_change, %__MODULE__{} = state) do
+    new_state = set_producer_id(state)
+    :ok = handle_batchers(new_state)
+    {:noreply, new_state}
   end
 
   def handle_call(:get_txn_pool_data, _from, %__MODULE__{txn_id: nil} = state) do
@@ -122,7 +131,7 @@ defmodule Klife.Producer do
     end
   end
 
-  defp set_producer_id(%__MODULE__{enable_idempotence: false}), do: nil
+  defp set_producer_id(%__MODULE__{enable_idempotence: false} = state), do: state
 
   defp set_producer_id(%__MODULE__{enable_idempotence: true} = state) do
     broker =
@@ -223,8 +232,8 @@ defmodule Klife.Producer do
           {:ok, offset} ->
             {:ok, %{rec | offset: offset}}
 
-          err ->
-            err
+          {:error, ec} ->
+            {:error, %{rec | error_code: ec}}
         end
       end)
     else
@@ -262,7 +271,7 @@ defmodule Klife.Producer do
     end
   end
 
-  defp do_handle_batchers(%__MODULE__{} = state) do
+  defp handle_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.cluster_name)
     batchers_per_broker = state.batchers_count
     :ok = init_batchers(state, known_brokers, batchers_per_broker)

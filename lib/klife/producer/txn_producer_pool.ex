@@ -48,33 +48,32 @@ defmodule Klife.TxnProducerPool do
   @impl NimblePool
   def init_worker(%__MODULE__{} = pool_state) do
     worker_id = pool_state.worker_counter + 1
-    worker = do_init_worker(pool_state, worker_id)
-    {:ok, worker, %{pool_state | worker_counter: worker_id}}
+
+    case do_init_worker(pool_state, worker_id) do
+      %__MODULE__.WorkerState{} = worker ->
+        {:ok, worker, %{pool_state | worker_counter: worker_id}}
+
+      err ->
+        err
+    end
   end
 
   defp do_init_worker(%__MODULE__{} = pool_state, worker_id) do
     %__MODULE__{cluster_name: cluster_name, name: pool_name} = pool_state
     producer_name = :"klife_txn_producer.#{pool_name}.#{worker_id}"
 
-    {:ok,
-     %{
-       producer_id: producer_id,
-       producer_epoch: producer_epoch,
-       coordinator_id: coordinator_id,
-       txn_id: txn_id,
-       client_id: client_id
-     }} = Producer.get_txn_pool_data(cluster_name, producer_name)
+    case Producer.get_pid(cluster_name, producer_name) do
+      nil ->
+        # if we get here we should probally just restart the pool
+        {:error, {:unkown_producer, cluster_name, producer_name}}
 
-    %__MODULE__.WorkerState{
-      cluster_name: cluster_name,
-      producer_name: producer_name,
-      producer_id: producer_id,
-      producer_epoch: producer_epoch,
-      coordinator_id: coordinator_id,
-      txn_id: txn_id,
-      client_id: client_id,
-      worker_id: worker_id
-    }
+      _ ->
+        %__MODULE__.WorkerState{
+          cluster_name: cluster_name,
+          producer_name: producer_name,
+          worker_id: worker_id
+        }
+    end
   end
 
   @impl NimblePool
@@ -83,56 +82,38 @@ defmodule Klife.TxnProducerPool do
   end
 
   @impl NimblePool
-  def handle_checkin(
-        {:error, _reason},
-        _from,
-        %__MODULE__.WorkerState{} = worker_state,
-        %__MODULE__{} = pool_state
-      ) do
-    {:ok, do_init_worker(pool_state, worker_state.worker_id), pool_state}
-  end
-
-  def handle_checkin(
-        %__MODULE__.WorkerState{} = client_worker_state,
-        _from,
-        _worker_state,
-        pool_state
-      ) do
-    {:ok, client_worker_state, pool_state}
+  def handle_checkin(_client_state, _from, %__MODULE__.WorkerState{} = worker_state, pool_state) do
+    {:ok, worker_state, pool_state}
   end
 
   def run_txn(cluster_name, pool_name, fun) do
     NimblePool.checkout!(pool_name(cluster_name, pool_name), :checkout, fn _, state ->
-      nil = setup_txn_ctx(state, cluster_name)
-
       result =
         try do
-          fun.()
+          nil = setup_txn_ctx(state, cluster_name)
+
+          result = fun.()
+
+          :ok =
+            case result do
+              {:ok, _} -> end_txn(cluster_name, :commit)
+              :ok -> end_txn(cluster_name, :commit)
+              _ -> end_txn(cluster_name, :abort)
+            end
+
+          result
         catch
           _kind, reason ->
             Logger.error(
-              "Failed transaction reason #{inspect(reason)}. #{inspect({__STACKTRACE__})}"
+              "Failed kafka transaction reason #{inspect(reason)}. #{inspect({__STACKTRACE__})}"
             )
 
             {:error, reason}
         end
 
-      :ok =
-        case result do
-          {:ok, _} -> end_txn(cluster_name, :commit)
-          :ok -> end_txn(cluster_name, :commit)
-          _ -> end_txn(cluster_name, :abort)
-        end
+      clean_txn_ctx(cluster_name)
 
-      %{worker_state: ws} = clean_txn_ctx(cluster_name)
-
-      case result do
-        {:error, _reason} ->
-          {result, result}
-
-        _ ->
-          {result, ws}
-      end
+      {result, state}
     end)
   end
 
@@ -165,28 +146,25 @@ defmodule Klife.TxnProducerPool do
     {:ok, %{content: %{error_code: ec}}} =
       Broker.send_message(M.EndTxn, cluster_name, coordinator_id, content, headers)
 
-    if committed? do
-      0 = ec
-    else
-      true = ec in [0, 48]
-    end
+    if committed?,
+      do: 0 = ec,
+      else: true = ec in [0, 48]
 
     :ok
   end
 
   def produce(records, cluster_name, _opts) do
-    :ok = maybe_add_partition_to_txn(cluster_name, records)
+    case maybe_add_partition_to_txn(cluster_name, records) do
+      :ok ->
+        %{
+          worker_state: %__MODULE__.WorkerState{producer_name: producer_name}
+        } =
+          get_txn_ctx(cluster_name)
 
-    %{
-      worker_state: %__MODULE__.WorkerState{producer_name: producer_name}
-    } =
-      get_txn_ctx(cluster_name)
+        Klife.Producer.produce(records, cluster_name, producer: producer_name)
 
-    resp = Klife.Producer.produce(records, cluster_name, producer: producer_name)
-
-    case Enum.find(resp, &match?({:error, _}, &1)) do
-      nil -> resp
-      err -> raise "error on produce txn. #{inspect(err)}"
+      {:error, recs} ->
+        recs
     end
   end
 
@@ -205,39 +183,60 @@ defmodule Klife.TxnProducerPool do
         topic_partitions: txn_topic_partitions
       } = get_txn_ctx(cluster_name)
 
-    grouped_tp_list =
-      tp_list
-      |> Enum.group_by(fn {t, _p} -> t end, fn {_t, p} -> p end)
-      |> Map.to_list()
+    case Enum.reject(tp_list, fn tp -> MapSet.member?(txn_topic_partitions, tp) end) do
+      [] ->
+        :ok
 
-    content = %{
-      transactions: [
-        %{
-          transactional_id: txn_id,
-          producer_id: p_id,
-          producer_epoch: p_epoch,
-          verify_only: false,
-          topics:
-            Enum.map(grouped_tp_list, fn {t, partitions} ->
-              %{
-                name: t,
-                partitions: partitions
-              }
-            end)
+      to_add_tp_list ->
+        grouped_tp_list =
+          to_add_tp_list
+          |> Enum.group_by(fn {t, _p} -> t end, fn {_t, p} -> p end)
+          |> Map.to_list()
+
+        content = %{
+          transactions: [
+            %{
+              transactional_id: txn_id,
+              producer_id: p_id,
+              producer_epoch: p_epoch,
+              verify_only: false,
+              topics:
+                Enum.map(grouped_tp_list, fn {t, partitions} ->
+                  %{
+                    name: t,
+                    partitions: partitions
+                  }
+                end)
+            }
+          ]
         }
-      ]
-    }
 
-    :ok = add_partitions_to_txn(cluster_name, coordinator_id, content)
+        case add_partitions_to_txn(cluster_name, coordinator_id, content) do
+          :ok ->
+            new_txn_topic_partitions =
+              Enum.reduce(tp_list, txn_topic_partitions, fn {t, p}, acc ->
+                MapSet.put(acc, {t, p})
+              end)
 
-    new_txn_topic_partitions =
-      Enum.reduce(tp_list, txn_topic_partitions, fn {t, p}, acc ->
-        MapSet.put(acc, {t, p})
-      end)
+            update_txn_ctx(cluster_name, %{txn_ctx | topic_partitions: new_txn_topic_partitions})
 
-    update_txn_ctx(cluster_name, %{txn_ctx | topic_partitions: new_txn_topic_partitions})
+            :ok
 
-    :ok
+          {:error, tp_error_list} ->
+            error_map = Map.new(tp_error_list)
+
+            resp =
+              records
+              |> Enum.map(fn r ->
+                %{r | error_code: Map.get(error_map, {r.topic, r.partition})}
+              end)
+              |> Enum.map(fn r ->
+                if r.error_code == 0, do: {:ok, r}, else: {:error, r}
+              end)
+
+            {:error, resp}
+        end
+    end
   end
 
   defp add_partitions_to_txn(cluster_name, coordinator_id, content) do
@@ -245,23 +244,19 @@ defmodule Klife.TxnProducerPool do
     do_add_partitions_to_txn(deadline, cluster_name, coordinator_id, content)
   end
 
-  # TODO: Refactor this
   defp do_add_partitions_to_txn(deadline, cluster_name, coordinator_id, content) do
     if System.monotonic_time(:millisecond) < deadline do
       with {:ok, %{content: %{error_code: 0} = resp_content}} <-
              Broker.send_message(M.AddPartitionsToTxn, cluster_name, coordinator_id, content),
            %{results_by_transaction: [txn_resp]} <- resp_content,
-           %{topic_results: t_results} <- txn_resp,
-           true <-
-             Enum.all?(t_results, fn t_result ->
-               Enum.all?(t_result.results_by_partition, fn p_result ->
-                 p_result.partition_error_code == 0
-               end)
-             end) do
+           :ok <- check_add_partitions_resp(txn_resp) do
         :ok
       else
-        _err ->
-          Process.sleep(Enum.random(10..50))
+        {:error, :stop, error_codes} ->
+          {:error, error_codes}
+
+        _ ->
+          Process.sleep(10)
           do_add_partitions_to_txn(deadline, cluster_name, coordinator_id, content)
       end
     else
@@ -269,14 +264,60 @@ defmodule Klife.TxnProducerPool do
     end
   end
 
+  defp check_add_partitions_resp(%{topic_results: t_results}) do
+    result_set =
+      for t_result <- t_results, p_result <- t_result.results_by_partition, into: MapSet.new() do
+        p_result.partition_error_code
+      end
+
+    # TODO: Which error codes should be added here?
+    ok_set = MapSet.new([0])
+    stop_set = MapSet.new([3])
+
+    cond do
+      MapSet.subset?(result_set, ok_set) ->
+        :ok
+
+      not MapSet.disjoint?(result_set, stop_set) ->
+        errors =
+          for t_result <- t_results, p_result <- t_result.results_by_partition do
+            {{t_result.name, p_result.partition_index}, p_result.partition_error_code}
+          end
+          |> Enum.reject(&is_nil/1)
+
+        {:error, :stop, errors}
+
+      true ->
+        :retry
+    end
+  end
+
   def in_txn?(cluster), do: not is_nil(get_txn_ctx(cluster))
 
-  defp setup_txn_ctx(state, cluster),
-    do:
-      Process.put({:klife_txn_ctx, cluster}, %{
-        worker_state: state,
-        topic_partitions: MapSet.new()
-      })
+  defp setup_txn_ctx(%__MODULE__.WorkerState{} = state, cluster) do
+    {:ok,
+     %{
+       producer_id: producer_id,
+       producer_epoch: producer_epoch,
+       coordinator_id: coordinator_id,
+       txn_id: txn_id,
+       client_id: client_id
+     }} = Producer.get_txn_pool_data(state.cluster_name, state.producer_name)
+
+    new_state = %{
+      state
+      | producer_id: producer_id,
+        producer_epoch: producer_epoch,
+        coordinator_id: coordinator_id,
+        txn_id: txn_id,
+        client_id: client_id
+    }
+
+    Process.put({:klife_txn_ctx, cluster}, %{
+      worker_state: new_state,
+      topic_partitions: MapSet.new()
+    })
+  end
 
   defp clean_txn_ctx(cluster), do: Process.delete({:klife_txn_ctx, cluster})
 

@@ -1,2 +1,2 @@
-ExUnit.configure(exclude: [cluster_change: true])
+# ExUnit.configure(exclude: [cluster_change: true])
 ExUnit.start()

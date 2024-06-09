@@ -131,7 +131,7 @@ defmodule Klife.Producer.Controller do
       )
       |> case do
         {:ok, _pid} -> :ok
-        {:error, {:already_started, pid}} -> send(pid, :handle_batchers)
+        {:error, {:already_started, pid}} -> send(pid, :handle_change)
       end
     end
 
@@ -175,7 +175,7 @@ defmodule Klife.Producer.Controller do
       )
       |> case do
         {:ok, _pid} -> :ok
-        {:error, {:already_started, pid}} -> send(pid, :handle_batchers)
+        {:error, {:already_started, pid}} -> send(pid, :handle_change)
       end
     end
 

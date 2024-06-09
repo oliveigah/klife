@@ -187,6 +187,21 @@ defmodule Klife.Connection.Controller do
     end
   end
 
+  @impl true
+  def handle_cast(:trigger_check_cluster, %__MODULE__{} = state) do
+    case state do
+      %__MODULE__{check_cluster_waiting_pids: []} ->
+        Process.cancel_timer(state.check_cluster_timer_ref)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
+
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_cluster_timer_ref: new_ref
+         }}
+    end
+  end
+
   ## PUBLIC INTERFACE
 
   def insert_in_flight(cluster_name, correlation_id) do
@@ -222,6 +237,10 @@ defmodule Klife.Connection.Controller do
 
   def trigger_brokers_verification(cluster_name) do
     GenServer.call(via_tuple({__MODULE__, cluster_name}), :trigger_check_cluster)
+  end
+
+  def trigger_brokers_verification_async(cluster_name) do
+    GenServer.cast(via_tuple({__MODULE__, cluster_name}), :trigger_check_cluster)
   end
 
   def get_cluster_controller(cluster_name),

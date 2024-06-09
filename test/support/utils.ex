@@ -109,6 +109,23 @@ defmodule Klife.TestUtils do
     |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
+  def wait_cluster(cluster_name, expected_brokers) do
+    deadline = System.monotonic_time(:millisecond) + :timer.seconds(30)
+    do_wait_cluster(deadline, cluster_name, expected_brokers)
+  end
+
+  defp do_wait_cluster(deadline, cluster_name, expected_brokers) do
+    Process.sleep(10)
+
+    if System.monotonic_time(:millisecond) < deadline do
+      if length(:persistent_term.get({:known_brokers_ids, cluster_name})) == expected_brokers,
+        do: :ok,
+        else: do_wait_cluster(deadline, cluster_name, expected_brokers)
+    else
+      raise "timeout waiting for cluster"
+    end
+  end
+
   def get_record_by_offset(cluster_name, topic, partition, offset, isolation \\ :committed) do
     isolation_level =
       case isolation do
@@ -277,23 +294,23 @@ defmodule Klife.TestUtils do
     offset
   end
 
-  def wait_producer(cluster_name, producer_name) do
+  def wait_producer(cluster_name) do
     deadline = System.monotonic_time(:millisecond) + 5_000
-    do_wait_producer(deadline, cluster_name, producer_name)
+    do_wait_producer(deadline, cluster_name)
   end
 
-  defp do_wait_producer(deadline, cluster_name, producer_name) do
+  defp do_wait_producer(deadline, cluster_name) do
     if System.monotonic_time(:millisecond) < deadline do
-      case registry_lookup({Klife.Producer, cluster_name, producer_name}) do
+      case registry_lookup({Klife.TxnProducerPool, cluster_name, :klife_txn_pool}) do
         [] ->
           Process.sleep(5)
-          do_wait_producer(deadline, cluster_name, producer_name)
+          do_wait_producer(deadline, cluster_name)
 
         [_] ->
           :ok
       end
     else
-      raise "error waiting for producer. #{producer_name} #{cluster_name}"
+      raise "timeout waiting for producers. #{cluster_name}"
     end
   end
 end

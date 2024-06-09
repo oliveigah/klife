@@ -123,6 +123,9 @@ defmodule Klife.Connection.SystemTest do
   @tag :cluster_change
   test "cluster changes events" do
     cluster_name = :my_test_cluster_1
+
+    :ok = TestUtils.wait_cluster(cluster_name, 3)
+
     brokers = :persistent_term.get({:known_brokers_ids, cluster_name})
     broker_id_to_remove = List.first(brokers)
     cb_ref = make_ref()
