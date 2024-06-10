@@ -38,7 +38,9 @@ defmodule Klife.Connection.SystemTest do
     input = [
       cluster_name: cluster_name,
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
-      socket_opts: [ssl: false]
+      ssl: false,
+      connect_opts: [],
+      socket_opts: []
     ]
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
@@ -55,12 +57,13 @@ defmodule Klife.Connection.SystemTest do
     input = [
       cluster_name: cluster_name,
       bootstrap_servers: ["localhost:19093", "localhost:29093"],
+      ssl: true,
+      connect_opts: [
+        verify: :verify_peer,
+        cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+      ],
       socket_opts: [
-        ssl: true,
-        ssl_opts: [
-          verify: :verify_peer,
-          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-        ]
+        delay_send: true
       ]
     ]
 
@@ -78,7 +81,9 @@ defmodule Klife.Connection.SystemTest do
     input_1 = [
       cluster_name: cluster_name_1,
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
-      socket_opts: [ssl: false]
+      ssl: false,
+      connect_opts: [],
+      socket_opts: []
     ]
 
     cluster_name_2 = :"#{__MODULE__}.#{test_name}_2"
@@ -86,12 +91,13 @@ defmodule Klife.Connection.SystemTest do
     input_2 = [
       cluster_name: cluster_name_2,
       bootstrap_servers: ["localhost:19093", "localhost:29093"],
+      ssl: true,
+      connect_opts: [
+        verify: :verify_peer,
+        cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+      ],
       socket_opts: [
-        ssl: true,
-        ssl_opts: [
-          verify: :verify_peer,
-          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-        ]
+        delay_send: true
       ]
     ]
 
@@ -99,8 +105,10 @@ defmodule Klife.Connection.SystemTest do
 
     input_3 = [
       cluster_name: cluster_name_3,
-      bootstrap_servers: ["localhost:39092"],
-      socket_opts: [ssl: false]
+      bootstrap_servers: ["localhost:19092", "localhost:29092"],
+      ssl: false,
+      connect_opts: [],
+      socket_opts: []
     ]
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_1})
@@ -122,7 +130,30 @@ defmodule Klife.Connection.SystemTest do
 
   @tag cluster_change: true, capture_log: true
   test "cluster changes events" do
-    cluster_name = :my_test_cluster_1
+    config = [
+      connection: [
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        ssl: false
+      ],
+      topics: [
+        %{
+          name: "crazy_test_topic",
+          producer: :benchmark_producer,
+          num_partitions: 30,
+          replication_factor: 2
+        }
+      ]
+    ]
+
+    Application.put_env(:klife, __MODULE__.MyClusterTest, config)
+
+    defmodule MyClusterTest do
+      use Klife.Cluster, otp_app: :klife
+    end
+
+    cluster_name = __MODULE__.MyClusterTest
+
+    assert {:ok, _pid} = start_supervised(cluster_name)
 
     :ok = TestUtils.wait_cluster(cluster_name, 3)
 

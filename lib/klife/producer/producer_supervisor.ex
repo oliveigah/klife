@@ -1,7 +1,9 @@
 defmodule Klife.Producer.ProducerSupervisor do
+  @moduledoc false
+
   use DynamicSupervisor
 
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   def start_link(opts) do
     DynamicSupervisor.start_link(__MODULE__, opts,

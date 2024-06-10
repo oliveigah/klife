@@ -1,16 +1,9 @@
 defmodule Klife.Connection.Controller do
-  @moduledoc """
-  Controller of the connection system.
+  @moduledoc false
 
-  Responsible for starting broker connections, housekeeping
-  common resources that are not broker specific such as
-  in flight message ets, correlation id counter and
-  cluster controller.
-
-  """
   use GenServer
 
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]
 
   alias Klife.PubSub
 
@@ -28,38 +21,87 @@ defmodule Klife.Connection.Controller do
   @check_correlation_counter_delay :timer.seconds(300)
   @check_cluster_delay :timer.seconds(10)
 
+  @connection_opts [
+    bootstrap_servers: [
+      type: {:list, :string},
+      required: true,
+      doc:
+        "List of servers to establish the initial connection. (eg: [\"localhost:9092\", \"localhost:9093\"])"
+    ],
+    ssl: [
+      type: :boolean,
+      required: false,
+      default: false,
+      doc: "Specify the underlying socket module. Use :ssl if true and :gen_tcp if false."
+    ],
+    connect_opts: [
+      type: {:list, :any},
+      required: false,
+      default: [
+        inet_backend: :socket,
+        active: false
+      ],
+      doc:
+        "Options used to configure the socket connection, which are forwarded to the `connect/3` function of the underlying socket module (see ssl option above.)."
+    ],
+    socket_opts: [
+      type: {:list, :any},
+      required: false,
+      default: [keepalive: true],
+      doc:
+        "Options used to configure the open socket, which are forwarded to the `setopts/2` function of the underlying socket module `:inet` for `:gen_tcp` and `:ssl` for `:ssl` (see ssl option above.)."
+    ]
+  ]
+
   defstruct [
     :bootstrap_servers,
     :cluster_name,
     :known_brokers,
-    :socket_opts,
+    :connect_opts,
     :bootstrap_conn,
     :check_cluster_timer_ref,
-    :check_cluster_waiting_pids
+    :check_cluster_waiting_pids,
+    :ssl,
+    :socket_opts
   ]
+
+  def get_opts(), do: @connection_opts
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: via_tuple({__MODULE__, opts[:cluster_name]}))
   end
 
   @impl true
-  def init(opts) do
-    bootstrap_servers = Keyword.fetch!(opts, :bootstrap_servers)
-    socket_opts = Keyword.get(opts, :socket_opts, [])
-    cluster_name = Keyword.fetch!(opts, :cluster_name)
+  def init(validated_opts) do
+    %{
+      connect_opts: connect_defaults,
+      socket_opts: socket_defaults
+    } =
+      @connection_opts
+      |> Keyword.take([:connect_opts, :socket_opts])
+      |> Enum.map(fn {k, opt} -> {k, opt[:default] || []} end)
+      |> Map.new()
 
-    :ets.new(get_in_flight_messages_table_name(cluster_name), [
+    bootstrap_servers = Keyword.fetch!(validated_opts, :bootstrap_servers)
+    connect_opts = Keyword.merge(connect_defaults, Keyword.fetch!(validated_opts, :connect_opts))
+    socket_opts = Keyword.merge(socket_defaults, Keyword.fetch!(validated_opts, :socket_opts))
+    ssl = Keyword.get(validated_opts, :ssl, false)
+    cluster = Keyword.fetch!(validated_opts, :cluster_name)
+
+    :ets.new(get_in_flight_messages_table_name(cluster), [
       :set,
       :public,
       :named_table
     ])
 
-    :persistent_term.put({:correlation_counter, cluster_name}, :atomics.new(1, []))
+    :persistent_term.put({:correlation_counter, cluster}, :atomics.new(1, []))
 
     state = %__MODULE__{
       bootstrap_servers: bootstrap_servers,
-      cluster_name: cluster_name,
+      cluster_name: cluster,
+      connect_opts: connect_opts,
       socket_opts: socket_opts,
+      ssl: ssl,
       known_brokers: [],
       bootstrap_conn: nil,
       check_cluster_timer_ref: nil,
@@ -73,7 +115,14 @@ defmodule Klife.Connection.Controller do
 
   @impl true
   def handle_info(:init_bootstrap_conn, %__MODULE__{} = state) do
-    conn = connect_bootstrap_server(state.bootstrap_servers, state.socket_opts)
+    conn =
+      connect_bootstrap_server(
+        state.bootstrap_servers,
+        state.ssl,
+        state.connect_opts,
+        state.socket_opts
+      )
+
     negotiate_api_versions(conn, state.cluster_name)
     new_ref = Process.send_after(self(), :check_cluster, 0)
     {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_cluster_timer_ref: new_ref}}
@@ -103,10 +152,12 @@ defmodule Klife.Connection.Controller do
   def handle_info({:handle_brokers, to_start, to_remove}, %__MODULE__{} = state) do
     Enum.each(to_start, fn {broker_id, url} ->
       broker_opts = [
-        socket_opts: state.socket_opts,
+        connect_opts: state.connect_opts,
         cluster_name: state.cluster_name,
+        socket_opts: state.socket_opts,
         broker_id: broker_id,
-        url: url
+        url: url,
+        ssl: state.ssl
       ]
 
       DynamicSupervisor.start_child(
@@ -277,10 +328,15 @@ defmodule Klife.Connection.Controller do
   defp get_in_flight_messages_table_name(cluster_name),
     do: :"in_flight_messages.#{cluster_name}"
 
-  defp connect_bootstrap_server(servers, socket_opts) do
+  defp connect_bootstrap_server(servers, ssl, connect_opts, socket_opts) do
     conn =
       Enum.reduce_while(servers, [], fn url, acc ->
-        case Connection.new(url, Keyword.merge(socket_opts, active: false)) do
+        case Connection.new(
+               url,
+               ssl,
+               Keyword.merge(connect_opts, active: false),
+               socket_opts
+             ) do
           {:ok, conn} ->
             {:halt, conn}
 

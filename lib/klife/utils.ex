@@ -1,4 +1,5 @@
 defmodule Klife.Utils do
+  @moduledoc false
   # TODO: Everything that is in here must be moved to a proper place
   def wait_connection!(cluster_name, timeout \\ :timer.seconds(5)) do
     deadline = System.monotonic_time() + System.convert_time_unit(timeout, :millisecond, :native)
@@ -25,74 +26,78 @@ defmodule Klife.Utils do
   # the topic are created, thats why we need to create a connection from
   # scratch here. Must solve it later.
   def create_topics!() do
-    :klife
-    |> Application.fetch_env!(:clusters)
-    |> Enum.map(fn cluster_opts ->
-      socket_opts = cluster_opts[:connection][:socket_opts]
+    cluster_opts = Application.fetch_env!(:klife, Klife.MyCluster)
 
-      {:ok, conn} =
-        Klife.Connection.new(
-          cluster_opts[:connection][:bootstrap_servers] |> List.first(),
-          socket_opts
-        )
+    conn_defaults =
+      Klife.Connection.Controller.get_opts()
+      |> Keyword.take([:connect_opts, :socket_opts])
+      |> Enum.map(fn {k, opt} -> {k, opt[:default] || []} end)
+      |> Map.new()
 
-      {:ok, %{brokers: brokers_list, controller: controller_id}} =
-        Klife.Connection.Controller.get_cluster_info(conn)
+    ssl = cluster_opts[:connection][:ssl]
 
-      {_id, url} = Enum.find(brokers_list, fn {id, _} -> id == controller_id end)
+    connect_opts =
+      Keyword.merge(conn_defaults.connect_opts, cluster_opts[:connection][:connect_opts] || [])
 
-      {:ok, new_conn} = Klife.Connection.new(url, socket_opts)
+    socket_opts =
+      Keyword.merge(conn_defaults.socket_opts, cluster_opts[:connection][:socket_opts] || [])
 
-      topics_input =
-        Enum.map(cluster_opts[:topics], fn input ->
-          %{
-            name: input[:name],
-            num_partitions: input[:num_partitions] || 12,
-            replication_factor: input[:replication_factor] || 2,
-            assignments: [],
-            configs: []
-          }
-        end)
+    {:ok, conn} =
+      Klife.Connection.new(
+        cluster_opts[:connection][:bootstrap_servers] |> List.first(),
+        ssl,
+        connect_opts,
+        socket_opts
+      )
 
-      :ok =
+    {:ok, %{brokers: brokers_list, controller: controller_id}} =
+      Klife.Connection.Controller.get_cluster_info(conn)
+
+    {_id, url} = Enum.find(brokers_list, fn {id, _} -> id == controller_id end)
+
+    {:ok, new_conn} = Klife.Connection.new(url, ssl, connect_opts, socket_opts)
+
+    topics_input =
+      Enum.map(cluster_opts[:topics], fn input ->
         %{
-          content: %{
-            topics: topics_input,
-            timeout_ms: 15_000
-          },
-          headers: %{correlation_id: 123}
+          name: input[:name],
+          num_partitions: input[:num_partitions] || 12,
+          replication_factor: input[:replication_factor] || 2,
+          assignments: [],
+          configs: []
         }
-        |> KlifeProtocol.Messages.CreateTopics.serialize_request(0)
-        |> Klife.Connection.write(new_conn)
+      end)
 
-      {:ok, received_data} = Klife.Connection.read(new_conn)
+    :ok =
+      %{
+        content: %{
+          topics: topics_input,
+          timeout_ms: 15_000
+        },
+        headers: %{correlation_id: 123}
+      }
+      |> KlifeProtocol.Messages.CreateTopics.serialize_request(0)
+      |> Klife.Connection.write(new_conn)
 
-      KlifeProtocol.Messages.CreateTopics.deserialize_response(received_data, 0)
-      |> case do
-        {:ok, %{content: content}} ->
-          case Enum.filter(content.topics, fn e -> e.error_code not in [0, 36] end) do
-            [] ->
-              :ok
+    {:ok, received_data} = Klife.Connection.read(new_conn)
 
-            err ->
-              {:error, err}
-          end
+    KlifeProtocol.Messages.CreateTopics.deserialize_response(received_data, 0)
+    |> case do
+      {:ok, %{content: content}} ->
+        case Enum.filter(content.topics, fn e -> e.error_code not in [0, 36] end) do
+          [] ->
+            :ok
 
-        err ->
-          raise "
+          err ->
+            {:error, err}
+        end
+
+      err ->
+        raise "
             Unexpected error while creating topics:
 
             #{inspect(err)}
             "
-      end
-    end)
-    |> Enum.all?(fn e -> e == :ok end)
-    |> case do
-      true ->
-        :ok
-
-      false ->
-        :error
     end
   end
 end

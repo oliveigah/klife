@@ -1,5 +1,5 @@
 defmodule Klife.TxnProducerPool do
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   require Logger
 
@@ -12,12 +12,45 @@ defmodule Klife.TxnProducerPool do
 
   @behaviour NimblePool
 
-  @txn_producer_options [
-    cluster_name: [type: :atom, required: true],
-    name: [type: :atom, required: true]
+  @txn_producer_specific_opts [
+    name: [
+      type: :atom,
+      required: true,
+      doc: "Pool name. Can be used as an option on the transactional api"
+    ],
+    base_txn_id: [
+      type: :string,
+      required: false,
+      doc:
+        "Prefix used to define the `transactional_id` for the producers. If not provided, a random string will be used."
+    ],
+    pool_size: [
+      type: :non_neg_integer,
+      default: 20,
+      doc: "Number of transactional producers in the pool"
+    ]
   ]
 
-  defstruct Keyword.keys(@txn_producer_options) ++ [:worker_counter]
+  @txn_producer_options Producer.get_opts()
+                        |> Keyword.take([
+                          :delivery_timeout_ms,
+                          :request_timeout_ms,
+                          :retry_backoff_ms,
+                          :compression_type,
+                          :txn_timeout_ms
+                        ])
+                        |> Keyword.merge(@txn_producer_specific_opts)
+
+  defstruct Keyword.keys(@txn_producer_options) ++ [:worker_counter, :cluster_name]
+
+  @moduledoc """
+  Pool of transactional producers.
+
+  # Configurations
+
+  #{NimbleOptions.docs(@txn_producer_options)}
+  """
+  def get_opts, do: @txn_producer_options
 
   defmodule WorkerState do
     defstruct [
@@ -34,32 +67,17 @@ defmodule Klife.TxnProducerPool do
 
   @impl NimblePool
   def init_pool(init_arg) do
-    args = Keyword.take(init_arg, Keyword.keys(@txn_producer_options))
-    validated_args = NimbleOptions.validate!(args, @txn_producer_options)
-    args_map = Map.new(validated_args)
-
-    base_map = %__MODULE__{
-      worker_counter: 0
-    }
-
-    {:ok, Map.merge(base_map, args_map)}
+    args = init_arg |> Keyword.take(Map.keys(%__MODULE__{})) |> Map.new()
+    base_map = %__MODULE__{worker_counter: 0}
+    {:ok, Map.merge(base_map, args)}
   end
 
   @impl NimblePool
   def init_worker(%__MODULE__{} = pool_state) do
     worker_id = pool_state.worker_counter + 1
 
-    case do_init_worker(pool_state, worker_id) do
-      %__MODULE__.WorkerState{} = worker ->
-        {:ok, worker, %{pool_state | worker_counter: worker_id}}
-
-      err ->
-        err
-    end
-  end
-
-  defp do_init_worker(%__MODULE__{} = pool_state, worker_id) do
     %__MODULE__{cluster_name: cluster_name, name: pool_name} = pool_state
+
     producer_name = :"klife_txn_producer.#{pool_name}.#{worker_id}"
 
     case Producer.get_pid(cluster_name, producer_name) do
@@ -68,11 +86,13 @@ defmodule Klife.TxnProducerPool do
         {:error, {:unkown_producer, cluster_name, producer_name}}
 
       _ ->
-        %__MODULE__.WorkerState{
+        worker = %__MODULE__.WorkerState{
           cluster_name: cluster_name,
           producer_name: producer_name,
           worker_id: worker_id
         }
+
+        {:ok, worker, %{pool_state | worker_counter: worker_id}}
     end
   end
 

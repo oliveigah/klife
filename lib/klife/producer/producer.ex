@@ -1,7 +1,7 @@
 defmodule Klife.Producer do
   use GenServer
 
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]
 
   alias Klife.Record
 
@@ -13,54 +13,134 @@ defmodule Klife.Producer do
   alias KlifeProtocol.Messages, as: M
 
   @producer_options [
-    cluster_name: [type: :atom, required: true],
-    name: [type: :atom, required: true],
-    client_id: [type: :string],
-    acks: [type: {:in, [:all, 0, 1]}, default: :all],
-    linger_ms: [type: :non_neg_integer, default: 0],
-    batch_size_bytes: [type: :non_neg_integer, default: 512_000],
-    delivery_timeout_ms: [type: :non_neg_integer, default: :timer.minutes(1)],
-    request_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(15)],
-    retry_backoff_ms: [type: :non_neg_integer, default: :timer.seconds(1)],
-    max_in_flight_requests: [type: :non_neg_integer, default: 1],
-    batchers_count: [type: :pos_integer, default: 1],
-    enable_idempotence: [type: :boolean, default: true],
-    compression_type: [type: {:in, [:none, :gzip, :snappy]}, default: :none],
-    txn_id: [type: :string],
-    txn_timeout_ms: [type: :non_neg_integer, default: :timer.seconds(60)]
+    name: [
+      type: :atom,
+      required: true,
+      doc: "Producer name. Can be used as an option on the producer api"
+    ],
+    client_id: [
+      type: :string,
+      doc:
+        "String used on all requests for the cluster. If not provided the following string is used: \"klife_producer.{cluster_name}.{producer_name}\""
+    ],
+    acks: [
+      type: {:in, [:all, 0, 1]},
+      type_doc: "`:all`, 0 or 1",
+      default: :all,
+      doc:
+        "The number of broker's acks the producer requires before considering a request complete. `:all` means all ISR(in sync replicas)"
+    ],
+    linger_ms: [
+      type: :non_neg_integer,
+      default: 0,
+      doc:
+        "The maximum time to wait for additional messages before sending a batch to the broker."
+    ],
+    batch_size_bytes: [
+      type: :non_neg_integer,
+      default: 512_000,
+      doc:
+        "The maximum size of the batch of messages that the producer will send to the broker in a single request."
+    ],
+    delivery_timeout_ms: [
+      type: :non_neg_integer,
+      default: :timer.minutes(1),
+      doc:
+        "The maximum amount of time the producer will retry to deliver a message before timing out and failing the send."
+    ],
+    request_timeout_ms: [
+      type: :non_neg_integer,
+      default: :timer.seconds(15),
+      doc:
+        "The maximum amount of time the producer will wait for a broker response to a request before considering it as failed."
+    ],
+    retry_backoff_ms: [
+      type: :non_neg_integer,
+      default: :timer.seconds(1),
+      doc:
+        "The amount of time that the producer waits before retrying a failed request to the broker."
+    ],
+    max_in_flight_requests: [
+      type: :non_neg_integer,
+      default: 1,
+      doc:
+        "The maximum number of unacknowledged requests per broker the producer will send before waiting for acknowledgments."
+    ],
+    batchers_count: [
+      type: :pos_integer,
+      default: 1,
+      doc:
+        "The number of batchers per broker the producer will start. See `Batchers Count` session for more details."
+    ],
+    enable_idempotence: [
+      type: :boolean,
+      default: true,
+      doc:
+        "Indicates if the producer will use kafka idempotency capabilities for exactly once semantics."
+    ],
+    compression_type: [
+      type: {:in, [:none, :gzip, :snappy]},
+      default: :none,
+      type_doc: "`:none`, `:gzip` or `:snappy`",
+      doc:
+        "The compression algorithm to be used for compressing messages before they are sent to the broker."
+    ],
+    txn_id: [type: :string, docs: "Unique identifier for transactional producers."],
+    txn_timeout_ms: [
+      type: :non_neg_integer,
+      default: :timer.seconds(90),
+      docs:
+        "The maximum amount of time, in milliseconds, that a transactional producer is allowed to remain open without either committing or aborting a transaction before it is considered expired"
+    ]
   ]
 
-  defstruct (Keyword.keys(@producer_options) -- [:name]) ++
-              [:producer_name, :producer_id, :producer_epoch, :epochs, :coordinator_id]
+  @moduledoc """
+  Pool of transactional producers.
 
-  def opts_schema(), do: @producer_options
+  # Configurations
 
+  #{NimbleOptions.docs(@producer_options)}
+  """
+
+  defstruct Keyword.keys(@producer_options) ++
+              [
+                :producer_id,
+                :producer_epoch,
+                :epochs,
+                :coordinator_id,
+                :cluster_name
+              ]
+
+  @doc false
+  def get_opts(), do: @producer_options
+
+  @doc false
   def start_link(args) do
-    validated_args = NimbleOptions.validate!(args, @producer_options)
-    producer_name = Keyword.fetch!(validated_args, :name)
-    cluster_name = Keyword.fetch!(validated_args, :cluster_name)
+    producer_name = Keyword.fetch!(args, :name)
+    cluster_name = Keyword.fetch!(args, :cluster_name)
 
-    GenServer.start_link(__MODULE__, validated_args,
+    GenServer.start_link(__MODULE__, args,
       name: via_tuple(get_process_name(cluster_name, producer_name))
     )
   end
 
   defp get_process_name(cluster, producer), do: {__MODULE__, cluster, producer}
 
+  @doc false
   def init(validated_args) do
-    args_map = Map.new(validated_args)
+    args_map =
+      validated_args
+      |> Keyword.take(Map.keys(%__MODULE__{}))
+      |> Map.new()
 
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.cluster_name}.#{args_map.name}",
-      producer_name: args_map.name,
       epochs: %{}
     }
 
-    filtered_args = Map.take(args_map, Map.keys(base))
-
     state =
       base
-      |> Map.merge(filtered_args)
+      |> Map.merge(args_map)
       |> set_producer_id()
 
     :ok = handle_batchers(state)
@@ -68,34 +148,40 @@ defmodule Klife.Producer do
     {:ok, state}
   end
 
+  @doc false
   def new_epoch(cluster_name, producer_name, topic, partition) do
     {__MODULE__, cluster_name, producer_name}
     |> via_tuple()
     |> GenServer.call({:new_epoch, topic, partition})
   end
 
+  @doc false
   def get_txn_pool_data(cluster_name, producer_name) do
     {__MODULE__, cluster_name, producer_name}
     |> via_tuple()
     |> GenServer.call(:get_txn_pool_data)
   end
 
+  @doc false
   def get_pid(cluster_name, producer_name) do
     get_process_name(cluster_name, producer_name)
     |> registry_lookup()
     |> List.first()
   end
 
+  @doc false
   def handle_info(:handle_change, %__MODULE__{} = state) do
     new_state = set_producer_id(state)
     :ok = handle_batchers(new_state)
     {:noreply, new_state}
   end
 
+  @doc false
   def handle_call(:get_txn_pool_data, _from, %__MODULE__{txn_id: nil} = state) do
     {:reply, {:error, :not_txn_producer}, state}
   end
 
+  @doc false
   def handle_call(:get_txn_pool_data, _from, %__MODULE__{} = state) do
     data = %{
       producer_id: state.producer_id,
@@ -108,6 +194,7 @@ defmodule Klife.Producer do
     {:reply, {:ok, data}, state}
   end
 
+  @doc false
   def handle_call(
         {:new_epoch, topic, partition},
         {called_pid, _tag},
@@ -155,7 +242,7 @@ defmodule Klife.Producer do
             end
           end
 
-          with_timeout(:timer.seconds(10), fun)
+          with_timeout(:timer.seconds(30), fun)
       end
 
     content = %{
@@ -173,7 +260,7 @@ defmodule Klife.Producer do
       end
     end
 
-    {producer_id, p_epoch} = with_timeout(:timer.seconds(10), fun)
+    {producer_id, p_epoch} = with_timeout(:timer.seconds(30), fun)
 
     %__MODULE__{
       state
@@ -183,6 +270,7 @@ defmodule Klife.Producer do
     }
   end
 
+  @doc false
   def produce([%Record{} | _] = records, cluster_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
     callback_pid = if Keyword.get(opts, :async, false), do: nil, else: self()
@@ -302,7 +390,7 @@ defmodule Klife.Producer do
   defp update_topic_partition_metadata(%__MODULE__{} = state, batchers_per_broker) do
     %__MODULE__{
       cluster_name: cluster_name,
-      producer_name: producer_name
+      name: producer_name
     } = state
 
     cluster_name

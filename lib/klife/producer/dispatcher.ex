@@ -1,5 +1,7 @@
 defmodule Klife.Producer.Dispatcher do
+  @moduledoc false
   defmodule Request do
+    @moduledoc false
     defstruct [
       :producer_config,
       :batch_to_send,
@@ -19,7 +21,7 @@ defmodule Klife.Producer.Dispatcher do
 
   use GenServer
 
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   alias Klife.Connection.Broker
   alias Klife.Producer
@@ -29,7 +31,7 @@ defmodule Klife.Producer.Dispatcher do
 
   def start_link(args) do
     %{
-      producer_name: p_name,
+      name: p_name,
       cluster_name: cluster_name
     } = Keyword.fetch!(args, :producer_config)
 
@@ -157,7 +159,7 @@ defmodule Klife.Producer.Dispatcher do
         pool_idx: pool_idx,
         request_ref: ^req_ref,
         batch_to_send: batch_to_send,
-        producer_config: %{producer_name: producer_name, cluster_name: cluster_name} = p_config
+        producer_config: %{name: producer_name, cluster_name: cluster_name} = p_config
       } = Map.fetch!(requests, req_ref)
 
     {:ok, resp} = apply(msg_mod, :deserialize_response, [binary_resp, msg_version])
