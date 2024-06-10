@@ -128,7 +128,7 @@ defmodule Klife.Connection.SystemTest do
     Enum.each(brokers_list_3, &check_broker_connection(cluster_name_3, &1))
   end
 
-  @tag :cluster_change
+  @tag cluster_change: true, capture_log: true
   test "cluster changes events" do
     config = [
       connection: [
