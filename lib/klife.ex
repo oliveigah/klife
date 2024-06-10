@@ -4,16 +4,14 @@ defmodule Klife do
   alias Klife.TxnProducerPool
   alias Klife.Producer.Controller, as: PController
 
-  def produce(%Record{} = record, opts \\ []) do
-    case produce_batch([record], opts) do
+  def produce(%Record{} = record, cluster, opts \\ []) do
+    case produce_batch([record], cluster, opts) do
       [resp] -> resp
       resp -> resp
     end
   end
 
-  def produce_batch([%Record{} | _] = records, opts \\ []) do
-    cluster = get_cluster(opts)
-
+  def produce_batch([%Record{} | _] = records, cluster, opts \\ []) do
     records =
       records
       |> Enum.with_index(1)
@@ -29,12 +27,15 @@ defmodule Klife do
       else: Producer.produce(records, cluster, opts)
   end
 
-  def produce_batch_txn([%Record{} | _] = records, opts \\ []) do
-    transaction(fn -> records |> produce_batch(opts) |> verify_batch() end, opts)
+  def produce_batch_txn([%Record{} | _] = records, cluster, opts \\ []) do
+    transaction(
+      fn -> records |> produce_batch(cluster, opts) |> verify_batch() end,
+      cluster,
+      opts
+    )
   end
 
-  def transaction(fun, opts \\ []) do
-    cluster = get_cluster(opts)
+  def transaction(fun, cluster, opts \\ []) do
     TxnProducerPool.run_txn(cluster, get_txn_pool(opts), fun)
   end
 
@@ -55,8 +56,6 @@ defmodule Klife do
     end
   end
 
-  defp default_cluster(), do: :persistent_term.get(:klife_default_cluster)
-  defp get_cluster(opts), do: Keyword.get(opts, :cluster, default_cluster())
   defp get_txn_pool(opts), do: Keyword.get(opts, :txn_pool, :klife_txn_pool)
 
   defp maybe_add_partition(%Record{} = record, cluster, opts) do

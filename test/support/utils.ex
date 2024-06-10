@@ -1,5 +1,5 @@
 defmodule Klife.TestUtils do
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [registry_lookup: 1]
 
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
@@ -118,7 +118,7 @@ defmodule Klife.TestUtils do
     Process.sleep(10)
 
     if System.monotonic_time(:millisecond) < deadline do
-      if length(:persistent_term.get({:known_brokers_ids, cluster_name})) == expected_brokers,
+      if length(:persistent_term.get({:known_brokers_ids, cluster_name}, [])) == expected_brokers,
         do: :ok,
         else: do_wait_cluster(deadline, cluster_name, expected_brokers)
     else

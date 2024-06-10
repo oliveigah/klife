@@ -1,6 +1,8 @@
 defmodule Klife.Producer.Batcher do
+  @moduledoc false
+
   use GenServer
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   require Logger
 
@@ -37,7 +39,7 @@ defmodule Klife.Producer.Batcher do
         get_process_name(
           cluster_name,
           broker_id,
-          pconfig.producer_name,
+          pconfig.name,
           batcher_id
         )
     )
@@ -183,7 +185,7 @@ defmodule Klife.Producer.Batcher do
       base_sequences: bs,
       producer_config: %Producer{
         cluster_name: cluster_name,
-        producer_name: producer_name
+        name: producer_name
       }
     } = state
 
@@ -384,7 +386,7 @@ defmodule Klife.Producer.Batcher do
          %__MODULE__{
            base_sequences: bs,
            producer_config:
-             %{cluster_name: cluster_name, producer_name: producer_name, producer_id: p_id} =
+             %{cluster_name: cluster_name, name: producer_name, producer_id: p_id} =
                pconfig,
            producer_epochs: p_epochs
          } = _state,

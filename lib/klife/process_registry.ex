@@ -1,4 +1,6 @@
 defmodule Klife.ProcessRegistry do
+  @moduledoc false
+
   def start_link() do
     Registry.start_link(name: __MODULE__, keys: :unique, partitions: System.schedulers_online())
   end

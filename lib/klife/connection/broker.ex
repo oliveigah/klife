@@ -1,14 +1,9 @@
 defmodule Klife.Connection.Broker do
-  @moduledoc """
-  Represents a connection to a specific broker
+  @moduledoc false
 
-  Responsible for housekeeping the connection and
-  forward responses to waiting pids
-
-  """
   use GenServer
 
-  import Klife.ProcessRegistry
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   require Logger
 
@@ -18,7 +13,16 @@ defmodule Klife.Connection.Broker do
 
   @reconnect_delays_seconds [1, 1, 1, 1, 5, 5, 10]
 
-  defstruct [:broker_id, :cluster_name, :conn, :socket_opts, :url, :reconnect_attempts]
+  defstruct [
+    :broker_id,
+    :cluster_name,
+    :conn,
+    :ssl,
+    :connect_opts,
+    :socket_opts,
+    :url,
+    :reconnect_attempts
+  ]
 
   def start_link(args) do
     broker_id = Keyword.fetch!(args, :broker_id)
@@ -27,17 +31,21 @@ defmodule Klife.Connection.Broker do
   end
 
   def init(args) do
-    socket_opts = Keyword.fetch!(args, :socket_opts)
+    connect_opts = Keyword.fetch!(args, :connect_opts)
     cluster_name = Keyword.fetch!(args, :cluster_name)
     broker_id = Keyword.fetch!(args, :broker_id)
     url = Keyword.fetch!(args, :url)
+    ssl = Keyword.fetch!(args, :ssl)
+    socket_opts = Keyword.fetch!(args, :socket_opts)
 
     state = %__MODULE__{
       broker_id: broker_id,
       cluster_name: cluster_name,
+      connect_opts: connect_opts,
       socket_opts: socket_opts,
       url: url,
-      reconnect_attempts: 0
+      reconnect_attempts: 0,
+      ssl: ssl
     }
 
     # This needs to be done instead of send(self(), :connect)
@@ -211,7 +219,7 @@ defmodule Klife.Connection.Broker do
         nil
     end
 
-    Connection.set_opts(conn, active: :once)
+    Connection.socket_opts(conn, active: :once)
   end
 
   defp reply_message(_, cluster_name, conn) do
@@ -249,8 +257,15 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  defp do_connect(%__MODULE__{} = state) do
-    case Connection.new(state.url, Keyword.merge(state.socket_opts, active: :once)) do
+  defp do_connect(
+         %__MODULE__{
+           url: url,
+           ssl: ssl,
+           connect_opts: connect_opts,
+           socket_opts: socket_opts
+         } = state
+       ) do
+    case Connection.new(url, ssl, Keyword.merge(connect_opts, active: :once), socket_opts) do
       {:ok, conn} ->
         :persistent_term.put({__MODULE__, state.cluster_name, state.broker_id}, conn)
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}

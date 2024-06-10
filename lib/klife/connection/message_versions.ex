@@ -1,4 +1,6 @@
 defmodule Klife.Connection.MessageVersions do
+  @moduledoc false
+
   alias KlifeProtocol.Messages, as: M
 
   def get(cluster_name, mod), do: :persistent_term.get({:api_version, mod, cluster_name})

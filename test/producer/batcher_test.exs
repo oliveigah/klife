@@ -16,7 +16,7 @@ defmodule Klife.Producer.BatcherTest do
         enable_idempotence: true,
         linger_ms: 10_000,
         max_in_flight_requests: 2,
-        producer_name: :my_batch_producer,
+        name: :my_batch_producer,
         request_timeout_ms: 15000,
         retry_backoff_ms: 1000
       },
@@ -174,7 +174,7 @@ defmodule Klife.Producer.BatcherTest do
         enable_idempotence: true,
         linger_ms: 10_000,
         max_in_flight_requests: 2,
-        producer_name: :my_batch_producer,
+        name: :my_batch_producer,
         request_timeout_ms: 15000,
         retry_backoff_ms: 1000
       },

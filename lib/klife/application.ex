@@ -9,7 +9,6 @@ defmodule Klife.Application do
   def start(_type, _args) do
     # TODO: Refactor and rethink auto topic creation feature
     create_topics()
-    setup_default_cluster()
 
     children = [
       Klife.ProcessRegistry,
@@ -24,18 +23,9 @@ defmodule Klife.Application do
   end
 
   defp handle_clusters() do
-    :klife
-    |> Application.fetch_env!(:clusters)
-    |> Enum.map(fn cluster_opts ->
-      cluster_name = Keyword.fetch!(cluster_opts, :cluster_name)
-      conn_opts = [{:cluster_name, cluster_name} | cluster_opts[:connection]]
-      producer_opts = Keyword.delete(cluster_opts, :connection)
-
-      [
-        {Klife.Connection.Supervisor, conn_opts},
-        {Klife.Producer.Supervisor, producer_opts}
-      ]
-    end)
+    [
+      Klife.MyCluster
+    ]
   end
 
   defp create_topics() do
@@ -55,16 +45,6 @@ defmodule Klife.Application do
         else
           do_create_topics(init_time)
         end
-    end
-  end
-
-  defp setup_default_cluster() do
-    case Application.get_env(:klife, :default_cluster) do
-      nil ->
-        :noop
-
-      cluster ->
-        :persistent_term.put(:klife_default_cluster, cluster)
     end
   end
 end
