@@ -45,58 +45,44 @@ config :klife, Klife.MyCluster,
     ]
   ],
   topics: [
-    %{
+    [
       name: "benchmark_topic_0",
-      producer: :benchmark_producer,
-      num_partitions: 30,
-      replication_factor: 2
-    },
-    %{
+      default_producer: :benchmark_producer
+    ],
+    [
       name: "benchmark_topic_1",
-      producer: :benchmark_producer,
-      num_partitions: 30,
-      replication_factor: 2
-    },
-    %{
+      default_producer: :benchmark_producer
+    ],
+    [
       name: "benchmark_topic_2",
-      producer: :benchmark_producer,
-      num_partitions: 30,
-      replication_factor: 2
-    },
-    %{
+      default_producer: :benchmark_producer
+    ],
+    [
       name: "benchmark_topic_in_flight",
-      producer: :benchmark_producer_in_flight,
-      num_partitions: 30,
-      replication_factor: 2
-    },
-    %{
+      default_producer: :benchmark_producer_in_flight
+    ],
+    [
       name: "benchmark_topic_in_flight_linger",
-      producer: :benchmark_producer_in_flight_linger,
-      num_partitions: 30,
-      replication_factor: 2
-    },
-    %{
+      default_producer: :benchmark_producer_in_flight_linger
+    ],
+    [
       name: "test_batch_topic",
-      enable_produce: true,
-      producer: :test_batch_producer
-    },
-    %{
+      default_producer: :test_batch_producer
+    ],
+    [
       name: "test_compression_topic",
-      producer: :test_batch_compressed_producer
-    },
-    %{
-      name: "test_no_batch_topic",
-      enable_produce: true
-    },
-    %{
+      default_producer: :test_batch_compressed_producer
+    ],
+    [
+      name: "test_no_batch_topic"
+    ],
+    [
       name: "test_no_batch_topic_2",
-      enable_produce: true,
-      partitioner: Klife.TestCustomPartitioner
-    },
-    %{
-      name: "test_async_topic",
-      enable_produce: true
-    }
+      default_partitioner: Klife.TestCustomPartitioner
+    ],
+    [
+      name: "test_async_topic"
+    ]
   ]
 
 if config_env() == :dev do

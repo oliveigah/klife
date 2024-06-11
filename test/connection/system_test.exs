@@ -35,13 +35,15 @@ defmodule Klife.Connection.SystemTest do
   test "setup non ssl", %{test: test_name} do
     cluster_name = :"#{__MODULE__}.#{test_name}"
 
-    input = [
-      cluster_name: cluster_name,
-      bootstrap_servers: ["localhost:19092", "localhost:29092"],
-      ssl: false,
-      connect_opts: [],
-      socket_opts: []
-    ]
+    input =
+      [
+        cluster_name: cluster_name,
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        ssl: false,
+        connect_opts: [],
+        socket_opts: []
+      ]
+      |> Map.new()
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
 
@@ -54,18 +56,20 @@ defmodule Klife.Connection.SystemTest do
   test "setup ssl", %{test: test_name} do
     cluster_name = :"#{__MODULE__}.#{test_name}"
 
-    input = [
-      cluster_name: cluster_name,
-      bootstrap_servers: ["localhost:19093", "localhost:29093"],
-      ssl: true,
-      connect_opts: [
-        verify: :verify_peer,
-        cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-      ],
-      socket_opts: [
-        delay_send: true
+    input =
+      [
+        cluster_name: cluster_name,
+        bootstrap_servers: ["localhost:19093", "localhost:29093"],
+        ssl: true,
+        connect_opts: [
+          verify: :verify_peer,
+          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+        ],
+        socket_opts: [
+          delay_send: true
+        ]
       ]
-    ]
+      |> Map.new()
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
 
@@ -78,38 +82,44 @@ defmodule Klife.Connection.SystemTest do
   test "multiple clusters", %{test: test_name} do
     cluster_name_1 = :"#{__MODULE__}.#{test_name}_1"
 
-    input_1 = [
-      cluster_name: cluster_name_1,
-      bootstrap_servers: ["localhost:19092", "localhost:29092"],
-      ssl: false,
-      connect_opts: [],
-      socket_opts: []
-    ]
+    input_1 =
+      [
+        cluster_name: cluster_name_1,
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        ssl: false,
+        connect_opts: [],
+        socket_opts: []
+      ]
+      |> Map.new()
 
     cluster_name_2 = :"#{__MODULE__}.#{test_name}_2"
 
-    input_2 = [
-      cluster_name: cluster_name_2,
-      bootstrap_servers: ["localhost:19093", "localhost:29093"],
-      ssl: true,
-      connect_opts: [
-        verify: :verify_peer,
-        cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-      ],
-      socket_opts: [
-        delay_send: true
+    input_2 =
+      [
+        cluster_name: cluster_name_2,
+        bootstrap_servers: ["localhost:19093", "localhost:29093"],
+        ssl: true,
+        connect_opts: [
+          verify: :verify_peer,
+          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+        ],
+        socket_opts: [
+          delay_send: true
+        ]
       ]
-    ]
+      |> Map.new()
 
     cluster_name_3 = :"#{__MODULE__}.#{test_name}_3"
 
-    input_3 = [
-      cluster_name: cluster_name_3,
-      bootstrap_servers: ["localhost:19092", "localhost:29092"],
-      ssl: false,
-      connect_opts: [],
-      socket_opts: []
-    ]
+    input_3 =
+      [
+        cluster_name: cluster_name_3,
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        ssl: false,
+        connect_opts: [],
+        socket_opts: []
+      ]
+      |> Map.new()
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_1})
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_2})
@@ -136,12 +146,9 @@ defmodule Klife.Connection.SystemTest do
         ssl: false
       ],
       topics: [
-        %{
-          name: "crazy_test_topic",
-          producer: :benchmark_producer,
-          num_partitions: 30,
-          replication_factor: 2
-        }
+        [
+          name: "crazy_test_topic"
+        ]
       ]
     ]
 

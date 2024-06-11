@@ -12,9 +12,19 @@ defmodule Klife.MixProject do
       # docs
       name: "Klife",
       source_url: "https://github.com/oliveigah/klife",
+      extras: [],
       docs: [
         main: "readme",
-        extras: ["README.md"]
+        extras: [
+          "README.md",
+          "guides/examples/cluster_configuration.md"
+        ],
+        groups_for_extras: [
+          Examples: Path.wildcard("guides/examples/*.md")
+        ],
+        groups_for_docs: [
+          groups_for_docs("Producer API")
+        ]
       ]
     ]
   end
@@ -26,6 +36,8 @@ defmodule Klife.MixProject do
       mod: {Klife.Application, []}
     ]
   end
+
+  defp groups_for_docs(group), do: {String.to_atom(group), &(&1[:group] == group)}
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(:dev), do: ["lib"]

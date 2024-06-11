@@ -13,12 +13,7 @@ if Mix.env() in [:dev] do
       topic1 = "benchmark_topic_1"
       topic2 = "benchmark_topic_2"
 
-      max_partition =
-        :klife
-        |> Application.fetch_env!(Klife.MyCluster)
-        |> Keyword.get(:topics)
-        |> Enum.find(&(&1.name == topic0))
-        |> Map.get(:num_partitions)
+      max_partition = 30
 
       records_0 =
         Enum.map(0..(max_partition - 1), fn p ->

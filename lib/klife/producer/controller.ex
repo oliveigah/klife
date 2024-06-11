@@ -29,21 +29,20 @@ defmodule Klife.Producer.Controller do
   ]
 
   def start_link(args) do
-    cluster_name = Keyword.fetch!(args, :cluster_name)
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, cluster_name}))
+    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, args.cluster_name}))
   end
 
   @impl true
   def init(args) do
-    cluster_name = Keyword.fetch!(args, :cluster_name)
-    topics_list = Keyword.fetch!(args, :topics)
+    cluster_name = args.cluster_name
+    topics_list = args.topics
     timer_ref = Process.send_after(self(), :check_metadata, 0)
 
     state = %__MODULE__{
       cluster_name: cluster_name,
-      producers: Keyword.fetch!(args, :producers),
-      txn_pools: Keyword.fetch!(args, :txn_pools),
-      topics: Enum.filter(topics_list, &Map.get(&1, :enable_produce, true)),
+      producers: args.producers,
+      txn_pools: args.txn_pools,
+      topics: topics_list,
       check_metadata_waiting_pids: [],
       check_metadata_timer_ref: timer_ref
     }
@@ -51,7 +50,7 @@ defmodule Klife.Producer.Controller do
     Enum.each(topics_list, fn t ->
       :persistent_term.put(
         {__MODULE__, cluster_name, t.name},
-        Map.fetch!(t, :producer)
+        t.default_producer
       )
     end)
 
@@ -92,9 +91,7 @@ defmodule Klife.Producer.Controller do
 
   def handle_info(:handle_producers, %__MODULE__{} = state) do
     for producer <- state.producers do
-      opts =
-        producer
-        |> Keyword.put(:cluster_name, state.cluster_name)
+      opts = Map.put(producer, :cluster_name, state.cluster_name)
 
       DynamicSupervisor.start_child(
         via_tuple({ProducerSupervisor, state.cluster_name}),
@@ -113,10 +110,10 @@ defmodule Klife.Producer.Controller do
 
   def handle_info(:handle_txn_producers, %__MODULE__{} = state) do
     for txn_pool <- state.txn_pools,
-        txn_producer_count <- 1..txn_pool[:pool_size] do
+        txn_producer_count <- 1..txn_pool.pool_size do
       txn_id =
-        if is_binary(txn_pool[:base_txn_id]) do
-          txn_pool[:base_txn_id] <> "_#{txn_producer_count}"
+        if txn_pool.base_txn_id != "" do
+          txn_pool.base_txn_id <> "_#{txn_producer_count}"
         else
           :crypto.strong_rand_bytes(15)
           |> Base.url_encode64()
@@ -126,23 +123,23 @@ defmodule Klife.Producer.Controller do
 
       txn_producer_configs = %{
         cluster_name: state.cluster_name,
-        name: :"klife_txn_producer.#{txn_pool[:name]}.#{txn_producer_count}",
+        name: :"klife_txn_producer.#{txn_pool.name}.#{txn_producer_count}",
         acks: :all,
         linger_ms: 0,
-        delivery_timeout_ms: txn_pool[:delivery_timeout_ms],
-        request_timeout_ms: txn_pool[:request_timeout_ms],
-        retry_backoff_ms: txn_pool[:retry_backoff_ms],
+        delivery_timeout_ms: txn_pool.delivery_timeout_ms,
+        request_timeout_ms: txn_pool.request_timeout_ms,
+        retry_backoff_ms: txn_pool.retry_backoff_ms,
         max_in_flight_requests: 1,
         batchers_count: 1,
         enable_idempotence: true,
-        compression_type: txn_pool[:compression_type],
+        compression_type: txn_pool.compression_type,
         txn_id: txn_id,
-        txn_timeout_ms: txn_pool[:txn_timeout_ms]
+        txn_timeout_ms: txn_pool.txn_timeout_ms
       }
 
       DynamicSupervisor.start_child(
         via_tuple({ProducerSupervisor, state.cluster_name}),
-        {Producer, Map.to_list(txn_producer_configs)}
+        {Producer, txn_producer_configs}
       )
       |> case do
         {:ok, _pid} -> :ok
@@ -153,7 +150,7 @@ defmodule Klife.Producer.Controller do
     for txn_pool <- state.txn_pools do
       DynamicSupervisor.start_child(
         via_tuple({ProducerSupervisor, state.cluster_name}),
-        {TxnProducerPool, txn_pool ++ [cluster_name: state.cluster_name]}
+        {TxnProducerPool, Map.put(txn_pool, :cluster_name, state.cluster_name)}
       )
       |> case do
         {:ok, _pid} ->
@@ -291,7 +288,7 @@ defmodule Klife.Producer.Controller do
             :ets.insert(table_name, {
               {topic.name, partition.partition_index},
               partition.leader_id,
-              config_topic[:producer],
+              config_topic.default_producer,
               # batcher_id will be defined on producer
               nil
             })
@@ -337,7 +334,7 @@ defmodule Klife.Producer.Controller do
 
       data = %{
         max_partition: max_partition,
-        default_partitioner: config_topic[:partitioner] || Klife.Producer.DefaultPartitioner
+        default_partitioner: config_topic.default_partitioner
       }
 
       case :ets.lookup(table_name, topic.name) do

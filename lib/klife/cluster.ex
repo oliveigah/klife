@@ -2,6 +2,15 @@ defmodule Klife.Cluster do
   alias Klife
   alias Klife.Record
 
+  @type record :: Klife.Record.t()
+  @type list_of_records :: list(record)
+
+  @doc false
+  def default_producer_name(), do: :klife_default_producer
+
+  @doc false
+  def default_txn_pool_name(), do: :klife_default_txn_pool
+
   @input_options [
     connection: [
       type: :non_empty_keyword_list,
@@ -22,56 +31,192 @@ defmodule Klife.Cluster do
       doc:
         "List of configurations, each starting a new producer for use with produce api. A default producer is always created."
     ],
-    topics: [type: {:list, :map}, required: false]
+    topics: [
+      type: {:list, {:non_empty_keyword_list, Klife.Topic.get_opts()}},
+      type_doc: "List of `Klife.Topic` configurations",
+      required: true,
+      doc: "List of topics that will be managed by the cluster"
+    ]
   ]
+
   @moduledoc """
+  Defines a kafka cluster.
+
+  To use it you must do 3 steps:
+  - Use it in a module
+  - Config the module on your config file
+  - Start the module on your supervision tree
+
+  ## Using it in a module
+
+  When used it expects an `:otp_app` option that is the OTP application that has the cluster configuration.
+
+  ```elixir
+  defmodule MyApp.MyCluster do
+    use Klife.Cluster, otp_app: :my_app
+  end
+  ```
+
+  > #### `use Klife.Cluster` {: .info}
+  >
+  > When you `use Klife.Cluster`, it will extend your module in two ways:
+  >
+  > - Define it as a proxy to a subset of the functions on `Klife` module,
+  > using it's module's name as the `cluster_name` parameter.
+  > One example of this is the `MyCluster.produce/2` that forwards
+  > both arguments to `Klife.produce/3` and inject `MyCluster` as the
+  > second argument.
+  >
+  > - Define it as a supervisor by calling `use Supervisor` and implementing
+  > some related functions such as `start_link/1` and `init/1`, so it can be
+  > started under on your app supervision tree.
+
+
+  ## Configuration
+
+  The cluster has a bunch of configuration options, you can read more below.
+  But it will look somehting like this:
+
+  ```elixir
+  config :my_app, MyApp.Cluster,
+    connection: [
+      bootstrap_servers: ["localhost:19092", "localhost:29092"],
+      ssl: false
+    ],
+    producers: [
+      [
+        name: :my_custom_producer,
+        linger_ms: 5,
+        max_in_flight_requests: 10
+      ]
+    ],
+    topics: [
+      [name: "my_topic_0", producer: :my_custom_producer],
+      [name: "my_topic_1"]
+    ]
+
+  ```
+
+  You can see more configuration examples on the ["Cluster configuration examples"](guides/examples/cluster_configuration.md) section.
 
   Configuration options:
 
   #{NimbleOptions.docs(@input_options)}
 
+
+  ## Starting it
+
+  Finally, it must be started on your application. It will look something like this:
+
+  ```elixir
+  defmodule MyApp.Application do
+    def start(_type, _args) do
+      children = [
+        # some other modules...,
+        MyApp.MyCluster
+      ]
+
+      opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+      Supervisor.start_link(children, opts)
+    end
+  end
+  ```
+
+  ## Interacting with Producer API
+
+  In order to interact with the producer API you will work with `Klife.Record` module
+  as your main input and output data structure.
+
+  Usually you will give an record to some producer API function and it will return an
+  enriched record with some new attributes based on what happened.
+
+  As an input the `Klife.Record` may have the following attributes:
+  - value (required)
+  - key (optional)
+  - headers (optional)
+  - topic (required)
+  - partition (optional)
+
+  As an output the input record will be enriched with one or more the following attributes:
+  - offset (if it was succesfully written)
+  - partition (if the partition was provided by a partitioner)
+  - error_code ([kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes))
+
+  So in summary the interaction goes like this:
+  - Build one or more `Klife.Record`
+  - Pass it to some producer API function
+  - Receive an enriched version of the provided records
+
+
+  ```elixir
+  rec = %Klife.Record{value: "some_val", topic: "my_topic"}
+  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyCluster.produce(rec)
+  ```
+
   """
+
+  @doc group: "Producer API"
+  @callback produce(record, opts :: Keyword.t()) :: {:ok, record} | {:error, record}
+
+  @doc group: "Producer API"
+  @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
+
+  @doc group: "Producer API"
+  @callback produce_batch_txn(list_of_records, opts :: Keyword.t()) ::
+              {:ok, list_of_records} | {:error, list_of_records}
+
+  @doc group: "Producer API"
+  @callback transaction(fun :: function(), opts :: Keyword.t()) :: any()
 
   defmacro __using__(opts) do
     input_opts = @input_options
 
     quote bind_quoted: [opts: opts, input_opts: input_opts] do
+      @behaviour Klife.Cluster
+
       use Supervisor
       @otp_app opts[:otp_app]
       @input_opts input_opts
 
       # Startup API
+      @doc false
       def start_link(args) do
         Supervisor.start_link(__MODULE__, args, name: __MODULE__)
       end
 
+      @doc false
       @impl true
       def init(_args) do
         config = Application.get_env(@otp_app, __MODULE__)
 
-        default_producer = [name: :klife_default_producer]
-        default_txn_pool = [name: :klife_txn_pool]
+        default_producer = [name: Klife.Cluster.default_producer_name()]
+        default_txn_pool = [name: Klife.Cluster.default_txn_pool_name()]
 
         enriched_config =
           config
           |> Keyword.update(:producers, [], fn l -> [default_producer | l] end)
           |> Keyword.update(:txn_pools, [], fn l -> [default_txn_pool | l] end)
-          |> Keyword.update!(:topics, fn ts ->
-            Enum.map(ts, fn t -> Map.put_new(t, :producer, default_producer[:name]) end)
-          end)
 
-        validated_opts = NimbleOptions.validate!(enriched_config, @input_opts)
-        cluster_name_kw = [{:cluster_name, __MODULE__}]
+        validated_opts =
+          enriched_config
+          |> NimbleOptions.validate!(@input_opts)
+          |> Keyword.update!(:producers, fn l -> Enum.map(l, &Map.new/1) end)
+          |> Keyword.update!(:txn_pools, fn l -> Enum.map(l, &Map.new/1) end)
+          |> Keyword.update!(:topics, fn l -> Enum.map(l, &Map.new/1) end)
+
+        cluster_name_map = %{}
 
         conn_opts =
           validated_opts
           |> Keyword.fetch!(:connection)
-          |> Keyword.merge(cluster_name_kw)
+          |> Map.new()
+          |> Map.put(:cluster_name, __MODULE__)
 
         producer_opts =
           validated_opts
           |> Keyword.take([:producers, :txn_pools, :topics])
-          |> Keyword.merge(cluster_name_kw)
+          |> Keyword.merge(cluster_name: __MODULE__)
+          |> Map.new()
 
         children = [
           {Klife.Connection.Supervisor, conn_opts},
@@ -81,7 +226,6 @@ defmodule Klife.Cluster do
         Supervisor.init(children, strategy: :one_for_one)
       end
 
-      # Produce API
       def produce(%Record{} = rec, opts \\ []), do: Klife.produce(rec, __MODULE__, opts)
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)

@@ -1,4 +1,7 @@
 defmodule Klife.Test do
+  @moduledoc """
+  Testing function helpers
+  """
   import ExUnit.Assertions
 
   alias Klife.Record

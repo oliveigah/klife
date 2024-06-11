@@ -611,14 +611,16 @@ defmodule Klife.ProducerTest do
       partition: t2_data.partition_idx
     }
 
+    default_producer_name = Klife.Cluster.default_producer_name()
+
     [{batcher_pid, _}] =
       registry_lookup(
-        {Klife.Producer.Batcher, cluster_name, t1_data.leader_id, :klife_default_producer,
+        {Klife.Producer.Batcher, cluster_name, t1_data.leader_id, default_producer_name,
          t1_data.batcher_id}
       )
 
     [{producer_pid, _}] =
-      registry_lookup({Klife.Producer, cluster_name, :klife_default_producer})
+      registry_lookup({Klife.Producer, cluster_name, default_producer_name})
 
     assert [
              {:ok, %Record{}},

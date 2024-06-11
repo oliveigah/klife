@@ -72,7 +72,7 @@ defmodule Klife.Connection.Controller do
   end
 
   @impl true
-  def init(validated_opts) do
+  def init(args) do
     %{
       connect_opts: connect_defaults,
       socket_opts: socket_defaults
@@ -82,11 +82,11 @@ defmodule Klife.Connection.Controller do
       |> Enum.map(fn {k, opt} -> {k, opt[:default] || []} end)
       |> Map.new()
 
-    bootstrap_servers = Keyword.fetch!(validated_opts, :bootstrap_servers)
-    connect_opts = Keyword.merge(connect_defaults, Keyword.fetch!(validated_opts, :connect_opts))
-    socket_opts = Keyword.merge(socket_defaults, Keyword.fetch!(validated_opts, :socket_opts))
-    ssl = Keyword.get(validated_opts, :ssl, false)
-    cluster = Keyword.fetch!(validated_opts, :cluster_name)
+    bootstrap_servers = args.bootstrap_servers
+    connect_opts = Keyword.merge(connect_defaults, args.connect_opts)
+    socket_opts = Keyword.merge(socket_defaults, args.socket_opts)
+    ssl = args.ssl
+    cluster = args.cluster_name
 
     :ets.new(get_in_flight_messages_table_name(cluster), [
       :set,

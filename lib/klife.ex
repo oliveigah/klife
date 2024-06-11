@@ -1,4 +1,11 @@
 defmodule Klife do
+  @moduledoc """
+  Main functions to interact with clusters.
+
+  Usually you will not need to call any function here directly
+  but instead use them through a module that use `Klife.Cluster`.
+  """
+
   alias Klife.Record
   alias Klife.Producer
   alias Klife.TxnProducerPool
@@ -29,7 +36,7 @@ defmodule Klife do
 
   def produce_batch_txn([%Record{} | _] = records, cluster, opts \\ []) do
     transaction(
-      fn -> records |> produce_batch(cluster, opts) |> verify_batch() end,
+      fn -> records |> produce_batch(cluster, opts) |> Record.verify_batch() end,
       cluster,
       opts
     )
@@ -39,24 +46,7 @@ defmodule Klife do
     TxnProducerPool.run_txn(cluster, get_txn_pool(opts), fun)
   end
 
-  def verify_batch(produce_resps) do
-    case Enum.group_by(produce_resps, &elem(&1, 0), &elem(&1, 1)) do
-      %{error: error_list} ->
-        {:error, error_list}
-
-      %{ok: resp} ->
-        {:ok, resp}
-    end
-  end
-
-  def verify_batch!(produce_resps) do
-    case verify_batch(produce_resps) do
-      {:ok, resp} -> resp
-      {:error, errors} -> raise "Error on batch verification. #{inspect(errors)}"
-    end
-  end
-
-  defp get_txn_pool(opts), do: Keyword.get(opts, :txn_pool, :klife_txn_pool)
+  defp get_txn_pool(opts), do: Keyword.get(opts, :txn_pool, Klife.Cluster.default_txn_pool_name())
 
   defp maybe_add_partition(%Record{} = record, cluster, opts) do
     case record do

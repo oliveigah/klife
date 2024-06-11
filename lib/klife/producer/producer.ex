@@ -84,20 +84,13 @@ defmodule Klife.Producer do
       type_doc: "`:none`, `:gzip` or `:snappy`",
       doc:
         "The compression algorithm to be used for compressing messages before they are sent to the broker."
-    ],
-    txn_id: [type: :string, docs: "Unique identifier for transactional producers."],
-    txn_timeout_ms: [
-      type: :non_neg_integer,
-      default: :timer.seconds(90),
-      docs:
-        "The maximum amount of time, in milliseconds, that a transactional producer is allowed to remain open without either committing or aborting a transaction before it is considered expired"
     ]
   ]
 
   @moduledoc """
-  Pool of transactional producers.
+  Defines a producer.
 
-  # Configurations
+  ## Configurations
 
   #{NimbleOptions.docs(@producer_options)}
   """
@@ -108,7 +101,9 @@ defmodule Klife.Producer do
                 :producer_epoch,
                 :epochs,
                 :coordinator_id,
-                :cluster_name
+                :cluster_name,
+                :txn_id,
+                :txn_timeout_ms
               ]
 
   @doc false
@@ -116,8 +111,8 @@ defmodule Klife.Producer do
 
   @doc false
   def start_link(args) do
-    producer_name = Keyword.fetch!(args, :name)
-    cluster_name = Keyword.fetch!(args, :cluster_name)
+    producer_name = args.name
+    cluster_name = args.cluster_name
 
     GenServer.start_link(__MODULE__, args,
       name: via_tuple(get_process_name(cluster_name, producer_name))
@@ -128,14 +123,15 @@ defmodule Klife.Producer do
 
   @doc false
   def init(validated_args) do
-    args_map =
-      validated_args
-      |> Keyword.take(Map.keys(%__MODULE__{}))
-      |> Map.new()
+    args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
 
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.cluster_name}.#{args_map.name}",
-      epochs: %{}
+      epochs: %{},
+      # This is the ony args that may not exist because
+      # it is filtered out on non txn producers
+      # in order to prevent confusion on the configuration
+      txn_timeout_ms: Map.get(args_map, :txn_timeout_ms, 0)
     }
 
     state =

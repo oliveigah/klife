@@ -301,7 +301,9 @@ defmodule Klife.TestUtils do
 
   defp do_wait_producer(deadline, cluster_name) do
     if System.monotonic_time(:millisecond) < deadline do
-      case registry_lookup({Klife.TxnProducerPool, cluster_name, :klife_txn_pool}) do
+      case registry_lookup(
+             {Klife.TxnProducerPool, cluster_name, Klife.Cluster.default_txn_pool_name()}
+           ) do
         [] ->
           Process.sleep(5)
           do_wait_producer(deadline, cluster_name)

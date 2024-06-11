@@ -21,13 +21,20 @@ defmodule Klife.TxnProducerPool do
     base_txn_id: [
       type: :string,
       required: false,
+      default: "",
       doc:
-        "Prefix used to define the `transactional_id` for the producers. If not provided, a random string will be used."
+        "Prefix used to define the `transactional_id` for the transactional producers. If not provided, a random string will be used."
     ],
     pool_size: [
       type: :non_neg_integer,
       default: 20,
       doc: "Number of transactional producers in the pool"
+    ],
+    txn_timeout_ms: [
+      type: :non_neg_integer,
+      default: :timer.seconds(90),
+      docs:
+        "The maximum amount of time, in milliseconds, that a transactional producer is allowed to remain open without either committing or aborting a transaction before it is considered expired"
     ]
   ]
 
@@ -36,8 +43,7 @@ defmodule Klife.TxnProducerPool do
                           :delivery_timeout_ms,
                           :request_timeout_ms,
                           :retry_backoff_ms,
-                          :compression_type,
-                          :txn_timeout_ms
+                          :compression_type
                         ])
                         |> Keyword.merge(@txn_producer_specific_opts)
 
@@ -46,13 +52,14 @@ defmodule Klife.TxnProducerPool do
   @moduledoc """
   Pool of transactional producers.
 
-  # Configurations
+  ## Configurations
 
   #{NimbleOptions.docs(@txn_producer_options)}
   """
   def get_opts, do: @txn_producer_options
 
   defmodule WorkerState do
+    @moduledoc false
     defstruct [
       :worker_id,
       :producer_name,
@@ -67,7 +74,7 @@ defmodule Klife.TxnProducerPool do
 
   @impl NimblePool
   def init_pool(init_arg) do
-    args = init_arg |> Keyword.take(Map.keys(%__MODULE__{})) |> Map.new()
+    args = Map.take(init_arg, Map.keys(%__MODULE__{}))
     base_map = %__MODULE__{worker_counter: 0}
     {:ok, Map.merge(base_map, args)}
   end
@@ -348,21 +355,19 @@ defmodule Klife.TxnProducerPool do
     new_state
   end
 
-  def start_link(opts) do
+  def start_link(args) do
     NimblePool.start_link(
-      worker: {__MODULE__, opts},
-      pool_size: opts[:pool_size],
-      name: pool_name(opts[:cluster_name], opts[:name]),
+      worker: {__MODULE__, args},
+      pool_size: args.pool_size,
+      name: pool_name(args.cluster_name, args.name),
       lazy: false
     )
   end
 
-  def child_spec(opts) do
-    cluster_name = Keyword.fetch!(opts, :cluster_name)
-
+  def child_spec(args) do
     %{
-      id: pool_name(cluster_name, opts[:name]),
-      start: {__MODULE__, :start_link, [opts]},
+      id: pool_name(args.cluster_name, args.name),
+      start: {__MODULE__, :start_link, [args]},
       type: :worker,
       restart: :permanent
     }
