@@ -12,6 +12,18 @@ jobs:
   tests:
     name: test
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: 1.17.0
+            otp: 27.0
+          - elixir: 1.16.3
+            otp: 26.1.2
+          - elixir: 1.15.6
+            otp: 24.3.4.13
+          - elixir: 1.11.4
+            otp: 21.3.8.24
     steps:
       - uses: actions/checkout@v3
       - uses: erlef/setup-beam@v1
