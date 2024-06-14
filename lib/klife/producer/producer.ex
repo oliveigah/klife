@@ -1,4 +1,5 @@
 defmodule Klife.Producer do
+  @doc false
   use GenServer
 
   import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]

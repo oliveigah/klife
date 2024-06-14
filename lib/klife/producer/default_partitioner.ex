@@ -4,7 +4,7 @@ defmodule Klife.Producer.DefaultPartitioner do
 
   @impl Klife.Behaviours.Partitioner
   def get_partition(%Record{key: nil}, max_partition),
-    do: Enum.random(0..max_partition)
+    do: :rand.uniform(max_partition + 1) - 1
 
   def get_partition(%Record{key: key}, max_partition),
     do: :erlang.phash2(key, max_partition + 1)

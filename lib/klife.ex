@@ -43,10 +43,17 @@ defmodule Klife do
   end
 
   def transaction(fun, cluster, opts \\ []) do
-    TxnProducerPool.run_txn(cluster, get_txn_pool(opts), fun)
+    TxnProducerPool.run_txn(cluster, get_txn_pool(cluster, opts), fun)
   end
 
-  defp get_txn_pool(opts), do: Keyword.get(opts, :txn_pool, Klife.Cluster.default_txn_pool_name())
+  def in_txn?(cluster), do: TxnProducerPool.in_txn?(cluster)
+
+  defp get_txn_pool(cluster, opts) do
+    case Keyword.get(opts, :pool_name) do
+      nil -> apply(cluster, :get_default_txn_pool, [])
+      val -> val
+    end
+  end
 
   defp maybe_add_partition(%Record{} = record, cluster, opts) do
     case record do

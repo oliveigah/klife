@@ -355,6 +355,7 @@ defmodule Klife.TxnProducerPool do
     new_state
   end
 
+  @doc false
   def start_link(args) do
     NimblePool.start_link(
       worker: {__MODULE__, args},
@@ -364,6 +365,7 @@ defmodule Klife.TxnProducerPool do
     )
   end
 
+  @doc false
   def child_spec(args) do
     %{
       id: pool_name(args.cluster_name, args.name),

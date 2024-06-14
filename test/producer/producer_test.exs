@@ -963,7 +963,7 @@ defmodule Klife.ProducerTest do
 
                  {:ok, resp}
                end,
-               txn_pool: :my_test_pool_1
+               pool_name: :my_test_pool_1
              )
 
     assert_offset(MyCluster, rec1, offset1, txn_status: :committed)
@@ -998,7 +998,7 @@ defmodule Klife.ProducerTest do
                  Process.put(:raised_offsets, {offset3, offset4, offset5})
                  raise "crazy error"
                end,
-               txn_pool: :my_test_pool_1
+               pool_name: :my_test_pool_1
              )
 
     {offset3, offset4, offset5} = Process.get(:raised_offsets)
@@ -1020,7 +1020,7 @@ defmodule Klife.ProducerTest do
 
                  {:ok, resp}
                end,
-               txn_pool: :my_test_pool_1
+               pool_name: :my_test_pool_1
              )
 
     assert_offset(MyCluster, rec6, offset6, txn_status: :committed)

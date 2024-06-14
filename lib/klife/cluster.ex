@@ -1,21 +1,32 @@
 defmodule Klife.Cluster do
+  # TODO: Rethink cluster name. Maybe client?
   alias Klife
   alias Klife.Record
 
   @type record :: Klife.Record.t()
   @type list_of_records :: list(record)
 
-  @doc false
-  def default_producer_name(), do: :klife_default_producer
+  @default_producer_name :klife_default_producer
+  @default_txn_pool :klife_default_txn_pool
 
   @doc false
-  def default_txn_pool_name(), do: :klife_default_txn_pool
+  def default_producer_name(), do: @default_producer_name
+
+  @doc false
+  def default_txn_pool_name(), do: @default_txn_pool
 
   @input_options [
     connection: [
       type: :non_empty_keyword_list,
       required: true,
       keys: Klife.Connection.Controller.get_opts()
+    ],
+    default_txn_pool: [
+      type: :atom,
+      required: false,
+      default: @default_txn_pool,
+      doc:
+        "Name of the txn pool to be used on transactions when a `:pool_name` is not provided as an option."
     ],
     txn_pools: [
       type: {:list, {:keyword_list, Klife.TxnProducerPool.get_opts()}},
@@ -161,12 +172,15 @@ defmodule Klife.Cluster do
   @doc group: "Producer API"
   @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
 
-  @doc group: "Producer API"
+  @doc group: "Transaction API"
   @callback produce_batch_txn(list_of_records, opts :: Keyword.t()) ::
               {:ok, list_of_records} | {:error, list_of_records}
 
-  @doc group: "Producer API"
+  @doc group: "Transaction API"
   @callback transaction(fun :: function(), opts :: Keyword.t()) :: any()
+
+  @doc group: "Transaction API"
+  @callback in_txn?() :: true | false
 
   defmacro __using__(opts) do
     input_opts = @input_options
@@ -184,8 +198,11 @@ defmodule Klife.Cluster do
         Supervisor.start_link(__MODULE__, args, name: __MODULE__)
       end
 
+      defp default_txn_pool_key(), do: {__MODULE__, :default_txn_pool}
+      def get_default_txn_pool(), do: :persistent_term.get(default_txn_pool_key())
+
       @doc false
-      @impl true
+      @impl Supervisor
       def init(_args) do
         config = Application.get_env(@otp_app, __MODULE__)
 
@@ -223,6 +240,8 @@ defmodule Klife.Cluster do
           {Klife.Producer.Supervisor, producer_opts}
         ]
 
+        :persistent_term.put(default_txn_pool_key(), validated_opts[:default_txn_pool])
+
         Supervisor.init(children, strategy: :one_for_one)
       end
 
@@ -230,6 +249,7 @@ defmodule Klife.Cluster do
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
+      def in_txn?(), do: Klife.in_txn?(__MODULE__)
     end
   end
 end
