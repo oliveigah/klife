@@ -6,7 +6,7 @@ defmodule Klife.Producer.Supervisor do
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   def start_link(args) do
-    Supervisor.start_link(__MODULE__, args, name: via_tuple({__MODULE__, args.cluster_name}))
+    Supervisor.start_link(__MODULE__, args, name: via_tuple({__MODULE__, args.client_name}))
   end
 
   @impl true

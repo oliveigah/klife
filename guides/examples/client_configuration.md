@@ -1,11 +1,11 @@
-# Cluster configuration
+# Client configuration
 
-Here are some cluster configuration examples.
+Here are some client configuration examples.
 
 ## Simplest configuration
 
 ```elixir
-  config :my_app, MyApp.Cluster,
+  config :my_app, MyApp.Client,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
@@ -13,12 +13,12 @@ Here are some cluster configuration examples.
     topics: [[name: "my_topic_0"]]
 ```
 
-This cluster will connect to brokers using non ssl connection and produce messages only to topic `my_topic` using the default producer and default partitioner.
+This client will connect to brokers using non ssl connection and produce messages only to topic `my_topic` using the default producer and default partitioner.
 
 ## SSL and custom socket opts
 
 ```elixir
-  config :my_app, MyApp.Cluster,
+  config :my_app, MyApp.Client,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: true,
@@ -31,12 +31,12 @@ This cluster will connect to brokers using non ssl connection and produce messag
     topics: [[name: "my_topic_0"]]
 ```
 
-This cluster will connect to brokers using ssl connection, `connect_opts` and `socket_opts` are forwarded to erlang module `:ssl` in order to proper configure the socket. See the documentation for more details.
+This client will connect to brokers using ssl connection, `connect_opts` and `socket_opts` are forwarded to erlang module `:ssl` in order to proper configure the socket. See the documentation for more details.
 
 ## Defining multiple producers
 
 ```elixir
-  config :my_app, MyApp.Cluster,
+  config :my_app, MyApp.Client,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
@@ -63,7 +63,7 @@ This cluster will connect to brokers using ssl connection, `connect_opts` and `s
     ]
 ```
 
-This cluster will have a total of 3 producers, the default one plus the other 2 defined in the configuration. You can see all the configuration options for the producers in `Klife.Producer`.
+This client will have a total of 3 producers, the default one plus the other 2 defined in the configuration. You can see all the configuration options for the producers in `Klife.Producer`.
 
 
 ## Defining custom partitioner
@@ -87,7 +87,7 @@ end
 Then, you need to use it on your configuration.
 
 ```elixir
-  config :my_app, MyApp.Cluster,
+  config :my_app, MyApp.Client,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
@@ -100,12 +100,12 @@ Then, you need to use it on your configuration.
     ]
 ```
 
-On this cluster, the records produced without a specific partition will have a partition assigned using the `MyApp.MyCustomPartitioner` module.
+On this client, the records produced without a specific partition will have a partition assigned using the `MyApp.MyCustomPartitioner` module.
 
 ## Defining multiple txn pools
 
 ```elixir
-  config :my_app, MyApp.Cluster,
+  config :my_app, MyApp.Client,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
@@ -118,4 +118,4 @@ On this cluster, the records produced without a specific partition will have a p
     topics: [[name: "my_topic_0"]]
 ```
 
-This cluster will have a total of 3 txn pools, the default one plus the other two defined in the configuration. You can see all the configuration options for the producers in `Klife.TxnProducerPool`.
+This client will have a total of 3 txn pools, the default one plus the other two defined in the configuration. You can see all the configuration options for the producers in `Klife.TxnProducerPool`.

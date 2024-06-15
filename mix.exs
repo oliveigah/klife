@@ -17,13 +17,14 @@ defmodule Klife.MixProject do
         main: "readme",
         extras: [
           "README.md",
-          "guides/examples/cluster_configuration.md"
+          "guides/examples/client_configuration.md"
         ],
         groups_for_extras: [
           Examples: Path.wildcard("guides/examples/*.md")
         ],
         groups_for_docs: [
-          groups_for_docs("Producer API")
+          groups_for_docs("Producer API"),
+          groups_for_docs("Transaction API")
         ]
       ]
     ]

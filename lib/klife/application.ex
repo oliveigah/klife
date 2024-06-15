@@ -13,7 +13,7 @@ defmodule Klife.Application do
     children = [
       Klife.ProcessRegistry,
       Klife.PubSub,
-      handle_clusters()
+      handle_clients()
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -22,9 +22,9 @@ defmodule Klife.Application do
     Supervisor.start_link(List.flatten(children), opts)
   end
 
-  defp handle_clusters() do
+  defp handle_clients() do
     [
-      Klife.MyCluster
+      Klife.MyClient
     ]
   end
 

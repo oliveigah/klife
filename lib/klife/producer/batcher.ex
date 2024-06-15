@@ -30,14 +30,14 @@ defmodule Klife.Producer.Batcher do
 
   def start_link(args) do
     pconfig = Keyword.fetch!(args, :producer_config)
-    cluster_name = pconfig.cluster_name
+    client_name = pconfig.client_name
     broker_id = Keyword.fetch!(args, :broker_id)
     batcher_id = Keyword.fetch!(args, :id)
 
     GenServer.start_link(__MODULE__, args,
       name:
         get_process_name(
-          cluster_name,
+          client_name,
           broker_id,
           pconfig.name,
           batcher_id
@@ -95,13 +95,13 @@ defmodule Klife.Producer.Batcher do
 
   def produce(
         [%Record{} | _] = records,
-        cluster_name,
+        client_name,
         broker_id,
         producer_name,
         batcher_id,
         callback_pid
       ) do
-    cluster_name
+    client_name
     |> get_process_name(broker_id, producer_name, batcher_id)
     |> GenServer.call({:produce, records, callback_pid})
   end
@@ -184,7 +184,7 @@ defmodule Klife.Producer.Batcher do
       producer_epochs: pe,
       base_sequences: bs,
       producer_config: %Producer{
-        cluster_name: cluster_name,
+        client_name: client_name,
         name: producer_name
       }
     } = state
@@ -192,7 +192,7 @@ defmodule Klife.Producer.Batcher do
     {new_pe, new_bs} =
       Enum.reduce(topics_partitions_list, {pe, bs}, fn {topic, partition}, {acc_pe, acc_bs} ->
         key = {topic, partition}
-        new_pe_val = Producer.new_epoch(cluster_name, producer_name, topic, partition)
+        new_pe_val = Producer.new_epoch(client_name, producer_name, topic, partition)
         new_pe = Map.put(acc_pe, key, new_pe_val)
         new_bs = Map.replace!(acc_bs, key, 0)
         {new_pe, new_bs}
@@ -386,7 +386,7 @@ defmodule Klife.Producer.Batcher do
          %__MODULE__{
            base_sequences: bs,
            producer_config:
-             %{cluster_name: cluster_name, name: producer_name, producer_id: p_id} =
+             %{client_name: client_name, name: producer_name, producer_id: p_id} =
                pconfig,
            producer_epochs: p_epochs
          } = _state,
@@ -400,7 +400,7 @@ defmodule Klife.Producer.Batcher do
         epoch =
           case Map.get(p_epochs, key) do
             nil ->
-              Producer.new_epoch(cluster_name, producer_name, topic, partition)
+              Producer.new_epoch(client_name, producer_name, topic, partition)
 
             val ->
               val
@@ -520,11 +520,11 @@ defmodule Klife.Producer.Batcher do
   end
 
   defp get_process_name(
-         cluster_name,
+         client_name,
          broker_id,
          producer_name,
          batcher_id
        ) do
-    via_tuple({__MODULE__, cluster_name, broker_id, producer_name, batcher_id})
+    via_tuple({__MODULE__, client_name, broker_id, producer_name, batcher_id})
   end
 end

@@ -1,5 +1,5 @@
-defmodule Klife.MyCluster do
+defmodule Klife.MyClient do
   @moduledoc false
 
-  use Klife.Cluster, otp_app: :klife
+  use Klife.Client, otp_app: :klife
 end

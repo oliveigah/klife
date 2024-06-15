@@ -7,7 +7,7 @@ defmodule Klife.Connection.BrokerSupervisor do
 
   def start_link(opts) do
     DynamicSupervisor.start_link(__MODULE__, opts,
-      name: via_tuple({__MODULE__, opts[:cluster_name]})
+      name: via_tuple({__MODULE__, opts[:client_name]})
     )
   end
 

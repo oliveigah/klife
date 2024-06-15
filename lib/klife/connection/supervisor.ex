@@ -6,8 +6,8 @@ defmodule Klife.Connection.Supervisor do
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   def start_link(args) do
-    cluster_name = args.cluster_name
-    Supervisor.start_link(__MODULE__, args, name: via_tuple({__MODULE__, cluster_name}))
+    client_name = args.client_name
+    Supervisor.start_link(__MODULE__, args, name: via_tuple({__MODULE__, client_name}))
   end
 
   @impl true
@@ -22,7 +22,7 @@ defmodule Klife.Connection.Supervisor do
 
   def child_spec(init_arg) do
     %{
-      id: {__MODULE__, init_arg.cluster_name},
+      id: {__MODULE__, init_arg.client_name},
       start: {__MODULE__, :start_link, [init_arg]},
       type: :supervisor
     }

@@ -7,25 +7,25 @@ defmodule Klife.Connection.SystemTest do
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages.ApiVersions
 
-  defp check_broker_connection(cluster_name, broker_id) do
+  defp check_broker_connection(client_name, broker_id) do
     parent = self()
     ref = make_ref()
 
     assert {:ok, %{content: resp_content}} =
-             Broker.send_message(ApiVersions, cluster_name, broker_id)
+             Broker.send_message(ApiVersions, client_name, broker_id)
 
     assert is_list(resp_content.api_keys)
 
-    assert :ok = Broker.send_message(ApiVersions, cluster_name, broker_id, %{}, %{}, async: true)
+    assert :ok = Broker.send_message(ApiVersions, client_name, broker_id, %{}, %{}, async: true)
 
     assert :ok =
-             Broker.send_message(ApiVersions, cluster_name, broker_id, %{}, %{},
+             Broker.send_message(ApiVersions, client_name, broker_id, %{}, %{},
                async: true,
                callback_pid: parent,
                callback_ref: ref
              )
 
-    mv = MV.get(cluster_name, ApiVersions)
+    mv = MV.get(client_name, ApiVersions)
 
     assert_receive {:async_broker_response, ^ref, binary_resp, ApiVersions, ^mv}
 
@@ -33,11 +33,11 @@ defmodule Klife.Connection.SystemTest do
   end
 
   test "setup non ssl", %{test: test_name} do
-    cluster_name = :"#{__MODULE__}.#{test_name}"
+    client_name = :"#{__MODULE__}.#{test_name}"
 
     input =
       [
-        cluster_name: cluster_name,
+        client_name: client_name,
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         ssl: false,
         connect_opts: [],
@@ -47,18 +47,18 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
 
-    brokers_list = Utils.wait_connection!(cluster_name)
+    brokers_list = Utils.wait_connection!(client_name)
     assert length(brokers_list) == 3
 
-    Enum.each(brokers_list, &check_broker_connection(cluster_name, &1))
+    Enum.each(brokers_list, &check_broker_connection(client_name, &1))
   end
 
   test "setup ssl", %{test: test_name} do
-    cluster_name = :"#{__MODULE__}.#{test_name}"
+    client_name = :"#{__MODULE__}.#{test_name}"
 
     input =
       [
-        cluster_name: cluster_name,
+        client_name: client_name,
         bootstrap_servers: ["localhost:19093", "localhost:29093"],
         ssl: true,
         connect_opts: [
@@ -73,18 +73,18 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
 
-    brokers_list = Utils.wait_connection!(cluster_name)
+    brokers_list = Utils.wait_connection!(client_name)
     assert length(brokers_list) == 3
 
-    Enum.each(brokers_list, &check_broker_connection(cluster_name, &1))
+    Enum.each(brokers_list, &check_broker_connection(client_name, &1))
   end
 
-  test "multiple clusters", %{test: test_name} do
-    cluster_name_1 = :"#{__MODULE__}.#{test_name}_1"
+  test "multiple clients", %{test: test_name} do
+    client_name_1 = :"#{__MODULE__}.#{test_name}_1"
 
     input_1 =
       [
-        cluster_name: cluster_name_1,
+        client_name: client_name_1,
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         ssl: false,
         connect_opts: [],
@@ -92,11 +92,11 @@ defmodule Klife.Connection.SystemTest do
       ]
       |> Map.new()
 
-    cluster_name_2 = :"#{__MODULE__}.#{test_name}_2"
+    client_name_2 = :"#{__MODULE__}.#{test_name}_2"
 
     input_2 =
       [
-        cluster_name: cluster_name_2,
+        client_name: client_name_2,
         bootstrap_servers: ["localhost:19093", "localhost:29093"],
         ssl: true,
         connect_opts: [
@@ -109,11 +109,11 @@ defmodule Klife.Connection.SystemTest do
       ]
       |> Map.new()
 
-    cluster_name_3 = :"#{__MODULE__}.#{test_name}_3"
+    client_name_3 = :"#{__MODULE__}.#{test_name}_3"
 
     input_3 =
       [
-        cluster_name: cluster_name_3,
+        client_name: client_name_3,
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         ssl: false,
         connect_opts: [],
@@ -125,21 +125,21 @@ defmodule Klife.Connection.SystemTest do
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_2})
     assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_3})
 
-    brokers_list_1 = Utils.wait_connection!(cluster_name_1)
-    brokers_list_2 = Utils.wait_connection!(cluster_name_2)
-    brokers_list_3 = Utils.wait_connection!(cluster_name_3)
+    brokers_list_1 = Utils.wait_connection!(client_name_1)
+    brokers_list_2 = Utils.wait_connection!(client_name_2)
+    brokers_list_3 = Utils.wait_connection!(client_name_3)
 
     assert length(brokers_list_1) == 3
     assert length(brokers_list_2) == 3
     assert length(brokers_list_3) == 3
 
-    Enum.each(brokers_list_1, &check_broker_connection(cluster_name_1, &1))
-    Enum.each(brokers_list_2, &check_broker_connection(cluster_name_2, &1))
-    Enum.each(brokers_list_3, &check_broker_connection(cluster_name_3, &1))
+    Enum.each(brokers_list_1, &check_broker_connection(client_name_1, &1))
+    Enum.each(brokers_list_2, &check_broker_connection(client_name_2, &1))
+    Enum.each(brokers_list_3, &check_broker_connection(client_name_3, &1))
   end
 
-  @tag cluster_change: true, capture_log: true
-  test "cluster changes events" do
+  @tag client_change: true, capture_log: true
+  test "client changes events" do
     config = [
       connection: [
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
@@ -152,36 +152,36 @@ defmodule Klife.Connection.SystemTest do
       ]
     ]
 
-    Application.put_env(:klife, __MODULE__.MyClusterTest, config)
+    Application.put_env(:klife, __MODULE__.MyClientTest, config)
 
-    defmodule MyClusterTest do
-      use Klife.Cluster, otp_app: :klife
+    defmodule MyClientTest do
+      use Klife.Client, otp_app: :klife
     end
 
-    cluster_name = __MODULE__.MyClusterTest
+    client_name = __MODULE__.MyClientTest
 
-    assert {:ok, _pid} = start_supervised(cluster_name)
+    assert {:ok, _pid} = start_supervised(client_name)
 
-    :ok = TestUtils.wait_cluster(cluster_name, 3)
+    :ok = TestUtils.wait_client(client_name, 3)
 
-    brokers = :persistent_term.get({:known_brokers_ids, cluster_name})
+    brokers = :persistent_term.get({:known_brokers_ids, client_name})
     broker_id_to_remove = List.first(brokers)
     cb_ref = make_ref()
 
-    :ok = PubSub.subscribe({:cluster_change, cluster_name}, %{some_data: cb_ref})
+    :ok = PubSub.subscribe({:client_change, client_name}, %{some_data: cb_ref})
 
-    {:ok, service_name} = TestUtils.stop_broker(cluster_name, broker_id_to_remove)
+    {:ok, service_name} = TestUtils.stop_broker(client_name, broker_id_to_remove)
 
-    assert_received({{:cluster_change, ^cluster_name}, event_data, %{some_data: ^cb_ref}})
+    assert_received({{:client_change, ^client_name}, event_data, %{some_data: ^cb_ref}})
     assert broker_id_to_remove in Enum.map(event_data.removed_brokers, fn {b, _h} -> b end)
-    assert broker_id_to_remove not in :persistent_term.get({:known_brokers_ids, cluster_name})
+    assert broker_id_to_remove not in :persistent_term.get({:known_brokers_ids, client_name})
 
-    {:ok, broker_id} = TestUtils.start_broker(service_name, cluster_name)
+    {:ok, broker_id} = TestUtils.start_broker(service_name, client_name)
 
-    assert_received({{:cluster_change, ^cluster_name}, event_data, %{some_data: ^cb_ref}})
+    assert_received({{:client_change, ^client_name}, event_data, %{some_data: ^cb_ref}})
     assert broker_id in Enum.map(event_data.added_brokers, fn {b, _h} -> b end)
-    assert broker_id in :persistent_term.get({:known_brokers_ids, cluster_name})
+    assert broker_id in :persistent_term.get({:known_brokers_ids, client_name})
 
-    :ok = PubSub.unsubscribe({:cluster_change, cluster_name})
+    :ok = PubSub.unsubscribe({:client_change, client_name})
   end
 end

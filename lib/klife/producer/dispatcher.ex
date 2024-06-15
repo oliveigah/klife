@@ -32,14 +32,14 @@ defmodule Klife.Producer.Dispatcher do
   def start_link(args) do
     %{
       name: p_name,
-      cluster_name: cluster_name
+      client_name: client_name
     } = Keyword.fetch!(args, :producer_config)
 
     broker_id = Keyword.fetch!(args, :broker_id)
     batcher_id = Keyword.fetch!(args, :batcher_id)
 
     GenServer.start_link(__MODULE__, args,
-      name: via_tuple({__MODULE__, cluster_name, broker_id, p_name, batcher_id})
+      name: via_tuple({__MODULE__, client_name, broker_id, p_name, batcher_id})
     )
   end
 
@@ -159,7 +159,7 @@ defmodule Klife.Producer.Dispatcher do
         pool_idx: pool_idx,
         request_ref: ^req_ref,
         batch_to_send: batch_to_send,
-        producer_config: %{name: producer_name, cluster_name: cluster_name} = p_config
+        producer_config: %{name: producer_name, client_name: client_name} = p_config
       } = Map.fetch!(requests, req_ref)
 
     {:ok, resp} = apply(msg_mod, :deserialize_response, [binary_resp, msg_version])
@@ -195,7 +195,7 @@ defmodule Klife.Producer.Dispatcher do
             partition: #{partition}
             error_code: #{error_code}
 
-            cluster: #{cluster_name}
+            client: #{client_name}
             broker_id: #{broker_id}
             producer_name: #{producer_name}
             """)
@@ -210,7 +210,7 @@ defmodule Klife.Producer.Dispatcher do
             partition: #{partition}
             error_code: #{error_code}
 
-            cluster: #{cluster_name}
+            client: #{client_name}
             broker_id: #{broker_id}
             producer_name: #{producer_name}
             """)
@@ -256,7 +256,7 @@ defmodule Klife.Producer.Dispatcher do
       producer_config: %Producer{
         request_timeout_ms: req_timeout,
         delivery_timeout_ms: delivery_timeout,
-        cluster_name: cluster_name,
+        client_name: client_name,
         client_id: client_id,
         acks: acks,
         txn_id: txn_id
@@ -279,7 +279,7 @@ defmodule Klife.Producer.Dispatcher do
     before_deadline? = now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
 
     with {:before_deadline?, true} <- {:before_deadline?, before_deadline?},
-         :ok <- send_to_broker_async(cluster_name, state.broker_id, content, headers, req_ref) do
+         :ok <- send_to_broker_async(client_name, state.broker_id, content, headers, req_ref) do
       timeout_ref = make_ref()
       Process.send_after(self(), {:check_timeout, req_ref, timeout_ref}, req_timeout)
       {:ok, timeout_ref}
@@ -292,14 +292,14 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  defp send_to_broker_async(cluster_name, broker_id, content, headers, req_ref) do
+  defp send_to_broker_async(client_name, broker_id, content, headers, req_ref) do
     opts = [
       async: true,
       callback_pid: self(),
       callback_ref: req_ref
     ]
 
-    Broker.send_message(M.Produce, cluster_name, broker_id, content, headers, opts)
+    Broker.send_message(M.Produce, client_name, broker_id, content, headers, opts)
   end
 
   defp parse_batch_before_send(batch_to_send) do

@@ -1,5 +1,4 @@
-defmodule Klife.Cluster do
-  # TODO: Rethink cluster name. Maybe client?
+defmodule Klife.Client do
   alias Klife
   alias Klife.Record
 
@@ -46,12 +45,12 @@ defmodule Klife.Cluster do
       type: {:list, {:non_empty_keyword_list, Klife.Topic.get_opts()}},
       type_doc: "List of `Klife.Topic` configurations",
       required: true,
-      doc: "List of topics that will be managed by the cluster"
+      doc: "List of topics that will be managed by the client"
     ]
   ]
 
   @moduledoc """
-  Defines a kafka cluster.
+  Defines a kafka client.
 
   To use it you must do 3 steps:
   - Use it in a module
@@ -60,22 +59,22 @@ defmodule Klife.Cluster do
 
   ## Using it in a module
 
-  When used it expects an `:otp_app` option that is the OTP application that has the cluster configuration.
+  When used it expects an `:otp_app` option that is the OTP application that has the client configuration.
 
   ```elixir
-  defmodule MyApp.MyCluster do
-    use Klife.Cluster, otp_app: :my_app
+  defmodule MyApp.MyClient do
+    use Klife.Client, otp_app: :my_app
   end
   ```
 
-  > #### `use Klife.Cluster` {: .info}
+  > #### `use Klife.Client` {: .info}
   >
-  > When you `use Klife.Cluster`, it will extend your module in two ways:
+  > When you `use Klife.Client`, it will extend your module in two ways:
   >
   > - Define it as a proxy to a subset of the functions on `Klife` module,
-  > using it's module's name as the `cluster_name` parameter.
-  > One example of this is the `MyCluster.produce/2` that forwards
-  > both arguments to `Klife.produce/3` and inject `MyCluster` as the
+  > using it's module's name as the `client_name` parameter.
+  > One example of this is the `MyClient.produce/2` that forwards
+  > both arguments to `Klife.produce/3` and inject `MyClient` as the
   > second argument.
   >
   > - Define it as a supervisor by calling `use Supervisor` and implementing
@@ -85,11 +84,11 @@ defmodule Klife.Cluster do
 
   ## Configuration
 
-  The cluster has a bunch of configuration options, you can read more below.
+  The client has a bunch of configuration options, you can read more below.
   But it will look somehting like this:
 
   ```elixir
-  config :my_app, MyApp.Cluster,
+  config :my_app, MyApp.Client,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
@@ -108,7 +107,7 @@ defmodule Klife.Cluster do
 
   ```
 
-  You can see more configuration examples on the ["Cluster configuration examples"](guides/examples/cluster_configuration.md) section.
+  You can see more configuration examples on the ["Client configuration examples"](guides/examples/client_configuration.md) section.
 
   Configuration options:
 
@@ -124,7 +123,7 @@ defmodule Klife.Cluster do
     def start(_type, _args) do
       children = [
         # some other modules...,
-        MyApp.MyCluster
+        MyApp.MyClient
       ]
 
       opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -161,7 +160,7 @@ defmodule Klife.Cluster do
 
   ```elixir
   rec = %Klife.Record{value: "some_val", topic: "my_topic"}
-  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyCluster.produce(rec)
+  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyClient.produce(rec)
   ```
 
   """
@@ -186,7 +185,7 @@ defmodule Klife.Cluster do
     input_opts = @input_options
 
     quote bind_quoted: [opts: opts, input_opts: input_opts] do
-      @behaviour Klife.Cluster
+      @behaviour Klife.Client
 
       use Supervisor
       @otp_app opts[:otp_app]
@@ -206,8 +205,8 @@ defmodule Klife.Cluster do
       def init(_args) do
         config = Application.get_env(@otp_app, __MODULE__)
 
-        default_producer = [name: Klife.Cluster.default_producer_name()]
-        default_txn_pool = [name: Klife.Cluster.default_txn_pool_name()]
+        default_producer = [name: Klife.Client.default_producer_name()]
+        default_txn_pool = [name: Klife.Client.default_txn_pool_name()]
 
         enriched_config =
           config
@@ -221,18 +220,18 @@ defmodule Klife.Cluster do
           |> Keyword.update!(:txn_pools, fn l -> Enum.map(l, &Map.new/1) end)
           |> Keyword.update!(:topics, fn l -> Enum.map(l, &Map.new/1) end)
 
-        cluster_name_map = %{}
+        client_name_map = %{}
 
         conn_opts =
           validated_opts
           |> Keyword.fetch!(:connection)
           |> Map.new()
-          |> Map.put(:cluster_name, __MODULE__)
+          |> Map.put(:client_name, __MODULE__)
 
         producer_opts =
           validated_opts
           |> Keyword.take([:producers, :txn_pools, :topics])
-          |> Keyword.merge(cluster_name: __MODULE__)
+          |> Keyword.merge(client_name: __MODULE__)
           |> Map.new()
 
         children = [

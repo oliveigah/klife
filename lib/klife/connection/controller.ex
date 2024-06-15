@@ -19,7 +19,7 @@ defmodule Klife.Connection.Controller do
   # in order to avoid reaching this limit.
   @max_correlation_counter 200_000_000
   @check_correlation_counter_delay :timer.seconds(300)
-  @check_cluster_delay :timer.seconds(10)
+  @check_client_delay :timer.seconds(10)
 
   @connection_opts [
     bootstrap_servers: [
@@ -55,12 +55,12 @@ defmodule Klife.Connection.Controller do
 
   defstruct [
     :bootstrap_servers,
-    :cluster_name,
+    :client_name,
     :known_brokers,
     :connect_opts,
     :bootstrap_conn,
-    :check_cluster_timer_ref,
-    :check_cluster_waiting_pids,
+    :check_client_timer_ref,
+    :check_client_waiting_pids,
     :ssl,
     :socket_opts
   ]
@@ -68,7 +68,7 @@ defmodule Klife.Connection.Controller do
   def get_opts(), do: @connection_opts
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: via_tuple({__MODULE__, opts[:cluster_name]}))
+    GenServer.start_link(__MODULE__, opts, name: via_tuple({__MODULE__, opts[:client_name]}))
   end
 
   @impl true
@@ -86,26 +86,26 @@ defmodule Klife.Connection.Controller do
     connect_opts = Keyword.merge(connect_defaults, args.connect_opts)
     socket_opts = Keyword.merge(socket_defaults, args.socket_opts)
     ssl = args.ssl
-    cluster = args.cluster_name
+    client = args.client_name
 
-    :ets.new(get_in_flight_messages_table_name(cluster), [
+    :ets.new(get_in_flight_messages_table_name(client), [
       :set,
       :public,
       :named_table
     ])
 
-    :persistent_term.put({:correlation_counter, cluster}, :atomics.new(1, []))
+    :persistent_term.put({:correlation_counter, client}, :atomics.new(1, []))
 
     state = %__MODULE__{
       bootstrap_servers: bootstrap_servers,
-      cluster_name: cluster,
+      client_name: client,
       connect_opts: connect_opts,
       socket_opts: socket_opts,
       ssl: ssl,
       known_brokers: [],
       bootstrap_conn: nil,
-      check_cluster_timer_ref: nil,
-      check_cluster_waiting_pids: []
+      check_client_timer_ref: nil,
+      check_client_waiting_pids: []
     }
 
     send(self(), :init_bootstrap_conn)
@@ -123,25 +123,25 @@ defmodule Klife.Connection.Controller do
         state.socket_opts
       )
 
-    negotiate_api_versions(conn, state.cluster_name)
-    new_ref = Process.send_after(self(), :check_cluster, 0)
-    {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_cluster_timer_ref: new_ref}}
+    negotiate_api_versions(conn, state.client_name)
+    new_ref = Process.send_after(self(), :check_client, 0)
+    {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_client_timer_ref: new_ref}}
   end
 
-  def handle_info(:check_cluster, %__MODULE__{} = state) do
-    case get_cluster_info(state.bootstrap_conn) do
+  def handle_info(:check_client, %__MODULE__{} = state) do
+    case get_client_info(state.bootstrap_conn) do
       {:ok, %{brokers: new_brokers_list, controller: controller}} ->
-        set_cluster_controller(controller, state.cluster_name)
+        set_client_controller(controller, state.client_name)
 
         old_brokers = state.known_brokers
         to_remove = old_brokers -- new_brokers_list
         to_start = new_brokers_list -- old_brokers
 
         send(self(), {:handle_brokers, to_start, to_remove})
-        next_ref = Process.send_after(self(), :check_cluster, @check_cluster_delay)
+        next_ref = Process.send_after(self(), :check_client, @check_client_delay)
 
         {:noreply,
-         %__MODULE__{state | known_brokers: new_brokers_list, check_cluster_timer_ref: next_ref}}
+         %__MODULE__{state | known_brokers: new_brokers_list, check_client_timer_ref: next_ref}}
 
       {:error, _reason} ->
         Process.send_after(self(), :init_bootstrap_conn, :timer.seconds(1))
@@ -153,7 +153,7 @@ defmodule Klife.Connection.Controller do
     Enum.each(to_start, fn {broker_id, url} ->
       broker_opts = [
         connect_opts: state.connect_opts,
-        cluster_name: state.cluster_name,
+        client_name: state.client_name,
         socket_opts: state.socket_opts,
         broker_id: broker_id,
         url: url,
@@ -161,7 +161,7 @@ defmodule Klife.Connection.Controller do
       ]
 
       DynamicSupervisor.start_child(
-        via_tuple({BrokerSupervisor, state.cluster_name}),
+        via_tuple({BrokerSupervisor, state.client_name}),
         {Broker, broker_opts}
       )
       |> case do
@@ -171,13 +171,13 @@ defmodule Klife.Connection.Controller do
     end)
 
     Enum.each(to_remove, fn {broker_id, _url} ->
-      case registry_lookup({Broker, broker_id, state.cluster_name}) do
+      case registry_lookup({Broker, broker_id, state.client_name}) do
         [] ->
           :ok
 
         [{pid, _}] ->
           DynamicSupervisor.terminate_child(
-            via_tuple({BrokerSupervisor, state.cluster_name}),
+            via_tuple({BrokerSupervisor, state.client_name}),
             pid
           )
       end
@@ -188,25 +188,25 @@ defmodule Klife.Connection.Controller do
       |> Enum.map(&elem(&1, 0))
       |> Enum.uniq()
 
-    :persistent_term.put({:known_brokers_ids, state.cluster_name}, new_brokers)
+    :persistent_term.put({:known_brokers_ids, state.client_name}, new_brokers)
 
     if to_start != [] or to_remove != [] do
-      PubSub.publish({:cluster_change, state.cluster_name}, %{
+      PubSub.publish({:client_change, state.client_name}, %{
         added_brokers: to_start,
         removed_brokers: to_remove
       })
     end
 
-    state.check_cluster_waiting_pids
+    state.check_client_waiting_pids
     |> Enum.reverse()
     |> Enum.each(&GenServer.reply(&1, :ok))
 
-    {:noreply, %__MODULE__{state | check_cluster_waiting_pids: []}}
+    {:noreply, %__MODULE__{state | check_client_waiting_pids: []}}
   end
 
   def handle_info(:check_correlation_counter, %__MODULE__{} = state) do
-    if read_correlation_id(state.cluster_name) >= @max_correlation_counter do
-      {:correlation_counter, state.cluster_name}
+    if read_correlation_id(state.client_name) >= @max_correlation_counter do
+      {:correlation_counter, state.client_name}
       |> :persistent_term.get()
       |> :atomics.exchange(1, 0)
     end
@@ -216,94 +216,94 @@ defmodule Klife.Connection.Controller do
   end
 
   @impl true
-  def handle_call(:trigger_check_cluster, from, %__MODULE__{} = state) do
+  def handle_call(:trigger_check_client, from, %__MODULE__{} = state) do
     case state do
-      %__MODULE__{check_cluster_waiting_pids: []} ->
-        Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = Process.send_after(self(), :check_cluster, 0)
+      %__MODULE__{check_client_waiting_pids: []} ->
+        Process.cancel_timer(state.check_client_timer_ref)
+        new_ref = Process.send_after(self(), :check_client, 0)
 
         {:noreply,
          %__MODULE__{
            state
-           | check_cluster_waiting_pids: [from],
-             check_cluster_timer_ref: new_ref
+           | check_client_waiting_pids: [from],
+             check_client_timer_ref: new_ref
          }}
 
       %__MODULE__{} ->
         {:noreply,
          %__MODULE__{
            state
-           | check_cluster_waiting_pids: [from | state.check_cluster_waiting_pids]
+           | check_client_waiting_pids: [from | state.check_client_waiting_pids]
          }}
     end
   end
 
   @impl true
-  def handle_cast(:trigger_check_cluster, %__MODULE__{} = state) do
+  def handle_cast(:trigger_check_client, %__MODULE__{} = state) do
     case state do
-      %__MODULE__{check_cluster_waiting_pids: []} ->
-        Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = Process.send_after(self(), :check_cluster, 0)
+      %__MODULE__{check_client_waiting_pids: []} ->
+        Process.cancel_timer(state.check_client_timer_ref)
+        new_ref = Process.send_after(self(), :check_client, 0)
 
         {:noreply,
          %__MODULE__{
            state
-           | check_cluster_timer_ref: new_ref
+           | check_client_timer_ref: new_ref
          }}
     end
   end
 
   ## PUBLIC INTERFACE
 
-  def insert_in_flight(cluster_name, correlation_id) do
-    cluster_name
+  def insert_in_flight(client_name, correlation_id) do
+    client_name
     |> get_in_flight_messages_table_name()
     |> :ets.insert({correlation_id, self()})
   end
 
-  def insert_in_flight(cluster_name, correlation_id, callback) do
-    cluster_name
+  def insert_in_flight(client_name, correlation_id, callback) do
+    client_name
     |> get_in_flight_messages_table_name()
     |> :ets.insert({correlation_id, callback})
   end
 
-  def take_from_in_flight(cluster_name, correlation_id) do
-    cluster_name
+  def take_from_in_flight(client_name, correlation_id) do
+    client_name
     |> get_in_flight_messages_table_name()
     |> :ets.take(correlation_id)
     |> List.first()
   end
 
-  def get_next_correlation_id(cluster_name) do
-    {:correlation_counter, cluster_name}
+  def get_next_correlation_id(client_name) do
+    {:correlation_counter, client_name}
     |> :persistent_term.get()
     |> :atomics.add_get(1, 1)
   end
 
-  def get_random_broker_id(cluster_name) do
-    {:known_brokers_ids, cluster_name}
+  def get_random_broker_id(client_name) do
+    {:known_brokers_ids, client_name}
     |> :persistent_term.get()
     |> Enum.random()
   end
 
-  def trigger_brokers_verification(cluster_name) do
-    GenServer.call(via_tuple({__MODULE__, cluster_name}), :trigger_check_cluster)
+  def trigger_brokers_verification(client_name) do
+    GenServer.call(via_tuple({__MODULE__, client_name}), :trigger_check_client)
   end
 
-  def trigger_brokers_verification_async(cluster_name) do
-    GenServer.cast(via_tuple({__MODULE__, cluster_name}), :trigger_check_cluster)
+  def trigger_brokers_verification_async(client_name) do
+    GenServer.cast(via_tuple({__MODULE__, client_name}), :trigger_check_client)
   end
 
-  def get_cluster_controller(cluster_name),
-    do: :persistent_term.get({:cluster_controller, cluster_name})
+  def get_client_controller(client_name),
+    do: :persistent_term.get({:client_controller, client_name})
 
-  def get_known_brokers(cluster_name),
-    do: :persistent_term.get({:known_brokers_ids, cluster_name})
+  def get_known_brokers(client_name),
+    do: :persistent_term.get({:known_brokers_ids, client_name})
 
-  def get_cluster_info(%Connection{} = conn) do
+  def get_client_info(%Connection{} = conn) do
     req = %{
       headers: %{correlation_id: 0},
-      content: %{include_cluster_authorized_operations: true, topics: []}
+      content: %{include_client_authorized_operations: true, topics: []}
     }
 
     serialized_req = Messages.Metadata.serialize_request(req, 1)
@@ -325,8 +325,8 @@ defmodule Klife.Connection.Controller do
 
   ## PRIVATE FUNCTIONS
 
-  defp get_in_flight_messages_table_name(cluster_name),
-    do: :"in_flight_messages.#{cluster_name}"
+  defp get_in_flight_messages_table_name(client_name),
+    do: :"in_flight_messages.#{client_name}"
 
   defp connect_bootstrap_server(servers, ssl, connect_opts, socket_opts) do
     conn =
@@ -354,16 +354,16 @@ defmodule Klife.Connection.Controller do
         """)
   end
 
-  defp read_correlation_id(cluster_name) do
-    {:correlation_counter, cluster_name}
+  defp read_correlation_id(client_name) do
+    {:correlation_counter, client_name}
     |> :persistent_term.get()
     |> :atomics.get(1)
   end
 
-  defp set_cluster_controller(broker_id, cluster_name),
-    do: :persistent_term.put({:cluster_controller, cluster_name}, broker_id)
+  defp set_client_controller(broker_id, client_name),
+    do: :persistent_term.put({:client_controller, client_name}, broker_id)
 
-  defp negotiate_api_versions(%Connection{} = conn, cluster_name) do
+  defp negotiate_api_versions(%Connection{} = conn, client_name) do
     :ok =
       %{headers: %{correlation_id: 0}, content: %{}}
       |> Messages.ApiVersions.serialize_request(0)
@@ -375,6 +375,6 @@ defmodule Klife.Connection.Controller do
     resp.api_keys
     |> Enum.map(&{&1.api_key, %{min: &1.min_version, max: &1.max_version}})
     |> Map.new()
-    |> MessageVersions.setup_versions(cluster_name)
+    |> MessageVersions.setup_versions(client_name)
   end
 end

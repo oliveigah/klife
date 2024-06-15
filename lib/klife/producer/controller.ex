@@ -20,7 +20,7 @@ defmodule Klife.Producer.Controller do
   @check_metadata_delay :timer.seconds(10)
 
   defstruct [
-    :cluster_name,
+    :client_name,
     :producers,
     :topics,
     :check_metadata_waiting_pids,
@@ -29,17 +29,17 @@ defmodule Klife.Producer.Controller do
   ]
 
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, args.cluster_name}))
+    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, args.client_name}))
   end
 
   @impl true
   def init(args) do
-    cluster_name = args.cluster_name
+    client_name = args.client_name
     topics_list = args.topics
     timer_ref = Process.send_after(self(), :check_metadata, 0)
 
     state = %__MODULE__{
-      cluster_name: cluster_name,
+      client_name: client_name,
       producers: args.producers,
       txn_pools: args.txn_pools,
       topics: topics_list,
@@ -49,35 +49,35 @@ defmodule Klife.Producer.Controller do
 
     Enum.each(topics_list, fn t ->
       :persistent_term.put(
-        {__MODULE__, cluster_name, t.name},
+        {__MODULE__, client_name, t.name},
         t.default_producer
       )
     end)
 
-    :ets.new(topics_partitions_metadata_table(cluster_name), [
+    :ets.new(topics_partitions_metadata_table(client_name), [
       :set,
       :public,
       :named_table,
       read_concurrency: true
     ])
 
-    :ets.new(partitioner_metadata_table(cluster_name), [
+    :ets.new(partitioner_metadata_table(client_name), [
       :set,
       :public,
       :named_table,
       read_concurrency: true
     ])
 
-    Utils.wait_connection!(cluster_name)
+    Utils.wait_connection!(client_name)
 
-    :ok = PubSub.subscribe({:cluster_change, cluster_name})
+    :ok = PubSub.subscribe({:client_change, client_name})
 
     {:ok, state}
   end
 
   def handle_info(
-        {{:cluster_change, cluster_name}, _event_data, _callback_data},
-        %__MODULE__{cluster_name: cluster_name} = state
+        {{:client_change, client_name}, _event_data, _callback_data},
+        %__MODULE__{client_name: client_name} = state
       ) do
     Process.cancel_timer(state.check_metadata_timer_ref)
     new_ref = Process.send_after(self(), :check_metadata, 0)
@@ -91,10 +91,10 @@ defmodule Klife.Producer.Controller do
 
   def handle_info(:handle_producers, %__MODULE__{} = state) do
     for producer <- state.producers do
-      opts = Map.put(producer, :cluster_name, state.cluster_name)
+      opts = Map.put(producer, :client_name, state.client_name)
 
       DynamicSupervisor.start_child(
-        via_tuple({ProducerSupervisor, state.cluster_name}),
+        via_tuple({ProducerSupervisor, state.client_name}),
         {Producer, opts}
       )
       |> case do
@@ -122,7 +122,7 @@ defmodule Klife.Producer.Controller do
         end
 
       txn_producer_configs = %{
-        cluster_name: state.cluster_name,
+        client_name: state.client_name,
         name: :"klife_txn_producer.#{txn_pool.name}.#{txn_producer_count}",
         acks: :all,
         linger_ms: 0,
@@ -138,7 +138,7 @@ defmodule Klife.Producer.Controller do
       }
 
       DynamicSupervisor.start_child(
-        via_tuple({ProducerSupervisor, state.cluster_name}),
+        via_tuple({ProducerSupervisor, state.client_name}),
         {Producer, txn_producer_configs}
       )
       |> case do
@@ -149,8 +149,8 @@ defmodule Klife.Producer.Controller do
 
     for txn_pool <- state.txn_pools do
       DynamicSupervisor.start_child(
-        via_tuple({ProducerSupervisor, state.cluster_name}),
-        {TxnProducerPool, Map.put(txn_pool, :cluster_name, state.cluster_name)}
+        via_tuple({ProducerSupervisor, state.client_name}),
+        {TxnProducerPool, Map.put(txn_pool, :client_name, state.client_name)}
       )
       |> case do
         {:ok, _pid} ->
@@ -167,15 +167,15 @@ defmodule Klife.Producer.Controller do
   @impl true
   def handle_info(
         :check_metadata,
-        %__MODULE__{cluster_name: cluster_name, topics: topics} = state
+        %__MODULE__{client_name: client_name, topics: topics} = state
       ) do
     content = %{
       topics: Enum.map(topics, fn t -> %{name: t.name} end)
     }
 
-    case Broker.send_message(Messages.Metadata, cluster_name, :controller, content) do
+    case Broker.send_message(Messages.Metadata, client_name, :controller, content) do
       {:error, _} ->
-        :ok = ConnController.trigger_brokers_verification(cluster_name)
+        :ok = ConnController.trigger_brokers_verification(client_name)
         new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
         {:noreply, %{state | check_metadata_timer_ref: new_ref}}
 
@@ -201,17 +201,17 @@ defmodule Klife.Producer.Controller do
 
   # Public Interface
 
-  def trigger_metadata_verification_sync(cluster_name) do
-    GenServer.call(via_tuple({__MODULE__, cluster_name}), :trigger_check_metadata)
+  def trigger_metadata_verification_sync(client_name) do
+    GenServer.call(via_tuple({__MODULE__, client_name}), :trigger_check_metadata)
   end
 
-  def trigger_metadata_verification_async(cluster_name) do
-    GenServer.cast(via_tuple({__MODULE__, cluster_name}), :trigger_check_metadata)
+  def trigger_metadata_verification_async(client_name) do
+    GenServer.cast(via_tuple({__MODULE__, client_name}), :trigger_check_metadata)
   end
 
-  def get_topics_partitions_metadata(cluster_name, topic, partition) do
+  def get_topics_partitions_metadata(client_name, topic, partition) do
     [{_key, broker_id, default_producer, batcher_id}] =
-      cluster_name
+      client_name
       |> topics_partitions_metadata_table()
       |> :ets.lookup({topic, partition})
 
@@ -222,32 +222,32 @@ defmodule Klife.Producer.Controller do
     }
   end
 
-  def get_broker_id(cluster_name, topic, partition) do
-    cluster_name
+  def get_broker_id(client_name, topic, partition) do
+    client_name
     |> topics_partitions_metadata_table()
     |> :ets.lookup_element({topic, partition}, 2)
   end
 
-  def get_default_producer(cluster_name, topic, partition) do
-    cluster_name
+  def get_default_producer(client_name, topic, partition) do
+    client_name
     |> topics_partitions_metadata_table()
     |> :ets.lookup_element({topic, partition}, 3)
   end
 
-  def get_batcher_id(cluster_name, topic, partition) do
-    cluster_name
+  def get_batcher_id(client_name, topic, partition) do
+    client_name
     |> topics_partitions_metadata_table()
     |> :ets.lookup_element({topic, partition}, 4)
   end
 
-  def update_batcher_id(cluster_name, topic, partition, new_batcher_id) do
-    cluster_name
+  def update_batcher_id(client_name, topic, partition, new_batcher_id) do
+    client_name
     |> topics_partitions_metadata_table()
     |> :ets.update_element({topic, partition}, {4, new_batcher_id})
   end
 
-  def get_all_topics_partitions_metadata(cluster_name) do
-    cluster_name
+  def get_all_topics_partitions_metadata(client_name) do
+    client_name
     |> topics_partitions_metadata_table()
     |> :ets.tab2list()
     |> Enum.map(fn {{topic_name, partition_idx}, leader_id, _default_producer, batcher_id} ->
@@ -260,11 +260,11 @@ defmodule Klife.Producer.Controller do
     end)
   end
 
-  def get_producer_for_topic(cluster_name, topic),
-    do: :persistent_term.get({__MODULE__, cluster_name, topic})
+  def get_producer_for_topic(client_name, topic),
+    do: :persistent_term.get({__MODULE__, client_name, topic})
 
-  def get_partitioner_data(cluster_name, topic) do
-    cluster_name
+  def get_partitioner_data(client_name, topic) do
+    client_name
     |> partitioner_metadata_table()
     |> :ets.lookup_element(topic, 2)
   end
@@ -273,11 +273,11 @@ defmodule Klife.Producer.Controller do
 
   defp setup_producers(%__MODULE__{} = state, resp) do
     %__MODULE__{
-      cluster_name: cluster_name,
+      client_name: client_name,
       topics: topics
     } = state
 
-    table_name = topics_partitions_metadata_table(cluster_name)
+    table_name = topics_partitions_metadata_table(client_name)
 
     results =
       for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
@@ -319,11 +319,11 @@ defmodule Klife.Producer.Controller do
 
   defp setup_partitioners(%__MODULE__{} = state, resp) do
     %__MODULE__{
-      cluster_name: cluster_name,
+      client_name: client_name,
       topics: topics
     } = state
 
-    table_name = partitioner_metadata_table(cluster_name)
+    table_name = partitioner_metadata_table(client_name)
 
     for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
         config_topic = Enum.find(topics, &(&1.name == topic.name)) do
@@ -346,9 +346,9 @@ defmodule Klife.Producer.Controller do
     :ok
   end
 
-  defp topics_partitions_metadata_table(cluster_name),
-    do: :"topics_partitions_metadata.#{cluster_name}"
+  defp topics_partitions_metadata_table(client_name),
+    do: :"topics_partitions_metadata.#{client_name}"
 
-  defp partitioner_metadata_table(cluster_name),
-    do: :"partitioner_metadata.#{cluster_name}"
+  defp partitioner_metadata_table(client_name),
+    do: :"partitioner_metadata.#{client_name}"
 end

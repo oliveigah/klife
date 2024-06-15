@@ -15,7 +15,7 @@ defmodule Klife.Connection.Broker do
 
   defstruct [
     :broker_id,
-    :cluster_name,
+    :client_name,
     :conn,
     :ssl,
     :connect_opts,
@@ -26,13 +26,13 @@ defmodule Klife.Connection.Broker do
 
   def start_link(args) do
     broker_id = Keyword.fetch!(args, :broker_id)
-    cluster_name = Keyword.fetch!(args, :cluster_name)
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, broker_id, cluster_name}))
+    client_name = Keyword.fetch!(args, :client_name)
+    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, broker_id, client_name}))
   end
 
   def init(args) do
     connect_opts = Keyword.fetch!(args, :connect_opts)
-    cluster_name = Keyword.fetch!(args, :cluster_name)
+    client_name = Keyword.fetch!(args, :client_name)
     broker_id = Keyword.fetch!(args, :broker_id)
     url = Keyword.fetch!(args, :url)
     ssl = Keyword.fetch!(args, :ssl)
@@ -40,7 +40,7 @@ defmodule Klife.Connection.Broker do
 
     state = %__MODULE__{
       broker_id: broker_id,
-      cluster_name: cluster_name,
+      client_name: client_name,
       connect_opts: connect_opts,
       socket_opts: socket_opts,
       url: url,
@@ -66,12 +66,12 @@ defmodule Klife.Connection.Broker do
   def handle_info(:connect, %__MODULE__{} = state), do: {:noreply, do_connect(state)}
 
   def handle_info({:tcp, _port, msg}, %__MODULE__{} = state) do
-    :ok = reply_message(msg, state.cluster_name, state.conn)
+    :ok = reply_message(msg, state.client_name, state.conn)
     {:noreply, state}
   end
 
   def handle_info({:ssl, {:sslsocket, _socket_details, _pids}, msg}, %__MODULE__{} = state) do
-    :ok = reply_message(msg, state.cluster_name, state.conn)
+    :ok = reply_message(msg, state.client_name, state.conn)
     {:noreply, state}
   end
 
@@ -86,38 +86,38 @@ defmodule Klife.Connection.Broker do
   end
 
   def terminate(reason, %__MODULE__{} = state) do
-    :persistent_term.erase({__MODULE__, state.cluster_name, state.broker_id})
+    :persistent_term.erase({__MODULE__, state.client_name, state.broker_id})
     reason
   end
 
   def send_message(
         message_mod,
-        cluster_name,
+        client_name,
         broker_id,
         content \\ %{},
         headers \\ %{},
         opts \\ []
       ) do
-    correlation_id = Controller.get_next_correlation_id(cluster_name)
+    correlation_id = Controller.get_next_correlation_id(client_name)
 
     input = %{
       headers: Map.put(headers, :correlation_id, correlation_id),
       content: content
     }
 
-    version = MessageVersions.get(cluster_name, message_mod)
+    version = MessageVersions.get(client_name, message_mod)
     data = apply(message_mod, :serialize_request, [input, version])
 
     if Keyword.get(opts, :async, false),
       do:
-        send_raw_async(data, message_mod, version, correlation_id, broker_id, cluster_name, opts),
-      else: send_raw_sync(data, message_mod, version, correlation_id, broker_id, cluster_name)
+        send_raw_async(data, message_mod, version, correlation_id, broker_id, client_name, opts),
+      else: send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name)
   end
 
-  def send_raw_sync(raw_data, message_mod, msg_version, correlation_id, broker_id, cluster_name) do
-    broker_id = get_broker_id(broker_id, cluster_name)
-    conn = get_connection(cluster_name, broker_id)
-    true = Controller.insert_in_flight(cluster_name, correlation_id)
+  def send_raw_sync(raw_data, message_mod, msg_version, correlation_id, broker_id, client_name) do
+    broker_id = get_broker_id(broker_id, client_name)
+    conn = get_connection(client_name, broker_id)
+    true = Controller.insert_in_flight(client_name, correlation_id)
 
     case Connection.write(raw_data, conn) do
       :ok ->
@@ -126,7 +126,7 @@ defmodule Klife.Connection.Broker do
             apply(message_mod, :deserialize_response, [response, msg_version])
         after
           conn.read_timeout + 2000 ->
-            Controller.take_from_in_flight(cluster_name, correlation_id)
+            Controller.take_from_in_flight(client_name, correlation_id)
 
             Logger.error("""
             Timeout while waiting reponse from broker #{broker_id} on host #{conn.host}.
@@ -150,11 +150,11 @@ defmodule Klife.Connection.Broker do
         msg_version,
         correlation_id,
         broker_id,
-        cluster_name,
+        client_name,
         opts
       ) do
-    broker_id = get_broker_id(broker_id, cluster_name)
-    conn = get_connection(cluster_name, broker_id)
+    broker_id = get_broker_id(broker_id, client_name)
+    conn = get_connection(client_name, broker_id)
 
     callback_pid = Keyword.get(opts, :callback_pid)
     callback_ref = Keyword.get(opts, :callback_ref)
@@ -162,7 +162,7 @@ defmodule Klife.Connection.Broker do
     in_flight_data =
       if callback_pid, do: {callback_pid, callback_ref, msg_mod, msg_version}, else: :noop
 
-    true = Controller.insert_in_flight(cluster_name, correlation_id, in_flight_data)
+    true = Controller.insert_in_flight(client_name, correlation_id, in_flight_data)
 
     case Connection.write(raw_data, conn) do
       :ok ->
@@ -177,8 +177,8 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  defp reply_message(<<correlation_id::32-signed, _rest::binary>> = reply, cluster_name, conn) do
-    case Controller.take_from_in_flight(cluster_name, correlation_id) do
+  defp reply_message(<<correlation_id::32-signed, _rest::binary>> = reply, client_name, conn) do
+    case Controller.take_from_in_flight(client_name, correlation_id) do
       # sync send
       {^correlation_id, waiting_pid} when is_pid(waiting_pid) ->
         send(waiting_pid, {:broker_response, reply})
@@ -209,7 +209,7 @@ defmodule Klife.Connection.Broker do
         # now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
         #
         Logger.warning("""
-        Unkown correlation id received from cluster #{inspect(cluster_name)}.
+        Unkown correlation id received from client #{inspect(client_name)}.
 
         correlation_id: #{inspect(correlation_id)}
 
@@ -222,9 +222,9 @@ defmodule Klife.Connection.Broker do
     Connection.socket_opts(conn, active: :once)
   end
 
-  defp reply_message(_, cluster_name, conn) do
+  defp reply_message(_, client_name, conn) do
     Logger.warning("""
-    Unkown message received from cluster #{inspect(cluster_name)}.
+    Unkown message received from client #{inspect(client_name)}.
 
     conn: #{inspect(conn)}
     """)
@@ -239,18 +239,18 @@ defmodule Klife.Connection.Broker do
     :timer.seconds(round(jitter_delay))
   end
 
-  defp get_broker_id(:any, cluster_name), do: Controller.get_random_broker_id(cluster_name)
+  defp get_broker_id(:any, client_name), do: Controller.get_random_broker_id(client_name)
 
-  defp get_broker_id(:controller, cluster_name),
-    do: Controller.get_cluster_controller(cluster_name)
+  defp get_broker_id(:controller, client_name),
+    do: Controller.get_client_controller(client_name)
 
-  defp get_broker_id(broker_id, _cluster_name), do: broker_id
+  defp get_broker_id(broker_id, _client_name), do: broker_id
 
-  defp get_connection(cluster_name, broker_id) do
-    case :persistent_term.get({__MODULE__, cluster_name, broker_id}, :not_found) do
+  defp get_connection(client_name, broker_id) do
+    case :persistent_term.get({__MODULE__, client_name, broker_id}, :not_found) do
       :not_found ->
-        :ok = Controller.trigger_brokers_verification(cluster_name)
-        :persistent_term.get({__MODULE__, cluster_name, broker_id})
+        :ok = Controller.trigger_brokers_verification(client_name)
+        :persistent_term.get({__MODULE__, client_name, broker_id})
 
       %Connection{} = conn ->
         conn
@@ -267,7 +267,7 @@ defmodule Klife.Connection.Broker do
        ) do
     case Connection.new(url, ssl, Keyword.merge(connect_opts, active: :once), socket_opts) do
       {:ok, conn} ->
-        :persistent_term.put({__MODULE__, state.cluster_name, state.broker_id}, conn)
+        :persistent_term.put({__MODULE__, state.client_name, state.broker_id}, conn)
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}
 
       {:error, _reason} = res ->
@@ -275,7 +275,7 @@ defmodule Klife.Connection.Broker do
         Error while connecting to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
         """)
 
-        :ok = Controller.trigger_brokers_verification_async(state.cluster_name)
+        :ok = Controller.trigger_brokers_verification_async(state.client_name)
 
         Process.send_after(self(), :connect, get_reconnect_delay(state))
 

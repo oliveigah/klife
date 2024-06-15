@@ -22,7 +22,7 @@ defmodule Klife.Producer do
     client_id: [
       type: :string,
       doc:
-        "String used on all requests for the cluster. If not provided the following string is used: \"klife_producer.{cluster_name}.{producer_name}\""
+        "String used on all requests for the client. If not provided the following string is used: \"klife_producer.{client_name}.{producer_name}\""
     ],
     acks: [
       type: {:in, [:all, 0, 1]},
@@ -102,7 +102,7 @@ defmodule Klife.Producer do
                 :producer_epoch,
                 :epochs,
                 :coordinator_id,
-                :cluster_name,
+                :client_name,
                 :txn_id,
                 :txn_timeout_ms
               ]
@@ -113,21 +113,21 @@ defmodule Klife.Producer do
   @doc false
   def start_link(args) do
     producer_name = args.name
-    cluster_name = args.cluster_name
+    client_name = args.client_name
 
     GenServer.start_link(__MODULE__, args,
-      name: via_tuple(get_process_name(cluster_name, producer_name))
+      name: via_tuple(get_process_name(client_name, producer_name))
     )
   end
 
-  defp get_process_name(cluster, producer), do: {__MODULE__, cluster, producer}
+  defp get_process_name(client, producer), do: {__MODULE__, client, producer}
 
   @doc false
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
 
     base = %__MODULE__{
-      client_id: "klife_producer.#{args_map.cluster_name}.#{args_map.name}",
+      client_id: "klife_producer.#{args_map.client_name}.#{args_map.name}",
       epochs: %{},
       # This is the ony args that may not exist because
       # it is filtered out on non txn producers
@@ -146,22 +146,22 @@ defmodule Klife.Producer do
   end
 
   @doc false
-  def new_epoch(cluster_name, producer_name, topic, partition) do
-    {__MODULE__, cluster_name, producer_name}
+  def new_epoch(client_name, producer_name, topic, partition) do
+    {__MODULE__, client_name, producer_name}
     |> via_tuple()
     |> GenServer.call({:new_epoch, topic, partition})
   end
 
   @doc false
-  def get_txn_pool_data(cluster_name, producer_name) do
-    {__MODULE__, cluster_name, producer_name}
+  def get_txn_pool_data(client_name, producer_name) do
+    {__MODULE__, client_name, producer_name}
     |> via_tuple()
     |> GenServer.call(:get_txn_pool_data)
   end
 
   @doc false
-  def get_pid(cluster_name, producer_name) do
-    get_process_name(cluster_name, producer_name)
+  def get_pid(client_name, producer_name) do
+    get_process_name(client_name, producer_name)
     |> registry_lookup()
     |> List.first()
   end
@@ -230,7 +230,7 @@ defmodule Klife.Producer do
           }
 
           fun = fn ->
-            case Broker.send_message(M.FindCoordinator, state.cluster_name, :any, content) do
+            case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
               {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
                 broker_id
 
@@ -248,7 +248,7 @@ defmodule Klife.Producer do
     }
 
     fun = fn ->
-      case Broker.send_message(M.InitProducerId, state.cluster_name, broker, content) do
+      case Broker.send_message(M.InitProducerId, state.client_name, broker, content) do
         {:ok, %{content: %{error_code: 0, producer_id: producer_id, producer_epoch: p_epoch}}} ->
           {producer_id, p_epoch}
 
@@ -268,7 +268,7 @@ defmodule Klife.Producer do
   end
 
   @doc false
-  def produce([%Record{} | _] = records, cluster_name, opts) do
+  def produce([%Record{} | _] = records, client_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
     callback_pid = if Keyword.get(opts, :async, false), do: nil, else: self()
 
@@ -280,11 +280,11 @@ defmodule Klife.Producer do
           broker_id: broker_id,
           producer_name: default_producer,
           batcher_id: default_batcher_id
-        } = ProducerController.get_topics_partitions_metadata(cluster_name, t, p)
+        } = ProducerController.get_topics_partitions_metadata(client_name, t, p)
 
         new_key =
           if opt_producer,
-            do: {broker_id, opt_producer, get_batcher_id(cluster_name, opt_producer, t, p)},
+            do: {broker_id, opt_producer, get_batcher_id(client_name, opt_producer, t, p)},
             else: {broker_id, default_producer, default_batcher_id}
 
         {new_key, recs}
@@ -297,7 +297,7 @@ defmodule Klife.Producer do
         {:ok, delivery_timeout_ms} =
           Batcher.produce(
             recs,
-            cluster_name,
+            client_name,
             broker_id,
             producer,
             batcher_id,
@@ -357,7 +357,7 @@ defmodule Klife.Producer do
   end
 
   defp handle_batchers(%__MODULE__{} = state) do
-    known_brokers = ConnController.get_known_brokers(state.cluster_name)
+    known_brokers = ConnController.get_known_brokers(state.client_name)
     batchers_per_broker = state.batchers_count
     :ok = init_batchers(state, known_brokers, batchers_per_broker)
     :ok = update_topic_partition_metadata(state, batchers_per_broker)
@@ -386,11 +386,11 @@ defmodule Klife.Producer do
 
   defp update_topic_partition_metadata(%__MODULE__{} = state, batchers_per_broker) do
     %__MODULE__{
-      cluster_name: cluster_name,
+      client_name: client_name,
       name: producer_name
     } = state
 
-    cluster_name
+    client_name
     |> ProducerController.get_all_topics_partitions_metadata()
     |> Enum.group_by(& &1.leader_id)
     |> Enum.map(fn {_broker_id, topics_list} ->
@@ -409,23 +409,23 @@ defmodule Klife.Producer do
       # in this case the proper batcher_id won't be present at
       # main metadata ets table, therefore we need a way to
       # find out it's value.
-      put_batcher_id(cluster_name, producer_name, t_name, p_idx, b_id)
+      put_batcher_id(client_name, producer_name, t_name, p_idx, b_id)
 
-      if ProducerController.get_default_producer(cluster_name, t_name, p_idx) == producer_name do
-        ProducerController.update_batcher_id(cluster_name, t_name, p_idx, b_id)
+      if ProducerController.get_default_producer(client_name, t_name, p_idx) == producer_name do
+        ProducerController.update_batcher_id(client_name, t_name, p_idx, b_id)
       end
     end)
   end
 
-  defp put_batcher_id(cluster_name, producer_name, topic, partition, batcher_id) do
+  defp put_batcher_id(client_name, producer_name, topic, partition, batcher_id) do
     :persistent_term.put(
-      {__MODULE__, cluster_name, producer_name, topic, partition},
+      {__MODULE__, client_name, producer_name, topic, partition},
       batcher_id
     )
   end
 
-  defp get_batcher_id(cluster_name, producer_name, topic, partition) do
-    :persistent_term.get({__MODULE__, cluster_name, producer_name, topic, partition})
+  defp get_batcher_id(client_name, producer_name, topic, partition) do
+    :persistent_term.get({__MODULE__, client_name, producer_name, topic, partition})
   end
 
   defp with_timeout(timeout, fun) do

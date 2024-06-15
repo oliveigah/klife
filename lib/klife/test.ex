@@ -10,7 +10,7 @@ defmodule Klife.Test do
   alias KlifeProtocol.Messages, as: M
 
   def assert_offset(
-        cluster,
+        client,
         %Record{topic: topic, partition: partition} = expected_record,
         offset,
         opts \\ []
@@ -18,7 +18,7 @@ defmodule Klife.Test do
     iso_lvl = Keyword.get(opts, :isolation, :committed)
     txn_status = Keyword.get(opts, :txn_status, :committed)
 
-    cluster
+    client
     |> get_record_by_offset(topic, partition, offset, iso_lvl)
     |> case do
       nil ->
@@ -35,7 +35,7 @@ defmodule Klife.Test do
     end
   end
 
-  defp get_record_by_offset(cluster_name, topic, partition, offset, isolation) do
+  defp get_record_by_offset(client_name, topic, partition, offset, isolation) do
     isolation_level =
       case isolation do
         :committed -> 1
@@ -67,8 +67,8 @@ defmodule Klife.Test do
     {:ok, %{content: content}} =
       Broker.send_message(
         M.Fetch,
-        cluster_name,
-        PController.get_broker_id(cluster_name, topic, partition),
+        client_name,
+        PController.get_broker_id(client_name, topic, partition),
         content
       )
 

@@ -8,7 +8,7 @@
     - SASL
 
 - Producer System
-    - Rename cluster to client
+    - Rename client to client
     - Add default producer and partition as client option
     - Implement test helper functions (assert_produced)
     - Improve input errors handling

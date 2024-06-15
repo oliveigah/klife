@@ -47,7 +47,7 @@ defmodule Klife.TxnProducerPool do
                         ])
                         |> Keyword.merge(@txn_producer_specific_opts)
 
-  defstruct Keyword.keys(@txn_producer_options) ++ [:worker_counter, :cluster_name]
+  defstruct Keyword.keys(@txn_producer_options) ++ [:worker_counter, :client_name]
 
   @moduledoc """
   Pool of transactional producers.
@@ -63,7 +63,7 @@ defmodule Klife.TxnProducerPool do
     defstruct [
       :worker_id,
       :producer_name,
-      :cluster_name,
+      :client_name,
       :producer_id,
       :producer_epoch,
       :coordinator_id,
@@ -83,18 +83,18 @@ defmodule Klife.TxnProducerPool do
   def init_worker(%__MODULE__{} = pool_state) do
     worker_id = pool_state.worker_counter + 1
 
-    %__MODULE__{cluster_name: cluster_name, name: pool_name} = pool_state
+    %__MODULE__{client_name: client_name, name: pool_name} = pool_state
 
     producer_name = :"klife_txn_producer.#{pool_name}.#{worker_id}"
 
-    case Producer.get_pid(cluster_name, producer_name) do
+    case Producer.get_pid(client_name, producer_name) do
       nil ->
         # if we get here we should probally just restart the pool
-        {:error, {:unkown_producer, cluster_name, producer_name}}
+        {:error, {:unkown_producer, client_name, producer_name}}
 
       _ ->
         worker = %__MODULE__.WorkerState{
-          cluster_name: cluster_name,
+          client_name: client_name,
           producer_name: producer_name,
           worker_id: worker_id
         }
@@ -113,19 +113,19 @@ defmodule Klife.TxnProducerPool do
     {:ok, worker_state, pool_state}
   end
 
-  def run_txn(cluster_name, pool_name, fun) do
-    NimblePool.checkout!(pool_name(cluster_name, pool_name), :checkout, fn _, state ->
+  def run_txn(client_name, pool_name, fun) do
+    NimblePool.checkout!(pool_name(client_name, pool_name), :checkout, fn _, state ->
       result =
         try do
-          nil = setup_txn_ctx(state, cluster_name)
+          nil = setup_txn_ctx(state, client_name)
 
           result = fun.()
 
           :ok =
             case result do
-              {:ok, _} -> end_txn(cluster_name, :commit)
-              :ok -> end_txn(cluster_name, :commit)
-              _ -> end_txn(cluster_name, :abort)
+              {:ok, _} -> end_txn(client_name, :commit)
+              :ok -> end_txn(client_name, :commit)
+              _ -> end_txn(client_name, :abort)
             end
 
           result
@@ -138,13 +138,13 @@ defmodule Klife.TxnProducerPool do
             {:error, reason}
         end
 
-      clean_txn_ctx(cluster_name)
+      clean_txn_ctx(client_name)
 
       {result, state}
     end)
   end
 
-  defp end_txn(cluster_name, action) do
+  defp end_txn(client_name, action) do
     committed? =
       case action do
         :commit -> true
@@ -159,7 +159,7 @@ defmodule Klife.TxnProducerPool do
         txn_id: txn_id,
         client_id: client_id
       }
-    } = get_txn_ctx(cluster_name)
+    } = get_txn_ctx(client_name)
 
     content = %{
       transactional_id: txn_id,
@@ -171,7 +171,7 @@ defmodule Klife.TxnProducerPool do
     headers = %{client_id: client_id}
 
     {:ok, %{content: %{error_code: ec}}} =
-      Broker.send_message(M.EndTxn, cluster_name, coordinator_id, content, headers)
+      Broker.send_message(M.EndTxn, client_name, coordinator_id, content, headers)
 
     if committed?,
       do: 0 = ec,
@@ -180,35 +180,35 @@ defmodule Klife.TxnProducerPool do
     :ok
   end
 
-  def produce(records, cluster_name, _opts) do
-    case maybe_add_partition_to_txn(cluster_name, records) do
+  def produce(records, client_name, _opts) do
+    case maybe_add_partition_to_txn(client_name, records) do
       :ok ->
         %{
           worker_state: %__MODULE__.WorkerState{producer_name: producer_name}
         } =
-          get_txn_ctx(cluster_name)
+          get_txn_ctx(client_name)
 
-        Klife.Producer.produce(records, cluster_name, producer: producer_name)
+        Klife.Producer.produce(records, client_name, producer: producer_name)
 
       {:error, recs} ->
         recs
     end
   end
 
-  defp maybe_add_partition_to_txn(cluster_name, records) do
+  defp maybe_add_partition_to_txn(client_name, records) do
     tp_list = Enum.map(records, fn %Record{} = r -> {r.topic, r.partition} end)
 
     txn_ctx =
       %{
         worker_state: %__MODULE__.WorkerState{
           producer_id: p_id,
-          cluster_name: cluster_name,
+          client_name: client_name,
           txn_id: txn_id,
           producer_epoch: p_epoch,
           coordinator_id: coordinator_id
         },
         topic_partitions: txn_topic_partitions
-      } = get_txn_ctx(cluster_name)
+      } = get_txn_ctx(client_name)
 
     case Enum.reject(tp_list, fn tp -> MapSet.member?(txn_topic_partitions, tp) end) do
       [] ->
@@ -238,14 +238,14 @@ defmodule Klife.TxnProducerPool do
           ]
         }
 
-        case add_partitions_to_txn(cluster_name, coordinator_id, content) do
+        case add_partitions_to_txn(client_name, coordinator_id, content) do
           :ok ->
             new_txn_topic_partitions =
               Enum.reduce(tp_list, txn_topic_partitions, fn {t, p}, acc ->
                 MapSet.put(acc, {t, p})
               end)
 
-            update_txn_ctx(cluster_name, %{txn_ctx | topic_partitions: new_txn_topic_partitions})
+            update_txn_ctx(client_name, %{txn_ctx | topic_partitions: new_txn_topic_partitions})
 
             :ok
 
@@ -266,15 +266,15 @@ defmodule Klife.TxnProducerPool do
     end
   end
 
-  defp add_partitions_to_txn(cluster_name, coordinator_id, content) do
+  defp add_partitions_to_txn(client_name, coordinator_id, content) do
     deadline = System.monotonic_time(:millisecond) + :timer.seconds(10)
-    do_add_partitions_to_txn(deadline, cluster_name, coordinator_id, content)
+    do_add_partitions_to_txn(deadline, client_name, coordinator_id, content)
   end
 
-  defp do_add_partitions_to_txn(deadline, cluster_name, coordinator_id, content) do
+  defp do_add_partitions_to_txn(deadline, client_name, coordinator_id, content) do
     if System.monotonic_time(:millisecond) < deadline do
       with {:ok, %{content: %{error_code: 0} = resp_content}} <-
-             Broker.send_message(M.AddPartitionsToTxn, cluster_name, coordinator_id, content),
+             Broker.send_message(M.AddPartitionsToTxn, client_name, coordinator_id, content),
            %{results_by_transaction: [txn_resp]} <- resp_content,
            :ok <- check_add_partitions_resp(txn_resp) do
         :ok
@@ -284,7 +284,7 @@ defmodule Klife.TxnProducerPool do
 
         _ ->
           Process.sleep(10)
-          do_add_partitions_to_txn(deadline, cluster_name, coordinator_id, content)
+          do_add_partitions_to_txn(deadline, client_name, coordinator_id, content)
       end
     else
       raise "timeout while adding partition to txn"
@@ -319,9 +319,9 @@ defmodule Klife.TxnProducerPool do
     end
   end
 
-  def in_txn?(cluster), do: not is_nil(get_txn_ctx(cluster))
+  def in_txn?(client), do: not is_nil(get_txn_ctx(client))
 
-  defp setup_txn_ctx(%__MODULE__.WorkerState{} = state, cluster) do
+  defp setup_txn_ctx(%__MODULE__.WorkerState{} = state, client) do
     {:ok,
      %{
        producer_id: producer_id,
@@ -329,7 +329,7 @@ defmodule Klife.TxnProducerPool do
        coordinator_id: coordinator_id,
        txn_id: txn_id,
        client_id: client_id
-     }} = Producer.get_txn_pool_data(state.cluster_name, state.producer_name)
+     }} = Producer.get_txn_pool_data(state.client_name, state.producer_name)
 
     new_state = %{
       state
@@ -340,18 +340,18 @@ defmodule Klife.TxnProducerPool do
         client_id: client_id
     }
 
-    Process.put({:klife_txn_ctx, cluster}, %{
+    Process.put({:klife_txn_ctx, client}, %{
       worker_state: new_state,
       topic_partitions: MapSet.new()
     })
   end
 
-  defp clean_txn_ctx(cluster), do: Process.delete({:klife_txn_ctx, cluster})
+  defp clean_txn_ctx(client), do: Process.delete({:klife_txn_ctx, client})
 
-  defp get_txn_ctx(cluster), do: Process.get({:klife_txn_ctx, cluster})
+  defp get_txn_ctx(client), do: Process.get({:klife_txn_ctx, client})
 
-  defp update_txn_ctx(cluster, new_state) do
-    Process.put({:klife_txn_ctx, cluster}, new_state)
+  defp update_txn_ctx(client, new_state) do
+    Process.put({:klife_txn_ctx, client}, new_state)
     new_state
   end
 
@@ -360,7 +360,7 @@ defmodule Klife.TxnProducerPool do
     NimblePool.start_link(
       worker: {__MODULE__, args},
       pool_size: args.pool_size,
-      name: pool_name(args.cluster_name, args.name),
+      name: pool_name(args.client_name, args.name),
       lazy: false
     )
   end
@@ -368,12 +368,12 @@ defmodule Klife.TxnProducerPool do
   @doc false
   def child_spec(args) do
     %{
-      id: pool_name(args.cluster_name, args.name),
+      id: pool_name(args.client_name, args.name),
       start: {__MODULE__, :start_link, [args]},
       type: :worker,
       restart: :permanent
     }
   end
 
-  defp pool_name(cluster_name, pool_name), do: via_tuple({__MODULE__, cluster_name, pool_name})
+  defp pool_name(client_name, pool_name), do: via_tuple({__MODULE__, client_name, pool_name})
 end

@@ -14,28 +14,28 @@ defmodule Klife.TestUtils do
 
   @docker_file_path Path.relative("test/compose_files/docker-compose.yml")
 
-  defp get_service_name(cluster_name, broker_id) do
-    content = %{include_cluster_authorized_operations: true, topics: []}
+  defp get_service_name(client_name, broker_id) do
+    content = %{include_client_authorized_operations: true, topics: []}
 
-    {:ok, resp} = Broker.send_message(M.Metadata, cluster_name, :any, content)
+    {:ok, resp} = Broker.send_message(M.Metadata, client_name, :any, content)
 
     broker = Enum.find(resp.content.brokers, fn b -> b.node_id == broker_id end)
 
     @port_to_service_name[broker.port]
   end
 
-  def stop_broker(cluster_name, broker_id) do
+  def stop_broker(client_name, broker_id) do
     Task.async(fn ->
       cb_ref = make_ref()
-      :ok = PubSub.subscribe({:cluster_change, cluster_name}, cb_ref)
+      :ok = PubSub.subscribe({:client_change, client_name}, cb_ref)
 
-      service_name = get_service_name(cluster_name, broker_id)
+      service_name = get_service_name(client_name, broker_id)
 
       System.shell("docker-compose -f #{@docker_file_path} stop #{service_name} > /dev/null 2>&1")
 
       result =
         receive do
-          {{:cluster_change, ^cluster_name}, event_data, ^cb_ref} ->
+          {{:client_change, ^client_name}, event_data, ^cb_ref} ->
             removed_brokers = event_data.removed_brokers
             brokers_list = Enum.map(removed_brokers, fn {broker_id, _url} -> broker_id end)
 
@@ -47,7 +47,7 @@ defmodule Klife.TestUtils do
             {:error, :timeout}
         end
 
-      :ok = PubSub.unsubscribe({:cluster_change, cluster_name})
+      :ok = PubSub.unsubscribe({:client_change, client_name})
 
       Process.sleep(10)
       result
@@ -56,15 +56,15 @@ defmodule Klife.TestUtils do
     |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
-  def start_broker(service_name, cluster_name) do
+  def start_broker(service_name, client_name) do
     Task.async(fn ->
       cb_ref = make_ref()
       port_map = @port_to_service_name |> Enum.map(fn {k, v} -> {v, k} end) |> Map.new()
       expected_url = "localhost:#{port_map[service_name]}"
 
-      :ok = PubSub.subscribe({:cluster_change, cluster_name}, cb_ref)
+      :ok = PubSub.subscribe({:client_change, client_name}, cb_ref)
 
-      old_brokers = :persistent_term.get({:known_brokers_ids, cluster_name})
+      old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
 
       System.shell(
         "docker-compose -f #{@docker_file_path} start #{service_name} > /dev/null 2>&1"
@@ -72,8 +72,8 @@ defmodule Klife.TestUtils do
 
       :ok =
         Enum.reduce_while(1..20, nil, fn _, _acc ->
-          :ok = ConnController.trigger_brokers_verification(cluster_name)
-          new_brokers = :persistent_term.get({:known_brokers_ids, cluster_name})
+          :ok = ConnController.trigger_brokers_verification(client_name)
+          new_brokers = :persistent_term.get({:known_brokers_ids, client_name})
 
           if old_brokers != new_brokers do
             {:halt, :ok}
@@ -85,7 +85,7 @@ defmodule Klife.TestUtils do
 
       result =
         receive do
-          {{:cluster_change, ^cluster_name}, event_data, ^cb_ref} ->
+          {{:client_change, ^client_name}, event_data, ^cb_ref} ->
             added_brokers = event_data.added_brokers
 
             case Enum.find(added_brokers, fn {_broker_id, url} -> url == expected_url end) do
@@ -100,7 +100,7 @@ defmodule Klife.TestUtils do
             {:error, :timeout}
         end
 
-      :ok = PubSub.unsubscribe({:cluster_change, cluster_name})
+      :ok = PubSub.unsubscribe({:client_change, client_name})
 
       Process.sleep(10)
       result
@@ -109,24 +109,24 @@ defmodule Klife.TestUtils do
     |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
-  def wait_cluster(cluster_name, expected_brokers) do
+  def wait_client(client_name, expected_brokers) do
     deadline = System.monotonic_time(:millisecond) + :timer.seconds(30)
-    do_wait_cluster(deadline, cluster_name, expected_brokers)
+    do_wait_client(deadline, client_name, expected_brokers)
   end
 
-  defp do_wait_cluster(deadline, cluster_name, expected_brokers) do
+  defp do_wait_client(deadline, client_name, expected_brokers) do
     Process.sleep(10)
 
     if System.monotonic_time(:millisecond) < deadline do
-      if length(:persistent_term.get({:known_brokers_ids, cluster_name}, [])) == expected_brokers,
+      if length(:persistent_term.get({:known_brokers_ids, client_name}, [])) == expected_brokers,
         do: :ok,
-        else: do_wait_cluster(deadline, cluster_name, expected_brokers)
+        else: do_wait_client(deadline, client_name, expected_brokers)
     else
-      raise "timeout waiting for cluster"
+      raise "timeout waiting for client"
     end
   end
 
-  def get_record_by_offset(cluster_name, topic, partition, offset, isolation \\ :committed) do
+  def get_record_by_offset(client_name, topic, partition, offset, isolation \\ :committed) do
     isolation_level =
       case isolation do
         :committed -> 1
@@ -155,12 +155,12 @@ defmodule Klife.TestUtils do
       ]
     }
 
-    broker = Klife.Producer.Controller.get_broker_id(cluster_name, topic, partition)
+    broker = Klife.Producer.Controller.get_broker_id(client_name, topic, partition)
 
     {:ok, %{content: content}} =
       Klife.Connection.Broker.send_message(
         KlifeProtocol.Messages.Fetch,
-        cluster_name,
+        client_name,
         broker,
         content
       )
@@ -184,7 +184,7 @@ defmodule Klife.TestUtils do
     end
   end
 
-  def get_record_batch_by_offset(cluster_name, topic, partition, offset) do
+  def get_record_batch_by_offset(client_name, topic, partition, offset) do
     content = %{
       replica_id: -1,
       max_wait_ms: 1000,
@@ -207,12 +207,12 @@ defmodule Klife.TestUtils do
       ]
     }
 
-    broker = Klife.Producer.Controller.get_broker_id(cluster_name, topic, partition)
+    broker = Klife.Producer.Controller.get_broker_id(client_name, topic, partition)
 
     {:ok, %{content: content}} =
       Klife.Connection.Broker.send_message(
         KlifeProtocol.Messages.Fetch,
-        cluster_name,
+        client_name,
         broker,
         content
       )
@@ -223,7 +223,7 @@ defmodule Klife.TestUtils do
     records
   end
 
-  def get_partition_resp_records_by_offset(cluster_name, topic, partition, offset) do
+  def get_partition_resp_records_by_offset(client_name, topic, partition, offset) do
     content = %{
       replica_id: -1,
       max_wait_ms: 1000,
@@ -246,12 +246,12 @@ defmodule Klife.TestUtils do
       ]
     }
 
-    broker = Klife.Producer.Controller.get_broker_id(cluster_name, topic, partition)
+    broker = Klife.Producer.Controller.get_broker_id(client_name, topic, partition)
 
     {:ok, %{content: content}} =
       Klife.Connection.Broker.send_message(
         KlifeProtocol.Messages.Fetch,
-        cluster_name,
+        client_name,
         broker,
         content
       )
@@ -261,8 +261,8 @@ defmodule Klife.TestUtils do
     partition_resp.records
   end
 
-  def get_latest_offset(cluster, topic, partition, base_ts) do
-    broker = Klife.Producer.Controller.get_broker_id(cluster, topic, partition)
+  def get_latest_offset(client, topic, partition, base_ts) do
+    broker = Klife.Producer.Controller.get_broker_id(client, topic, partition)
 
     content = %{
       replica_id: -1,
@@ -283,7 +283,7 @@ defmodule Klife.TestUtils do
     {:ok, %{content: resp}} =
       Klife.Connection.Broker.send_message(
         KlifeProtocol.Messages.ListOffsets,
-        cluster,
+        client,
         broker,
         content
       )
@@ -294,25 +294,25 @@ defmodule Klife.TestUtils do
     offset
   end
 
-  def wait_producer(cluster_name) do
+  def wait_producer(client_name) do
     deadline = System.monotonic_time(:millisecond) + 5_000
-    do_wait_producer(deadline, cluster_name)
+    do_wait_producer(deadline, client_name)
   end
 
-  defp do_wait_producer(deadline, cluster_name) do
+  defp do_wait_producer(deadline, client_name) do
     if System.monotonic_time(:millisecond) < deadline do
       case registry_lookup(
-             {Klife.TxnProducerPool, cluster_name, Klife.Cluster.default_txn_pool_name()}
+             {Klife.TxnProducerPool, client_name, Klife.Client.default_txn_pool_name()}
            ) do
         [] ->
           Process.sleep(5)
-          do_wait_producer(deadline, cluster_name)
+          do_wait_producer(deadline, client_name)
 
         [_] ->
           :ok
       end
     else
-      raise "timeout waiting for producers. #{cluster_name}"
+      raise "timeout waiting for producers. #{client_name}"
     end
   end
 end
