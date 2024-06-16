@@ -46,7 +46,7 @@ defmodule Klife.Utils do
   end
 
   defp create_topics_call() do
-    client_opts = Application.fetch_env!(:klife, MyTestClient)
+    client_opts = Application.fetch_env!(:klife, MyClient)
 
     conn_defaults =
       Klife.Connection.Controller.get_opts()

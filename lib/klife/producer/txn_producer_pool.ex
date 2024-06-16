@@ -33,7 +33,7 @@ defmodule Klife.TxnProducerPool do
     txn_timeout_ms: [
       type: :non_neg_integer,
       default: :timer.seconds(90),
-      docs:
+      doc:
         "The maximum amount of time, in milliseconds, that a transactional producer is allowed to remain open without either committing or aborting a transaction before it is considered expired"
     ]
   ]

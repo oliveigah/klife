@@ -1,6 +1,6 @@
 import Config
 
-config :klife, MyTestClient,
+config :klife, MyClient,
   connection: [
     bootstrap_servers: ["localhost:19092", "localhost:29092"],
     # bootstrap_servers: ["localhost:19093", "localhost:29093"],

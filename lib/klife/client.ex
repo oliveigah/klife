@@ -6,6 +6,7 @@ defmodule Klife.Client do
   @type list_of_records :: list(record)
 
   @default_producer_name :klife_default_producer
+  @default_partitioner Klife.Producer.DefaultPartitioner
   @default_txn_pool :klife_default_txn_pool
 
   @doc false
@@ -19,6 +20,20 @@ defmodule Klife.Client do
       type: :non_empty_keyword_list,
       required: true,
       keys: Klife.Connection.Controller.get_opts()
+    ],
+    default_producer: [
+      type: :atom,
+      required: false,
+      default: @default_producer_name,
+      doc:
+        "Name of the producer to be used on produce API calls when a specific producer is not provided via configuration or option."
+    ],
+    default_partitioner: [
+      type: :atom,
+      required: false,
+      default: @default_partitioner,
+      doc:
+        "Partitioner module to be used on produce API calls when a specific partitioner is not provided via configuration or option."
     ],
     default_txn_pool: [
       type: :atom,
@@ -62,7 +77,7 @@ defmodule Klife.Client do
   When used it expects an `:otp_app` option that is the OTP application that has the client configuration.
 
   ```elixir
-  defmodule MyApp.MyTestClient do
+  defmodule MyApp.MyClient do
     use Klife.Client, otp_app: :my_app
   end
   ```
@@ -73,8 +88,8 @@ defmodule Klife.Client do
   >
   > - Define it as a proxy to a subset of the functions on `Klife` module,
   > using it's module's name as the `client_name` parameter.
-  > One example of this is the `MyTestClient.produce/2` that forwards
-  > both arguments to `Klife.produce/3` and inject `MyTestClient` as the
+  > One example of this is the `MyClient.produce/2` that forwards
+  > both arguments to `Klife.produce/3` and inject `MyClient` as the
   > second argument.
   >
   > - Define it as a supervisor by calling `use Supervisor` and implementing
@@ -123,7 +138,7 @@ defmodule Klife.Client do
     def start(_type, _args) do
       children = [
         # some other modules...,
-        MyApp.MyTestClient
+        MyApp.MyClient
       ]
 
       opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -160,7 +175,7 @@ defmodule Klife.Client do
 
   ```elixir
   rec = %Klife.Record{value: "some_val", topic: "my_topic"}
-  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyTestClient.produce(rec)
+  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyClient.produce(rec)
   ```
 
   """
@@ -180,7 +195,7 @@ defmodule Klife.Client do
   ## Examples
 
     iex> rec = %Klife.Record{value: "my_val", topic: "my_topic"}
-    iex> {:ok, %Klife.Record{} = enriched_rec} = MyTestClient.produce(rec)
+    iex> {:ok, %Klife.Record{} = enriched_rec} = MyClient.produce(rec)
     iex> true = is_number(enriched_rec.offset)
     iex> true = is_number(enriched_rec.partition)
 
@@ -217,38 +232,63 @@ defmodule Klife.Client do
       end
 
       defp default_txn_pool_key(), do: {__MODULE__, :default_txn_pool}
+      defp default_producer_key(), do: {__MODULE__, :default_producer}
+      defp default_partitioner_key(), do: {__MODULE__, :default_partitioner}
+
       def get_default_txn_pool(), do: :persistent_term.get(default_txn_pool_key())
+      def get_default_producer(), do: :persistent_term.get(default_producer_key())
+      def get_default_partitioner(), do: :persistent_term.get(default_partitioner_key())
 
       @doc false
       @impl Supervisor
       def init(_args) do
         config = Application.get_env(@otp_app, __MODULE__)
 
-        default_producer = [name: Klife.Client.default_producer_name()]
-        default_txn_pool = [name: Klife.Client.default_txn_pool_name()]
+        validated_opts = NimbleOptions.validate!(config, @input_opts)
 
-        enriched_config =
-          config
-          |> Keyword.update(:producers, [], fn l -> [default_producer | l] end)
-          |> Keyword.update(:txn_pools, [], fn l -> [default_txn_pool | l] end)
+        default_producer_name = validated_opts[:default_producer]
+        default_txn_pool_name = validated_opts[:default_txn_pool]
+        default_partitioner = validated_opts[:default_partitioner]
 
-        validated_opts =
-          enriched_config
-          |> NimbleOptions.validate!(@input_opts)
+        parsed_opts =
+          validated_opts
+          |> Keyword.update(:producers, [], fn l ->
+            default_producer =
+              NimbleOptions.validate!(
+                [name: default_producer_name],
+                Klife.Producer.get_opts()
+              )
+
+            Enum.uniq_by(l ++ [default_producer], fn p -> p[:name] end)
+          end)
+          |> Keyword.update(:txn_pools, [], fn l ->
+            default_txn_pool =
+              NimbleOptions.validate!(
+                [name: default_txn_pool_name],
+                Klife.TxnProducerPool.get_opts()
+              )
+
+            Enum.uniq_by(l ++ [default_txn_pool], fn p -> p[:name] end)
+          end)
+          |> Keyword.update!(:topics, fn l ->
+            Enum.map(l, fn topic ->
+              topic
+              |> Keyword.put_new(:default_producer, default_producer_name)
+              |> Keyword.put_new(:default_partitioner, default_partitioner)
+            end)
+          end)
           |> Keyword.update!(:producers, fn l -> Enum.map(l, &Map.new/1) end)
           |> Keyword.update!(:txn_pools, fn l -> Enum.map(l, &Map.new/1) end)
           |> Keyword.update!(:topics, fn l -> Enum.map(l, &Map.new/1) end)
 
-        client_name_map = %{}
-
         conn_opts =
-          validated_opts
+          parsed_opts
           |> Keyword.fetch!(:connection)
           |> Map.new()
           |> Map.put(:client_name, __MODULE__)
 
         producer_opts =
-          validated_opts
+          parsed_opts
           |> Keyword.take([:producers, :txn_pools, :topics])
           |> Keyword.merge(client_name: __MODULE__)
           |> Map.new()
@@ -258,7 +298,9 @@ defmodule Klife.Client do
           {Klife.Producer.Supervisor, producer_opts}
         ]
 
-        :persistent_term.put(default_txn_pool_key(), validated_opts[:default_txn_pool])
+        :persistent_term.put(default_txn_pool_key(), parsed_opts[:default_txn_pool])
+        :persistent_term.put(default_producer_key(), parsed_opts[:default_producer])
+        :persistent_term.put(default_partitioner_key(), parsed_opts[:default_partitioner])
 
         Supervisor.init(children, strategy: :one_for_one)
       end
