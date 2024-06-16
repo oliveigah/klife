@@ -26,7 +26,7 @@ defmodule Klife.Utils do
   # the topic are created, thats why we need to create a connection from
   # scratch here. Must solve it later.
   def create_topics!() do
-    client_opts = Application.fetch_env!(:klife, Klife.MyClient)
+    client_opts = Application.fetch_env!(:klife, MyTestClient)
 
     conn_defaults =
       Klife.Connection.Controller.get_opts()

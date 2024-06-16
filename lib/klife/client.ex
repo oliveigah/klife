@@ -62,7 +62,7 @@ defmodule Klife.Client do
   When used it expects an `:otp_app` option that is the OTP application that has the client configuration.
 
   ```elixir
-  defmodule MyApp.MyClient do
+  defmodule MyApp.MyTestClient do
     use Klife.Client, otp_app: :my_app
   end
   ```
@@ -73,8 +73,8 @@ defmodule Klife.Client do
   >
   > - Define it as a proxy to a subset of the functions on `Klife` module,
   > using it's module's name as the `client_name` parameter.
-  > One example of this is the `MyClient.produce/2` that forwards
-  > both arguments to `Klife.produce/3` and inject `MyClient` as the
+  > One example of this is the `MyTestClient.produce/2` that forwards
+  > both arguments to `Klife.produce/3` and inject `MyTestClient` as the
   > second argument.
   >
   > - Define it as a supervisor by calling `use Supervisor` and implementing
@@ -123,7 +123,7 @@ defmodule Klife.Client do
     def start(_type, _args) do
       children = [
         # some other modules...,
-        MyApp.MyClient
+        MyApp.MyTestClient
       ]
 
       opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -160,7 +160,7 @@ defmodule Klife.Client do
 
   ```elixir
   rec = %Klife.Record{value: "some_val", topic: "my_topic"}
-  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyClient.produce(rec)
+  {:ok, %Klife.Record{offset: offset, partition: partition}} = MyTestClient.produce(rec)
   ```
 
   """
@@ -180,7 +180,7 @@ defmodule Klife.Client do
   ## Examples
 
     iex> rec = %Klife.Record{value: "my_val", topic: "my_topic"}
-    iex> {:ok, %Klife.Record{} = enriched_rec} = MyClient.produce(rec)
+    iex> {:ok, %Klife.Record{} = enriched_rec} = MyTestClient.produce(rec)
     iex> true = is_number(enriched_rec.offset)
     iex> true = is_number(enriched_rec.partition)
 

@@ -27,7 +27,7 @@ defmodule Klife.TestUtils do
   def stop_broker(client_name, broker_id) do
     Task.async(fn ->
       cb_ref = make_ref()
-      :ok = PubSub.subscribe({:client_change, client_name}, cb_ref)
+      :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
 
       service_name = get_service_name(client_name, broker_id)
 
@@ -35,7 +35,7 @@ defmodule Klife.TestUtils do
 
       result =
         receive do
-          {{:client_change, ^client_name}, event_data, ^cb_ref} ->
+          {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
             removed_brokers = event_data.removed_brokers
             brokers_list = Enum.map(removed_brokers, fn {broker_id, _url} -> broker_id end)
 
@@ -47,7 +47,7 @@ defmodule Klife.TestUtils do
             {:error, :timeout}
         end
 
-      :ok = PubSub.unsubscribe({:client_change, client_name})
+      :ok = PubSub.unsubscribe({:cluster_change, client_name})
 
       Process.sleep(10)
       result
@@ -62,7 +62,7 @@ defmodule Klife.TestUtils do
       port_map = @port_to_service_name |> Enum.map(fn {k, v} -> {v, k} end) |> Map.new()
       expected_url = "localhost:#{port_map[service_name]}"
 
-      :ok = PubSub.subscribe({:client_change, client_name}, cb_ref)
+      :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
 
       old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
 
@@ -85,7 +85,7 @@ defmodule Klife.TestUtils do
 
       result =
         receive do
-          {{:client_change, ^client_name}, event_data, ^cb_ref} ->
+          {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
             added_brokers = event_data.added_brokers
 
             case Enum.find(added_brokers, fn {_broker_id, url} -> url == expected_url end) do
@@ -100,7 +100,7 @@ defmodule Klife.TestUtils do
             {:error, :timeout}
         end
 
-      :ok = PubSub.unsubscribe({:client_change, client_name})
+      :ok = PubSub.unsubscribe({:cluster_change, client_name})
 
       Process.sleep(10)
       result

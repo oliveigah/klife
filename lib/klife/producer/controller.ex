@@ -70,13 +70,13 @@ defmodule Klife.Producer.Controller do
 
     Utils.wait_connection!(client_name)
 
-    :ok = PubSub.subscribe({:client_change, client_name})
+    :ok = PubSub.subscribe({:cluster_change, client_name})
 
     {:ok, state}
   end
 
   def handle_info(
-        {{:client_change, client_name}, _event_data, _callback_data},
+        {{:cluster_change, client_name}, _event_data, _callback_data},
         %__MODULE__{client_name: client_name} = state
       ) do
     Process.cancel_timer(state.check_metadata_timer_ref)

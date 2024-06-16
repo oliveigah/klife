@@ -113,9 +113,9 @@ if Mix.env() in [:dev] do
             rec1 = Enum.random(records_1)
             rec2 = Enum.random(records_2)
 
-            t0 = Task.async(fn -> Klife.MyClient.produce(rec0) end)
-            t1 = Task.async(fn -> Klife.MyClient.produce(rec1) end)
-            t2 = Task.async(fn -> Klife.MyClient.produce(rec2) end)
+            t0 = Task.async(fn -> MyTestClient.produce(rec0) end)
+            t1 = Task.async(fn -> MyTestClient.produce(rec1) end)
+            t2 = Task.async(fn -> MyTestClient.produce(rec2) end)
 
             [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
           end,
@@ -211,14 +211,14 @@ if Mix.env() in [:dev] do
             rec1 = Enum.random(records_1)
             rec2 = Enum.random(records_2)
 
-            [{:ok, _}, {:ok, _}, {:ok, _}] = Klife.MyClient.produce_batch([rec0, rec1, rec2])
+            [{:ok, _}, {:ok, _}, {:ok, _}] = MyTestClient.produce_batch([rec0, rec1, rec2])
           end,
           "produce_batch_txn" => fn ->
             rec0 = Enum.random(records_0)
             rec1 = Enum.random(records_1)
             rec2 = Enum.random(records_2)
 
-            {:ok, [_rec1, _rec2, _rec3]} = Klife.MyClient.produce_batch_txn([rec0, rec1, rec2])
+            {:ok, [_rec1, _rec2, _rec3]} = MyTestClient.produce_batch_txn([rec0, rec1, rec2])
           end
         },
         time: 15,
@@ -245,13 +245,13 @@ if Mix.env() in [:dev] do
       Benchee.run(
         %{
           "klife" => fn ->
-            {:ok, _rec} = Klife.MyClient.produce(Enum.random(records_0))
+            {:ok, _rec} = MyTestClient.produce(Enum.random(records_0))
           end,
           "klife multi inflight" => fn ->
-            {:ok, _rec} = Klife.MyClient.produce(Enum.random(in_flight_records))
+            {:ok, _rec} = MyTestClient.produce(Enum.random(in_flight_records))
           end,
           "klife multi inflight linger" => fn ->
-            {:ok, _rec} = Klife.MyClient.produce(Enum.random(in_flight_linger_records))
+            {:ok, _rec} = MyTestClient.produce(Enum.random(in_flight_linger_records))
           end
         },
         time: 15,
@@ -290,7 +290,7 @@ if Mix.env() in [:dev] do
         Enum.map(tasks_recs_to_send, fn recs ->
           Task.async(fn ->
             Enum.map(recs, fn rec ->
-              {:ok, _rec} = Klife.MyClient.produce(rec)
+              {:ok, _rec} = MyTestClient.produce(rec)
             end)
           end)
         end)

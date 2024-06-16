@@ -41,7 +41,7 @@ defmodule Klife.MixProject do
   defp groups_for_docs(group), do: {String.to_atom(group), &(&1[:group] == group)}
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
-  defp elixirc_paths(:dev), do: ["lib"]
+  defp elixirc_paths(:dev), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
   # Run "mix help deps" to learn about dependencies.

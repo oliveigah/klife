@@ -191,7 +191,7 @@ defmodule Klife.Connection.Controller do
     :persistent_term.put({:known_brokers_ids, state.client_name}, new_brokers)
 
     if to_start != [] or to_remove != [] do
-      PubSub.publish({:client_change, state.client_name}, %{
+      PubSub.publish({:cluster_change, state.client_name}, %{
         added_brokers: to_start,
         removed_brokers: to_remove
       })

@@ -138,8 +138,8 @@ defmodule Klife.Connection.SystemTest do
     Enum.each(brokers_list_3, &check_broker_connection(client_name_3, &1))
   end
 
-  @tag client_change: true, capture_log: true
-  test "client changes events" do
+  @tag cluster_change: true, capture_log: true
+  test "cluster changes events" do
     config = [
       connection: [
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
@@ -152,13 +152,13 @@ defmodule Klife.Connection.SystemTest do
       ]
     ]
 
-    Application.put_env(:klife, __MODULE__.MyClientTest, config)
+    Application.put_env(:klife, __MODULE__.MyOtherClient, config)
 
-    defmodule MyClientTest do
+    defmodule MyOtherClient do
       use Klife.Client, otp_app: :klife
     end
 
-    client_name = __MODULE__.MyClientTest
+    client_name = __MODULE__.MyOtherClient
 
     assert {:ok, _pid} = start_supervised(client_name)
 
@@ -168,20 +168,20 @@ defmodule Klife.Connection.SystemTest do
     broker_id_to_remove = List.first(brokers)
     cb_ref = make_ref()
 
-    :ok = PubSub.subscribe({:client_change, client_name}, %{some_data: cb_ref})
+    :ok = PubSub.subscribe({:cluster_change, client_name}, %{some_data: cb_ref})
 
     {:ok, service_name} = TestUtils.stop_broker(client_name, broker_id_to_remove)
 
-    assert_received({{:client_change, ^client_name}, event_data, %{some_data: ^cb_ref}})
+    assert_received({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}})
     assert broker_id_to_remove in Enum.map(event_data.removed_brokers, fn {b, _h} -> b end)
     assert broker_id_to_remove not in :persistent_term.get({:known_brokers_ids, client_name})
 
     {:ok, broker_id} = TestUtils.start_broker(service_name, client_name)
 
-    assert_received({{:client_change, ^client_name}, event_data, %{some_data: ^cb_ref}})
+    assert_received({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}})
     assert broker_id in Enum.map(event_data.added_brokers, fn {b, _h} -> b end)
     assert broker_id in :persistent_term.get({:known_brokers_ids, client_name})
 
-    :ok = PubSub.unsubscribe({:client_change, client_name})
+    :ok = PubSub.unsubscribe({:cluster_change, client_name})
   end
 end

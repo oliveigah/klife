@@ -24,7 +24,7 @@ defmodule Klife.Application do
 
   defp handle_clients() do
     [
-      Klife.MyClient
+      MyTestClient
     ]
   end
 
