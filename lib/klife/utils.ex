@@ -25,7 +25,27 @@ defmodule Klife.Utils do
   # right now there is a bug when the Connection system intialize before
   # the topic are created, thats why we need to create a connection from
   # scratch here. Must solve it later.
-  def create_topics!() do
+  def create_topics() do
+    do_create_topics(System.monotonic_time())
+  end
+
+  defp do_create_topics(init_time) do
+    case create_topics_call() do
+      :ok ->
+        :ok
+
+      :error ->
+        now = System.monotonic_time(:millisecond)
+
+        if now - init_time > :timer.seconds(15) do
+          raise "Timeout while creating topics"
+        else
+          do_create_topics(init_time)
+        end
+    end
+  end
+
+  defp create_topics_call() do
     client_opts = Application.fetch_env!(:klife, MyTestClient)
 
     conn_defaults =

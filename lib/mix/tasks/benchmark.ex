@@ -4,6 +4,11 @@ if Mix.env() in [:dev] do
 
     def run(args) do
       Application.ensure_all_started(:klife)
+
+      :ok = Klife.Utils.create_topics()
+      opts = [strategy: :one_for_one, name: Benchmark.Supervisor]
+      {:ok, _} = Supervisor.start_link([MyTestClient], opts)
+
       Process.sleep(1_000)
       apply(Mix.Tasks.Benchmark, :do_run_bench, args)
     end

@@ -7,44 +7,14 @@ defmodule Klife.Application do
 
   @impl true
   def start(_type, _args) do
-    # TODO: Refactor and rethink auto topic creation feature
-    create_topics()
-
     children = [
       Klife.ProcessRegistry,
-      Klife.PubSub,
-      handle_clients()
+      Klife.PubSub
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Klife.Supervisor]
     Supervisor.start_link(List.flatten(children), opts)
-  end
-
-  defp handle_clients() do
-    [
-      MyTestClient
-    ]
-  end
-
-  defp create_topics() do
-    do_create_topics(System.monotonic_time())
-  end
-
-  defp do_create_topics(init_time) do
-    case Klife.Utils.create_topics!() do
-      :ok ->
-        :ok
-
-      :error ->
-        now = System.monotonic_time(:millisecond)
-
-        if now - init_time > :timer.seconds(15) do
-          raise "Timeout while creating topics"
-        else
-          do_create_topics(init_time)
-        end
-    end
   end
 end
