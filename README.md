@@ -4,7 +4,7 @@
 
 Klife is a Future Proof™ kafka client written in Elixir.
 
-It leverages the [klife_protocol](https://github.com/oliveigah/klife_protocol) project as to natively speak Kafka's wire protocol in order to support newer features.
+It leverages the [klife_protocol](https://github.com/oliveigah/klife_protocol) implementation of Kafka's wire protocol in order to support newer features.
 
 
 ## TODOS
