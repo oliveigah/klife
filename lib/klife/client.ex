@@ -166,6 +166,25 @@ defmodule Klife.Client do
   """
 
   @doc group: "Producer API"
+  @doc """
+  Produce a single record.
+
+  It expects a `Klife.Record` struct containg at least `:value` and `:topic` and returns
+  an ok/error tuple along side with the enriched version of the input record.
+
+  The record's enriched attribute may be:
+    - :offset, when the record is successfully produced
+    - :partition, when it is not set on the input
+    - :error_code, kafka's server error code
+
+  ## Examples
+
+    iex> rec = %Klife.Record{value: "my_val", topic: "my_topic"}
+    iex> {:ok, %Klife.Record{} = enriched_rec} = MyClient.produce(rec)
+    iex> true = is_number(enriched_rec.offset)
+    iex> true = is_number(enriched_rec.partition)
+
+  """
   @callback produce(record, opts :: Keyword.t()) :: {:ok, record} | {:error, record}
 
   @doc group: "Producer API"
