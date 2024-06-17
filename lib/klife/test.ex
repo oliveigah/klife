@@ -11,10 +11,11 @@ defmodule Klife.Test do
 
   def assert_offset(
         client,
-        %Record{topic: topic, partition: partition} = expected_record,
+        %Record{topic: topic} = expected_record,
         offset,
         opts \\ []
       ) do
+    partition = Keyword.get(opts, :partition, expected_record.partition)
     iso_lvl = Keyword.get(opts, :isolation, :committed)
     txn_status = Keyword.get(opts, :txn_status, :committed)
 
@@ -28,8 +29,11 @@ defmodule Klife.Test do
         assert status == txn_status
 
         Enum.each(Map.from_struct(expected_record), fn {k, v} ->
-          if k in [:value, :key, :headers] do
-            assert v == Map.get(stored_record, k)
+          case k do
+            :value -> assert v == stored_record.value
+            :headers -> assert (v || []) == stored_record.headers
+            :key -> assert v == stored_record.key
+            _ -> :noop
           end
         end)
     end

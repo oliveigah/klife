@@ -46,6 +46,7 @@ defmodule Klife.Client do
       type: {:list, {:keyword_list, Klife.TxnProducerPool.get_opts()}},
       type_doc: "List of `Klife.TxnProducerPool` configurations",
       required: false,
+      default: [],
       doc:
         "List of configurations, each starting a pool of transactional producers for use with transactional api. A default pool is always created."
     ],
@@ -53,6 +54,7 @@ defmodule Klife.Client do
       type: {:list, {:keyword_list, Klife.Producer.get_opts()}},
       type_doc: "List of `Klife.Producer` configurations",
       required: false,
+      default: [],
       doc:
         "List of configurations, each starting a new producer for use with produce api. A default producer is always created."
     ],
@@ -252,7 +254,7 @@ defmodule Klife.Client do
 
         parsed_opts =
           validated_opts
-          |> Keyword.update(:producers, [], fn l ->
+          |> Keyword.update!(:producers, fn l ->
             default_producer =
               NimbleOptions.validate!(
                 [name: default_producer_name],
@@ -261,7 +263,7 @@ defmodule Klife.Client do
 
             Enum.uniq_by(l ++ [default_producer], fn p -> p[:name] end)
           end)
-          |> Keyword.update(:txn_pools, [], fn l ->
+          |> Keyword.update!(:txn_pools, fn l ->
             default_txn_pool =
               NimbleOptions.validate!(
                 [name: default_txn_pool_name],

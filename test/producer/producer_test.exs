@@ -505,7 +505,7 @@ defmodule Klife.ProducerTest do
             } = resp_rec} = MyClient.produce(record)
 
     assert_resp_record(record, resp_rec)
-    assert :ok = assert_offset(MyClient, resp_rec, offset)
+    assert :ok = assert_offset(MyClient, record, offset, partition: partition)
 
     record_batch = TestUtils.get_record_batch_by_offset(MyClient, topic, partition, offset)
     assert length(record_batch) == 1
@@ -527,7 +527,7 @@ defmodule Klife.ProducerTest do
             } = resp_rec} = MyClient.produce(record)
 
     assert_resp_record(record, resp_rec)
-    assert :ok = assert_offset(MyClient, resp_rec, offset)
+    assert :ok = assert_offset(MyClient, record, offset, partition: 3)
 
     record_batch = TestUtils.get_record_batch_by_offset(MyClient, topic, 3, offset)
     assert length(record_batch) == 1
@@ -549,7 +549,7 @@ defmodule Klife.ProducerTest do
             } = resp_rec} = MyClient.produce(record, partitioner: Klife.TestCustomPartitioner)
 
     assert_resp_record(record, resp_rec)
-    assert :ok = assert_offset(MyClient, resp_rec, offset)
+    assert :ok = assert_offset(MyClient, record, offset, partition: 4)
 
     record_batch = TestUtils.get_record_batch_by_offset(MyClient, topic, 4, offset)
     assert length(record_batch) == 1
