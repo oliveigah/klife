@@ -105,7 +105,7 @@ defmodule Klife.Client do
   But it will look somehting like this:
 
   ```elixir
-  config :my_app, MyApp.Client,
+  config :my_app, MyApp.MyClient,
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
@@ -126,7 +126,7 @@ defmodule Klife.Client do
 
   You can see more configuration examples on the ["Client configuration examples"](guides/examples/client_configuration.md) section.
 
-  Configuration options:
+  ### Configuration options:
 
   #{NimbleOptions.docs(@input_options)}
 
@@ -149,7 +149,7 @@ defmodule Klife.Client do
   end
   ```
 
-  ## Interacting with Producer API
+  ## Producer API overview
 
   In order to interact with the producer API you will work with `Klife.Record` module
   as your main input and output data structure.
@@ -176,7 +176,7 @@ defmodule Klife.Client do
 
 
   ```elixir
-  rec = %Klife.Record{value: "some_val", topic: "my_topic"}
+  rec = %Klife.Record{value: "some_val", topic: "my_topic_1"}
   {:ok, %Klife.Record{offset: offset, partition: partition}} = MyClient.produce(rec)
   ```
 
@@ -187,35 +187,139 @@ defmodule Klife.Client do
   Produce a single record.
 
   It expects a `Klife.Record` struct containg at least `:value` and `:topic` and returns
-  an ok/error tuple along side with the enriched version of the input record.
+  an ok/error tuple along side with the enriched version of the input record as described
+  in ["Producer API Overview"](m:Klife.Client#producer-api-overview).
 
-  The record's enriched attribute may be:
-    - :offset, when the record is successfully produced
-    - :partition, when it is not set on the input
-    - :error_code, kafka's server error code
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_produce_opts())}
 
   ## Examples
-
-    iex> rec = %Klife.Record{value: "my_val", topic: "my_topic"}
-    iex> {:ok, %Klife.Record{} = enriched_rec} = MyClient.produce(rec)
-    iex> true = is_number(enriched_rec.offset)
-    iex> true = is_number(enriched_rec.partition)
+      iex> rec = %Klife.Record{value: "my_val", topic: "my_topic_1"}
+      iex> {:ok, %Klife.Record{} = enriched_rec} = MyClient.produce(rec)
+      iex> true = is_number(enriched_rec.offset)
+      iex> true = is_number(enriched_rec.partition)
 
   """
   @callback produce(record, opts :: Keyword.t()) :: {:ok, record} | {:error, record}
 
   @doc group: "Producer API"
+  @doc """
+  Produce a batch of records.
+
+  It expects a list of `Klife.Record` structs containg at least `:value` and `:topic` and returns
+  a list of ok/error tuples along side with the enriched version of the input record as described
+  in ["Producer API Overview"](m:Klife.Client#producer-api-overview).
+
+  The order of the response tuples on the returning list is the same as the input list. That means
+  the first response tuple will be related to the first record on the input and so on.
+
+
+  > #### Semantics and guarantees {: .info}
+  >
+  > This functions is semantically equivalent to call [`produce/2`](c:produce/2) multiple times and
+  > wait for all responses. Which means that 2 records sent on the same batch may succeed or
+  > fail independently.
+  >
+  > In other words that is no atomicity guarentees. If you need it see [`produce_batch_txn/2`](c:produce_batch_txn/2).
+  >
+  > The input list may contain records related to any topic/partition, for records of the same
+  > topic/partition the order between them is guaranteed to be the same of the input, for records
+  > of different topic/partition no order is guaranteed between them.
+  >
+
+  ## Options
+
+    #{NimbleOptions.docs(Klife.get_produce_opts())}
+
+  ## Examples
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = MyClient.produce_batch([rec1, rec2, rec3])
+
+  In order to facilitate the response handling you can use `Klife.Record.verify_batch/1` or
+  `Klife.Record.verify_batch!/1` functions.
+
+  ## Examples
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> input = [rec1, rec2, rec3]
+      iex> {:ok, [_resp1, _resp2, _resp3]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
+
+  """
   @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
 
   @doc group: "Transaction API"
-  @callback produce_batch_txn(list_of_records, opts :: Keyword.t()) ::
-              {:ok, list_of_records} | {:error, list_of_records}
+  @doc """
+  Runs the given function inside a transaction.
 
-  @doc group: "Transaction API"
+  Every produce API call made inside the given function will be part of a transaction
+  that will only commit if the returning value of fun is `:ok` or `{:ok, _any}`, any
+  other return value will abort all records produced inside the given function.
+
+  > #### Beware of performance costs {: .warning}
+  > Each produce call inside the input function may have 1 extra network roundtrip to the broker
+  > than a normal non transactional call.
+  >
+  > At the end of the transaction another round trip is needed in order to commit or abort
+  > the transaction.
+
+
+  > #### Produce semantics inside transaction {: .info}
+  > All produce API calls keeps the same semantics as they have outside a transaction. This means
+  > that records produced using `produce_batch/2` may still succeed/fail independently and a
+  > `produce/2` call may still fail. Therefore it is user's responsability to verify and abort
+  > the transaction if needed.
+
+
+  ## Options
+
+    #{NimbleOptions.docs(Klife.get_txn_opts())}
+
+  ## Examples
+      iex> {:ok, [_resp1, _resp2, _resp3]} = MyClient.transaction(fn ->
+      ...>  rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      ...>  {:ok, resp1} = MyClient.produce(rec1)
+      ...>  rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      ...>  rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      ...>  [resp2, resp3] = MyClient.produce_batch([rec2, rec3])
+      ...>  {:ok, [resp1, resp2, resp3]}
+      ...> end)
+
+  """
   @callback transaction(fun :: function(), opts :: Keyword.t()) :: any()
 
   @doc group: "Transaction API"
-  @callback in_txn?() :: true | false
+  @doc """
+  Transactionally produce a batch of records.
+
+  It expects a list of `Klife.Record` structs containg at least `:value` and `:topic` and returns
+  a tuple ok/error tuple along side with the enriched version of the input records as described
+  in ["Producer API Overview"](m:Klife.Client#producer-api-overview).
+
+  The order of the response tuples on the returning list is the same as the input list. That means
+  the first response tuple will be related to the first record on the input and so on.
+
+  > #### Beware of performance costs {: .warning}
+  > Each `produce_batch_txn/2` will have 2 extra network roundtrips to the broker than a non
+  > transactional `produce_batch/2`. One for adding topic/partitions to the transaction and other
+  > to commit or abort it.
+
+  ## Options
+
+    #{NimbleOptions.docs(Klife.get_txn_opts())}
+
+  ## Examples
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> {:ok, [_resp1, _resp2, _resp3]} = MyClient.produce_batch_txn([rec1, rec2, rec3])
+
+  """
+  @callback produce_batch_txn(list_of_records, opts :: Keyword.t()) ::
+              {:ok, list_of_records} | {:error, list_of_records}
 
   defmacro __using__(opts) do
     input_opts = @input_options
@@ -311,7 +415,6 @@ defmodule Klife.Client do
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
-      def in_txn?(), do: Klife.in_txn?(__MODULE__)
     end
   end
 end

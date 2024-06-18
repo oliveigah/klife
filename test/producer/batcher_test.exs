@@ -38,7 +38,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "1",
         key: "key_1",
         headers: [%{key: "header_key", value: "header_value"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 0,
         __estimated_size: 100,
         __batch_index: 0
@@ -52,7 +52,7 @@ defmodule Klife.Producer.BatcherTest do
              )
 
     assert new_state.current_estimated_size == 100
-    assert [inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
+    assert [inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -68,7 +68,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "2",
         key: "key_2",
         headers: [%{key: "header_key2", value: "header_value2"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 0,
         __estimated_size: 200,
         __batch_index: 0
@@ -82,7 +82,7 @@ defmodule Klife.Producer.BatcherTest do
              )
 
     assert new_state.current_estimated_size == 300
-    assert [inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
+    assert [inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -98,7 +98,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "3",
         key: "key_3",
         headers: [%{key: "header_key3", value: "header_value3"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 1,
         __estimated_size: 300,
         __batch_index: 0
@@ -113,9 +113,9 @@ defmodule Klife.Producer.BatcherTest do
 
     assert new_state.current_estimated_size == 600
 
-    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
+    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
 
-    assert [inserted_rec_3] = new_state.current_batch[{"my_topic", 1}].records
+    assert [inserted_rec_3] = new_state.current_batch[{"my_topic_1", 1}].records
 
     assert %{
              value: ^rec_val,
@@ -146,9 +146,9 @@ defmodule Klife.Producer.BatcherTest do
 
     assert new_state.current_estimated_size == 1000
 
-    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic", 0}].records
+    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
 
-    assert [^inserted_rec_3] = new_state.current_batch[{"my_topic", 1}].records
+    assert [^inserted_rec_3] = new_state.current_batch[{"my_topic_1", 1}].records
 
     assert [inserted_rec_4] = new_state.current_batch[{"topic_b", 0}].records
 
@@ -196,7 +196,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "1",
         key: "key_1",
         headers: [%{key: "header_key", value: "header_value"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 0,
         __estimated_size: 100,
         __batch_index: 1
@@ -207,7 +207,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "2",
         key: "key_2",
         headers: [%{key: "header_key", value: "header_value"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 0,
         __estimated_size: 200,
         __batch_index: 2
@@ -218,7 +218,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "3",
         key: "key_3",
         headers: [%{key: "header_key", value: "header_value"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 0,
         __estimated_size: 300,
         __batch_index: 3
@@ -238,7 +238,7 @@ defmodule Klife.Producer.BatcherTest do
              inserted_rec_2,
              inserted_rec_3
            ] =
-             new_state.current_batch[{"my_topic", 0}].records |> Enum.reverse()
+             new_state.current_batch[{"my_topic_1", 0}].records |> Enum.reverse()
 
     assert %{
              value: ^rec1_val,
@@ -272,7 +272,7 @@ defmodule Klife.Producer.BatcherTest do
         value: "1",
         key: "key_1",
         headers: [%{key: "header_key", value: "header_value"}],
-        topic: "my_topic",
+        topic: "my_topic_1",
         partition: 0,
         __estimated_size: 400,
         __batch_index: 1
@@ -326,7 +326,7 @@ defmodule Klife.Producer.BatcherTest do
              _,
              inserted_rec_1
            ] =
-             new_state.current_batch[{"my_topic", 0}].records |> Enum.reverse()
+             new_state.current_batch[{"my_topic_1", 0}].records |> Enum.reverse()
 
     assert %{
              value: ^rec1_val,

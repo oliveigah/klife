@@ -11,6 +11,38 @@ defmodule Klife do
   alias Klife.TxnProducerPool
   alias Klife.Producer.Controller, as: PController
 
+  @produce_opts [
+    producer: [
+      type: :atom,
+      required: false,
+      doc:
+        "Producer's name that will override the `default_producer` configuration. Ignored inside transactions."
+    ],
+    async: [
+      type: :boolean,
+      required: false,
+      default: false,
+      doc:
+        "Makes the produce asynchronous. When `true` the return value will be `:ok`. Ignored inside transactions."
+    ],
+    partitioner: [
+      type: :atom,
+      required: false,
+      doc: "Module that will override `default_partitioner` configuration."
+    ]
+  ]
+
+  @txn_opts [
+    pool_name: [
+      type: :atom,
+      required: false,
+      doc: "Txn pool's name that will override the `default_txn_pool` configuration."
+    ]
+  ]
+
+  def get_produce_opts(), do: @produce_opts
+  def get_txn_opts(), do: @txn_opts
+
   def produce(%Record{} = record, client, opts \\ []) do
     case produce_batch([record], client, opts) do
       [resp] -> resp
@@ -45,8 +77,6 @@ defmodule Klife do
   def transaction(fun, client, opts \\ []) do
     TxnProducerPool.run_txn(client, get_txn_pool(client, opts), fun)
   end
-
-  def in_txn?(client), do: TxnProducerPool.in_txn?(client)
 
   defp get_txn_pool(client, opts) do
     case Keyword.get(opts, :pool_name) do

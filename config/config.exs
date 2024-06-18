@@ -83,7 +83,9 @@ config :klife, MyClient,
     [
       name: "test_async_topic"
     ],
-    [name: "my_topic"]
+    [name: "my_topic_1"],
+    [name: "my_topic_2"],
+    [name: "my_topic_3"]
   ]
 
 if config_env() == :dev do

@@ -32,7 +32,7 @@ defmodule Klife.Connection.Controller do
       type: :boolean,
       required: false,
       default: false,
-      doc: "Specify the underlying socket module. Use :ssl if true and :gen_tcp if false."
+      doc: "Specify the underlying socket module. Use `:ssl` if true and `:gen_tcp` if false."
     ],
     connect_opts: [
       type: {:list, :any},

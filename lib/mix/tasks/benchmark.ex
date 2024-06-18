@@ -9,6 +9,8 @@ if Mix.env() in [:dev] do
       opts = [strategy: :one_for_one, name: Benchmark.Supervisor]
       {:ok, _} = Supervisor.start_link([MyClient], opts)
 
+      :ok = Klife.TestUtils.wait_producer(MyClient)
+
       Process.sleep(1_000)
       apply(Mix.Tasks.Benchmark, :do_run_bench, args)
     end

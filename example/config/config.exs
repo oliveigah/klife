@@ -5,4 +5,4 @@ config :example, Example.MySimplestClient,
     bootstrap_servers: ["localhost:19092", "localhost:29092"],
     ssl: false
   ],
-  topics: [[name: "my_topic"]]
+  topics: [[name: "my_topic_1"]]
