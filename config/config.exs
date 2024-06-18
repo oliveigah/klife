@@ -1,6 +1,6 @@
 import Config
 
-config :klife, MyTestClient,
+config :klife, MyClient,
   connection: [
     bootstrap_servers: ["localhost:19092", "localhost:29092"],
     # bootstrap_servers: ["localhost:19093", "localhost:29093"],
@@ -83,7 +83,9 @@ config :klife, MyTestClient,
     [
       name: "test_async_topic"
     ],
-    [name: "my_topic"]
+    [name: "my_topic_1"],
+    [name: "my_topic_2"],
+    [name: "my_topic_3"]
   ]
 
 if config_env() == :dev do

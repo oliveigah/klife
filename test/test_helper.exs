@@ -3,6 +3,8 @@
 :ok = Klife.Utils.create_topics()
 
 opts = [strategy: :one_for_one, name: Test.Supervisor]
-{:ok, _} = Supervisor.start_link([MyTestClient], opts)
+{:ok, _} = Supervisor.start_link([MyClient], opts)
+
+:ok = Klife.TestUtils.wait_producer(MyClient)
 
 ExUnit.start()

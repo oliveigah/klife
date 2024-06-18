@@ -410,7 +410,6 @@ defmodule Klife.Producer do
       # main metadata ets table, therefore we need a way to
       # find out it's value.
       put_batcher_id(client_name, producer_name, t_name, p_idx, b_id)
-
       if ProducerController.get_default_producer(client_name, t_name, p_idx) == producer_name do
         ProducerController.update_batcher_id(client_name, t_name, p_idx, b_id)
       end
