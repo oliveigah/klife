@@ -47,13 +47,6 @@ defmodule Klife.Producer.Controller do
       check_metadata_timer_ref: timer_ref
     }
 
-    Enum.each(topics_list, fn t ->
-      :persistent_term.put(
-        {__MODULE__, client_name, t.name},
-        t.default_producer
-      )
-    end)
-
     :ets.new(topics_partitions_metadata_table(client_name), [
       :set,
       :public,
@@ -167,11 +160,9 @@ defmodule Klife.Producer.Controller do
   @impl true
   def handle_info(
         :check_metadata,
-        %__MODULE__{client_name: client_name, topics: topics} = state
+        %__MODULE__{client_name: client_name} = state
       ) do
-    content = %{
-      topics: Enum.map(topics, fn t -> %{name: t.name} end)
-    }
+    content = %{topics: nil}
 
     case Broker.send_message(Messages.Metadata, client_name, :controller, content) do
       {:error, _} ->
@@ -260,9 +251,6 @@ defmodule Klife.Producer.Controller do
     end)
   end
 
-  def get_producer_for_topic(client_name, topic),
-    do: :persistent_term.get({__MODULE__, client_name, topic})
-
   def get_partitioner_data(client_name, topic) do
     client_name
     |> partitioner_metadata_table()
@@ -281,14 +269,15 @@ defmodule Klife.Producer.Controller do
 
     results =
       for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
-          config_topic = Enum.find(topics, &(&1.name == topic.name)),
           partition <- topic.partitions do
         case :ets.lookup(table_name, {topic.name, partition.partition_index}) do
           [] ->
+            config_topic = Enum.find(topics, %{}, &(&1.name == topic.name))
+
             :ets.insert(table_name, {
               {topic.name, partition.partition_index},
               partition.leader_id,
-              config_topic.default_producer,
+              config_topic[:default_producer] || apply(client_name, :get_default_producer, []),
               # batcher_id will be defined on producer
               nil
             })
@@ -325,8 +314,9 @@ defmodule Klife.Producer.Controller do
 
     table_name = partitioner_metadata_table(client_name)
 
-    for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
-        config_topic = Enum.find(topics, &(&1.name == topic.name)) do
+    for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)) do
+      config_topic = Enum.find(topics, %{}, &(&1.name == topic.name))
+
       max_partition =
         topic.partitions
         |> Enum.map(& &1.partition_index)
@@ -334,7 +324,8 @@ defmodule Klife.Producer.Controller do
 
       data = %{
         max_partition: max_partition,
-        default_partitioner: config_topic.default_partitioner
+        default_partitioner:
+          config_topic[:default_partitioner] || apply(client_name, :get_default_partitioner, [])
       }
 
       case :ets.lookup(table_name, topic.name) do

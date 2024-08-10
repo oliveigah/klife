@@ -88,6 +88,18 @@ defmodule Klife.Utils do
         }
       end)
 
+    non_configured_topics = [
+      %{
+        name: "non_configured_topic_1",
+        num_partitions: 10,
+        replication_factor: 2,
+        assignments: [],
+        configs: []
+      }
+    ]
+
+    topics_input = topics_input ++ non_configured_topics
+
     :ok =
       %{
         content: %{

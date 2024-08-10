@@ -56,6 +56,23 @@ defmodule Klife.ProducerTest do
     assert length(record_batch) == 1
   end
 
+  test "produce message sync no batching - unconfigured topic" do
+    record = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "non_configured_topic_1",
+      partition: 1
+    }
+
+    assert {:ok, %Record{offset: offset} = resp_rec} = MyClient.produce(record)
+
+    assert_resp_record(record, resp_rec)
+    assert :ok = assert_offset(MyClient, record, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(MyClient, record.topic, 1, offset)
+    assert length(record_batch) == 1
+  end
+
   test "produce message sync using non default producer" do
     record = %Record{
       value: :rand.bytes(10),

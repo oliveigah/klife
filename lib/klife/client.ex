@@ -26,7 +26,7 @@ defmodule Klife.Client do
       required: false,
       default: @default_producer_name,
       doc:
-        "Name of the producer to be used on produce API calls when a specific producer is not provided via configuration or option."
+        "Name of the producer to be used on produce API calls when a specific producer is not provided via configuration or option. If not provided a default producer will be started automatically."
     ],
     default_partitioner: [
       type: :atom,
@@ -40,7 +40,7 @@ defmodule Klife.Client do
       required: false,
       default: @default_txn_pool,
       doc:
-        "Name of the txn pool to be used on transactions when a `:pool_name` is not provided as an option."
+        "Name of the txn pool to be used on transactions when a `:pool_name` is not provided as an option. If not provided a default txn pool will be started automatically."
     ],
     txn_pools: [
       type: {:list, {:keyword_list, Klife.TxnProducerPool.get_opts()}},
@@ -48,21 +48,21 @@ defmodule Klife.Client do
       required: false,
       default: [],
       doc:
-        "List of configurations, each starting a pool of transactional producers for use with transactional api. A default pool is always created."
+        "List of configurations, each starting a pool of transactional producers for use with transactional api."
     ],
     producers: [
       type: {:list, {:keyword_list, Klife.Producer.get_opts()}},
       type_doc: "List of `Klife.Producer` configurations",
       required: false,
       default: [],
-      doc:
-        "List of configurations, each starting a new producer for use with produce api. A default producer is always created."
+      doc: "List of configurations, each starting a new producer for use with produce api."
     ],
     topics: [
-      type: {:list, {:non_empty_keyword_list, Klife.Topic.get_opts()}},
+      type: {:list, {:keyword_list, Klife.Topic.get_opts()}},
       type_doc: "List of `Klife.Topic` configurations",
-      required: true,
-      doc: "List of topics that will be managed by the client"
+      required: false,
+      doc: "List of topics that may have special configurations",
+      default: []
     ]
   ]
 
@@ -373,10 +373,9 @@ defmodule Klife.Client do
                 [name: default_txn_pool_name],
                 Klife.TxnProducerPool.get_opts()
               )
-
             Enum.uniq_by(l ++ [default_txn_pool], fn p -> p[:name] end)
           end)
-          |> Keyword.update!(:topics, fn l ->
+          |> Keyword.update(:topics, [], fn l ->
             Enum.map(l, fn topic ->
               topic
               |> Keyword.put_new(:default_producer, default_producer_name)
