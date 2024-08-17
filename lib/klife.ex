@@ -18,17 +18,19 @@ defmodule Klife do
       doc:
         "Producer's name that will override the `default_producer` configuration. Ignored inside transactions."
     ],
-    async: [
-      type: :boolean,
-      required: false,
-      default: false,
-      doc:
-        "Makes the produce asynchronous. When `true` the return value will be `:ok`. Ignored inside transactions."
-    ],
     partitioner: [
       type: :atom,
       required: false,
       doc: "Module that will override `default_partitioner` configuration."
+    ]
+  ]
+
+  @async_opts [
+    callback: [
+      type: :any,
+      required: false,
+      doc:
+        "MFA or function/1 that will be called with the produce result. The result is injected as the first argument on MFA and is the only argument for anonymous functions"
     ]
   ]
 
@@ -42,6 +44,7 @@ defmodule Klife do
 
   def get_produce_opts(), do: @produce_opts
   def get_txn_opts(), do: @txn_opts
+  def get_async_opts(), do: @async_opts
 
   def produce(%Record{} = record, client, opts \\ []) do
     case produce_batch([record], client, opts) do
@@ -64,6 +67,43 @@ defmodule Klife do
     if TxnProducerPool.in_txn?(client),
       do: TxnProducerPool.produce(records, client, opts),
       else: Producer.produce(records, client, opts)
+  end
+
+  # The async implementation is non optimal because it may copy a lot of
+  # data to the new task process. Ideally we could solve this by making
+  # Dispatcher start the callback task instead of send message to the
+  # waiting pid but it would be hard to keep the same API this way
+  # because inside Dispatcher we do not have the same data and since
+  # we want the async callback to receive the exact same output
+  # as the sync counter part this is the easiest for now.
+  def produce_async(%Record{} = record, client, opts \\ []) do
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        resp = produce(record, client, opts)
+
+        case opts[:callback] do
+          {m, f, args} -> apply(m, f, [resp | args])
+          fun when is_function(fun, 1) -> fun.(resp)
+          _ -> :noop
+        end
+      end)
+
+    :ok
+  end
+
+  def produce_batch_async([%Record{} | _] = records, client, opts \\ []) do
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        resp = produce_batch(records, client, opts)
+
+        case opts[:callback] do
+          {m, f, args} -> apply(m, f, [resp | args])
+          fun when is_function(fun, 1) -> fun.(resp)
+          _ -> :noop
+        end
+      end)
+
+    :ok
   end
 
   def produce_batch_txn([%Record{} | _] = records, client, opts \\ []) do

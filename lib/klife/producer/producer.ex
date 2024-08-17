@@ -270,7 +270,7 @@ defmodule Klife.Producer do
   @doc false
   def produce([%Record{} | _] = records, client_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
-    callback_pid = if Keyword.get(opts, :async, false), do: nil, else: self()
+    callback_pid = self()
 
     delivery_timeout_ms =
       records
@@ -307,23 +307,19 @@ defmodule Klife.Producer do
         if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
       end)
 
-    if callback_pid do
-      max_resps = List.last(records).__batch_index
-      responses = wait_produce_response(delivery_timeout_ms, max_resps)
+    max_resps = List.last(records).__batch_index
+    responses = wait_produce_response(delivery_timeout_ms, max_resps)
 
-      records
-      |> Enum.map(fn %Record{} = rec ->
-        case Map.get(responses, rec.__batch_index) do
-          {:ok, offset} ->
-            {:ok, %{rec | offset: offset}}
+    records
+    |> Enum.map(fn %Record{} = rec ->
+      case Map.get(responses, rec.__batch_index) do
+        {:ok, offset} ->
+          {:ok, %{rec | offset: offset}}
 
-          {:error, ec} ->
-            {:error, %{rec | error_code: ec}}
-        end
-      end)
-    else
-      :ok
-    end
+        {:error, ec} ->
+          {:error, %{rec | error_code: ec}}
+      end
+    end)
   end
 
   defp wait_produce_response(timeout_ms, max_resps) do
@@ -410,6 +406,7 @@ defmodule Klife.Producer do
       # main metadata ets table, therefore we need a way to
       # find out it's value.
       put_batcher_id(client_name, producer_name, t_name, p_idx, b_id)
+
       if ProducerController.get_default_producer(client_name, t_name, p_idx) == producer_name do
         ProducerController.update_batcher_id(client_name, t_name, p_idx, b_id)
       end

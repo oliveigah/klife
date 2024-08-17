@@ -205,6 +205,50 @@ defmodule Klife.Client do
 
   @doc group: "Producer API"
   @doc """
+  Produce a single record asynchronoulsy.
+
+  The same as [`produce/2`](c:produce/2) but returns immediately. Accepts a callback
+  option to execute arbitrary code after response is obtained.
+
+  > #### Semantics and guarantees {: .info}
+  >
+  > This functions is implemented as `Task.start/1` calling [`produce/2`](c:produce/2).
+  > Therefore there is no guarantees about record delivery or callback execution.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_produce_opts() ++ Klife.get_async_opts())}
+
+  ## Examples
+      Anonymous Function:
+
+      iex> rec = %Klife.Record{value: "my_val", topic: "my_topic_1"}
+      iex> callback = fn resp ->
+      ...>    {:ok, enriched_rec} = resp
+      ...>    true = is_number(enriched_rec.offset)
+      ...>    true = is_number(enriched_rec.partition)
+      ...> end
+      iex> :ok = MyClient.produce_async(rec, callback: callback)
+
+      Using MFA:
+
+      iex> defmodule CB do
+      ...>    def exec(resp, my_arg1, my_arg2) do
+      ...>      "my_arg1" = my_arg1
+      ...>      "my_arg2" = my_arg2
+      ...>      {:ok, enriched_rec} = resp
+      ...>      true = is_number(enriched_rec.offset)
+      ...>      true = is_number(enriched_rec.partition)
+      ...>    end
+      ...> end
+      iex> rec = %Klife.Record{value: "my_val", topic: "my_topic_1"}
+      iex> :ok = MyClient.produce_async(rec, callback: {CB, :exec, ["my_arg1", "my_arg2"]})
+
+  """
+  @callback produce_async(record, opts :: Keyword.t()) :: :ok
+
+  @doc group: "Producer API"
+  @doc """
   Produce a batch of records.
 
   It expects a list of `Klife.Record` structs containg at least `:value` and `:topic` and returns
@@ -250,6 +294,52 @@ defmodule Klife.Client do
 
   """
   @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
+
+
+  @doc group: "Producer API"
+  @doc """
+  Produce a batch of records asynchronoulsy.
+
+  The same as [`produce_batch/2`](c:produce_batch/2) but returns immediately. Accepts a callback
+  option to execute arbitrary code after response is obtained.
+
+  > #### Semantics and guarantees {: .info}
+  >
+  > This functions is implemented as `Task.start/1` calling [`produce_batch/2`](c:produce_batch/2).
+  > Therefore there is no guarantees about record delivery or callback execution.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_produce_opts() ++ Klife.get_async_opts())}
+
+  ## Examples
+      Anonymous Function:
+
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> input = [rec1, rec2, rec3]
+      iex> :ok = MyClient.produce_batch_async(input, callback: fn resp ->
+      ...>  [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = resp
+      ...> end)
+
+      Using MFA:
+
+      iex> defmodule CB2 do
+      ...>    def exec(resp, my_arg1, my_arg2) do
+      ...>      "arg1" = my_arg1
+      ...>      "arg2" = my_arg2
+      ...>      [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = resp
+      ...>    end
+      ...> end
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> input = [rec1, rec2, rec3]
+      iex> :ok = MyClient.produce_batch_async(input, callback: {CB2, :exec, ["arg1", "arg2"]})
+
+  """
+  @callback produce_batch_async(record, opts :: Keyword.t()) :: :ok
 
   @doc group: "Transaction API"
   @doc """
@@ -373,6 +463,7 @@ defmodule Klife.Client do
                 [name: default_txn_pool_name],
                 Klife.TxnProducerPool.get_opts()
               )
+
             Enum.uniq_by(l ++ [default_txn_pool], fn p -> p[:name] end)
           end)
           |> Keyword.update(:topics, [], fn l ->
@@ -412,6 +503,8 @@ defmodule Klife.Client do
 
       def produce(%Record{} = rec, opts \\ []), do: Klife.produce(rec, __MODULE__, opts)
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
+      def produce_async(%Record{} = rec, opts \\ []), do: Klife.produce_async(rec, __MODULE__, opts)
+      def produce_batch_async(recs, opts \\ []), do: Klife.produce_batch_async(recs, __MODULE__, opts)
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
     end
