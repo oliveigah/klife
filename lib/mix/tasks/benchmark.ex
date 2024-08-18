@@ -5,7 +5,7 @@ if Mix.env() in [:dev] do
     def run(args) do
       Application.ensure_all_started(:klife)
 
-      :ok = Klife.Utils.create_topics()
+      {:ok, _topics} = Klife.Utils.create_topics()
       opts = [strategy: :one_for_one, name: Benchmark.Supervisor]
       {:ok, _} = Supervisor.start_link([MyClient], opts)
 

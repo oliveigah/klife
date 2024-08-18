@@ -295,7 +295,6 @@ defmodule Klife.Client do
   """
   @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
 
-
   @doc group: "Producer API"
   @doc """
   Produce a batch of records asynchronoulsy.
@@ -503,8 +502,13 @@ defmodule Klife.Client do
 
       def produce(%Record{} = rec, opts \\ []), do: Klife.produce(rec, __MODULE__, opts)
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
-      def produce_async(%Record{} = rec, opts \\ []), do: Klife.produce_async(rec, __MODULE__, opts)
-      def produce_batch_async(recs, opts \\ []), do: Klife.produce_batch_async(recs, __MODULE__, opts)
+
+      def produce_async(%Record{} = rec, opts \\ []),
+        do: Klife.produce_async(rec, __MODULE__, opts)
+
+      def produce_batch_async(recs, opts \\ []),
+        do: Klife.produce_batch_async(recs, __MODULE__, opts)
+
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
     end

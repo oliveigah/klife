@@ -8,6 +8,7 @@
     - SASL
 
 - Producer System
+    - Revisit producer epoch on transactions
     - Implement test helper functions (assert_produced)
     - Improve input errors handling
     - Accept more versions of the protocol

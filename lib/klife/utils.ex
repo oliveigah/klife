@@ -31,8 +31,8 @@ defmodule Klife.Utils do
 
   defp do_create_topics(init_time) do
     case create_topics_call() do
-      :ok ->
-        :ok
+      {:ok, res} ->
+        {:ok, res}
 
       :error ->
         now = System.monotonic_time(:millisecond)
@@ -118,7 +118,7 @@ defmodule Klife.Utils do
       {:ok, %{content: content}} ->
         case Enum.filter(content.topics, fn e -> e.error_code not in [0, 36] end) do
           [] ->
-            :ok
+            {:ok, Enum.map(content.topics, fn %{name: topic} -> topic end)}
 
           err ->
             {:error, err}
