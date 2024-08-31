@@ -17,7 +17,7 @@ defmodule Klife.Producer.Controller do
 
   alias Klife.Producer
 
-  @check_metadata_delay :timer.seconds(10)
+  @check_metadata_delay :timer.seconds(5)
 
   defstruct [
     :client_name,
@@ -268,7 +268,11 @@ defmodule Klife.Producer.Controller do
     table_name = topics_partitions_metadata_table(client_name)
 
     results =
-      for topic <- Enum.filter(resp.topics, &(&1.error_code == 0)),
+      for topic <-
+            Enum.filter(
+              resp.topics,
+              &(&1.error_code == 0 and not String.starts_with?(&1.name, "__"))
+            ),
           partition <- topic.partitions do
         case :ets.lookup(table_name, {topic.name, partition.partition_index}) do
           [] ->
