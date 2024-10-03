@@ -129,7 +129,7 @@ defmodule Klife.Producer do
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.client_name}.#{args_map.name}",
       epochs: %{},
-      # This is the ony args that may not exist because
+      # This is the only args that may not exist because
       # it is filtered out on non txn producers
       # in order to prevent confusion on the configuration
       txn_timeout_ms: Map.get(args_map, :txn_timeout_ms, 0)
@@ -168,9 +168,18 @@ defmodule Klife.Producer do
 
   @doc false
   def handle_info(:handle_change, %__MODULE__{} = state) do
-    new_state = set_producer_id(state)
-    :ok = handle_batchers(new_state)
-    {:noreply, new_state}
+    if maybe_find_coordinator(state) != state.coordinator_id do
+      # If the coordinator has changed the easiest thing to do is
+      # to restart everything through the supervisor.
+      # This may only occur to transactional producer when
+      # its previous coordinator is not available anymore
+      # non transactional producers always have `:any` as
+      # coordinator and therefore will not stop
+      {:stop, :handle_change, state}
+    else
+      :ok = handle_batchers(state)
+      {:noreply, state}
+    end
   end
 
   @doc false
@@ -215,32 +224,11 @@ defmodule Klife.Producer do
     end
   end
 
-  defp set_producer_id(%__MODULE__{enable_idempotence: false} = state), do: state
+  defp set_producer_id(%__MODULE__{enable_idempotence: false} = state),
+    do: %{state | coordinator_id: maybe_find_coordinator(state)}
 
   defp set_producer_id(%__MODULE__{enable_idempotence: true} = state) do
-    broker =
-      case state do
-        %{txn_id: nil} ->
-          :any
-
-        %{txn_id: txn_id} ->
-          content = %{
-            key_type: 1,
-            coordinator_keys: [txn_id]
-          }
-
-          fun = fn ->
-            case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
-              {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
-                broker_id
-
-              _data ->
-                :retry
-            end
-          end
-
-          with_timeout(:timer.seconds(30), fun)
-      end
+    broker = maybe_find_coordinator(state)
 
     content = %{
       transactional_id: state.txn_id,
@@ -263,8 +251,29 @@ defmodule Klife.Producer do
       state
       | producer_id: producer_id,
         producer_epoch: p_epoch,
-        coordinator_id: if(broker != :any, do: broker, else: nil)
+        coordinator_id: broker
     }
+  end
+
+  defp maybe_find_coordinator(%__MODULE__{txn_id: nil}), do: :any
+
+  defp maybe_find_coordinator(%__MODULE__{txn_id: txn_id} = state) do
+    content = %{
+      key_type: 1,
+      coordinator_keys: [txn_id]
+    }
+
+    fun = fn ->
+      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
+        {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
+          broker_id
+
+        _data ->
+          :retry
+      end
+    end
+
+    with_timeout(:timer.seconds(30), fun)
   end
 
   @doc false

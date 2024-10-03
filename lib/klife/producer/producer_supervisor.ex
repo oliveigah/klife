@@ -12,7 +12,23 @@ defmodule Klife.Producer.ProducerSupervisor do
   end
 
   @impl true
-  def init(_init_arg) do
+  def init(init_arg) do
+    max_restarts =
+      init_arg[:txn_pools]
+      |> Enum.map(fn %{pool_size: p} -> p end)
+      |> Enum.sum()
+
+    DynamicSupervisor.init(
+      strategy: :one_for_one,
+      # Since the strategy for handle txn coordinator changes
+      # is to restart the producer and we may have a very large
+      # number of txn producers, we need to accomodate a restart
+      # for each producer in order to prevent system crash in
+      # the worst case scenario.
+      max_restarts: max_restarts + 1,
+      max_seconds: 10
+    )
+
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 end

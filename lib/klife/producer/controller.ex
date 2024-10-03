@@ -269,10 +269,7 @@ defmodule Klife.Producer.Controller do
 
     results =
       for topic <-
-            Enum.filter(
-              resp.topics,
-              &(&1.error_code == 0 and not String.starts_with?(&1.name, "__"))
-            ),
+            Enum.filter(resp.topics, &(&1.error_code == 0)),
           partition <- topic.partitions do
         case :ets.lookup(table_name, {topic.name, partition.partition_index}) do
           [] ->
