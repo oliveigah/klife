@@ -26,7 +26,7 @@ defmodule Klife.Client do
       required: false,
       default: @default_producer_name,
       doc:
-        "Name of the producer to be used on produce API calls when a specific producer is not provided via configuration or option."
+        "Name of the producer to be used on produce API calls when a specific producer is not provided via configuration or option. If not provided a default producer will be started automatically."
     ],
     default_partitioner: [
       type: :atom,
@@ -40,7 +40,7 @@ defmodule Klife.Client do
       required: false,
       default: @default_txn_pool,
       doc:
-        "Name of the txn pool to be used on transactions when a `:pool_name` is not provided as an option."
+        "Name of the txn pool to be used on transactions when a `:pool_name` is not provided as an option. If not provided a default txn pool will be started automatically."
     ],
     txn_pools: [
       type: {:list, {:keyword_list, Klife.TxnProducerPool.get_opts()}},
@@ -48,21 +48,21 @@ defmodule Klife.Client do
       required: false,
       default: [],
       doc:
-        "List of configurations, each starting a pool of transactional producers for use with transactional api. A default pool is always created."
+        "List of configurations, each starting a pool of transactional producers for use with transactional api."
     ],
     producers: [
       type: {:list, {:keyword_list, Klife.Producer.get_opts()}},
       type_doc: "List of `Klife.Producer` configurations",
       required: false,
       default: [],
-      doc:
-        "List of configurations, each starting a new producer for use with produce api. A default producer is always created."
+      doc: "List of configurations, each starting a new producer for use with produce api."
     ],
     topics: [
-      type: {:list, {:non_empty_keyword_list, Klife.Topic.get_opts()}},
+      type: {:list, {:keyword_list, Klife.Topic.get_opts()}},
       type_doc: "List of `Klife.Topic` configurations",
-      required: true,
-      doc: "List of topics that will be managed by the client"
+      required: false,
+      doc: "List of topics that may have special configurations",
+      default: []
     ]
   ]
 
@@ -205,6 +205,50 @@ defmodule Klife.Client do
 
   @doc group: "Producer API"
   @doc """
+  Produce a single record asynchronoulsy.
+
+  The same as [`produce/2`](c:produce/2) but returns immediately. Accepts a callback
+  option to execute arbitrary code after response is obtained.
+
+  > #### Semantics and guarantees {: .info}
+  >
+  > This functions is implemented as `Task.start/1` calling [`produce/2`](c:produce/2).
+  > Therefore there is no guarantees about record delivery or callback execution.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_produce_opts() ++ Klife.get_async_opts())}
+
+  ## Examples
+      Anonymous Function:
+
+      iex> rec = %Klife.Record{value: "my_val", topic: "my_topic_1"}
+      iex> callback = fn resp ->
+      ...>    {:ok, enriched_rec} = resp
+      ...>    true = is_number(enriched_rec.offset)
+      ...>    true = is_number(enriched_rec.partition)
+      ...> end
+      iex> :ok = MyClient.produce_async(rec, callback: callback)
+
+      Using MFA:
+
+      iex> defmodule CB do
+      ...>    def exec(resp, my_arg1, my_arg2) do
+      ...>      "my_arg1" = my_arg1
+      ...>      "my_arg2" = my_arg2
+      ...>      {:ok, enriched_rec} = resp
+      ...>      true = is_number(enriched_rec.offset)
+      ...>      true = is_number(enriched_rec.partition)
+      ...>    end
+      ...> end
+      iex> rec = %Klife.Record{value: "my_val", topic: "my_topic_1"}
+      iex> :ok = MyClient.produce_async(rec, callback: {CB, :exec, ["my_arg1", "my_arg2"]})
+
+  """
+  @callback produce_async(record, opts :: Keyword.t()) :: :ok
+
+  @doc group: "Producer API"
+  @doc """
   Produce a batch of records.
 
   It expects a list of `Klife.Record` structs containg at least `:value` and `:topic` and returns
@@ -250,6 +294,51 @@ defmodule Klife.Client do
 
   """
   @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
+
+  @doc group: "Producer API"
+  @doc """
+  Produce a batch of records asynchronoulsy.
+
+  The same as [`produce_batch/2`](c:produce_batch/2) but returns immediately. Accepts a callback
+  option to execute arbitrary code after response is obtained.
+
+  > #### Semantics and guarantees {: .info}
+  >
+  > This functions is implemented as `Task.start/1` calling [`produce_batch/2`](c:produce_batch/2).
+  > Therefore there is no guarantees about record delivery or callback execution.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_produce_opts() ++ Klife.get_async_opts())}
+
+  ## Examples
+      Anonymous Function:
+
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> input = [rec1, rec2, rec3]
+      iex> :ok = MyClient.produce_batch_async(input, callback: fn resp ->
+      ...>  [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = resp
+      ...> end)
+
+      Using MFA:
+
+      iex> defmodule CB2 do
+      ...>    def exec(resp, my_arg1, my_arg2) do
+      ...>      "arg1" = my_arg1
+      ...>      "arg2" = my_arg2
+      ...>      [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = resp
+      ...>    end
+      ...> end
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> input = [rec1, rec2, rec3]
+      iex> :ok = MyClient.produce_batch_async(input, callback: {CB2, :exec, ["arg1", "arg2"]})
+
+  """
+  @callback produce_batch_async(record, opts :: Keyword.t()) :: :ok
 
   @doc group: "Transaction API"
   @doc """
@@ -376,7 +465,7 @@ defmodule Klife.Client do
 
             Enum.uniq_by(l ++ [default_txn_pool], fn p -> p[:name] end)
           end)
-          |> Keyword.update!(:topics, fn l ->
+          |> Keyword.update(:topics, [], fn l ->
             Enum.map(l, fn topic ->
               topic
               |> Keyword.put_new(:default_producer, default_producer_name)
@@ -413,6 +502,13 @@ defmodule Klife.Client do
 
       def produce(%Record{} = rec, opts \\ []), do: Klife.produce(rec, __MODULE__, opts)
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
+
+      def produce_async(%Record{} = rec, opts \\ []),
+        do: Klife.produce_async(rec, __MODULE__, opts)
+
+      def produce_batch_async(recs, opts \\ []),
+        do: Klife.produce_batch_async(recs, __MODULE__, opts)
+
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
     end

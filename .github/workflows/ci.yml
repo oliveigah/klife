@@ -30,7 +30,7 @@ jobs:
         with:
           elixir-version: '1.14.5'
           otp-version: '26.0'
-      - run: docker-compose -f "test/compose_files/docker-compose.yml" up -d
+      - run: docker compose -f "test/compose_files/docker-compose.yml" up -d
       - run: mix deps.get
       - run: mix compile --warnings-as-errors
       - run: mix test --warnings-as-errors

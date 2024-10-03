@@ -92,7 +92,7 @@ defmodule Klife.TxnProducerPool do
         # if we get here we should probally just restart the pool
         {:error, {:unkown_producer, client_name, producer_name}}
 
-      _ ->
+      {_pid, _} ->
         worker = %__MODULE__.WorkerState{
           client_name: client_name,
           producer_name: producer_name,

@@ -32,8 +32,6 @@ defmodule Klife.ProducerTest do
     {:ok, _} = MyClient.produce(rec, client: client)
   end
 
-  defp now_unix(), do: DateTime.utc_now() |> DateTime.to_unix()
-
   setup_all do
     :ok = TestUtils.wait_producer(MyClient)
     %{}
@@ -45,6 +43,23 @@ defmodule Klife.ProducerTest do
       key: :rand.bytes(10),
       headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
       topic: "test_no_batch_topic",
+      partition: 1
+    }
+
+    assert {:ok, %Record{offset: offset} = resp_rec} = MyClient.produce(record)
+
+    assert_resp_record(record, resp_rec)
+    assert :ok = assert_offset(MyClient, record, offset)
+    record_batch = TestUtils.get_record_batch_by_offset(MyClient, record.topic, 1, offset)
+    assert length(record_batch) == 1
+  end
+
+  test "produce message sync no batching - unconfigured topic" do
+    record = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "non_configured_topic_1",
       partition: 1
     }
 
@@ -555,7 +570,7 @@ defmodule Klife.ProducerTest do
     assert length(record_batch) == 1
   end
 
-  test "produce message async no batching" do
+  test "produce message async no batching - anon fun" do
     rec = %Record{
       value: :rand.bytes(10),
       key: :rand.bytes(10),
@@ -564,15 +579,46 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    base_ts = now_unix()
-    assert :ok = MyClient.produce(rec, async: true)
+    parent = self()
 
-    Process.sleep(10)
+    assert :ok = MyClient.produce_async(rec, callback: fn resp -> send(parent, {:ping, resp}) end)
 
-    offset = TestUtils.get_latest_offset(MyClient, rec.topic, rec.partition, base_ts)
+    assert_receive {:ping, resp}
 
-    assert :ok = assert_offset(MyClient, rec, offset)
-    record_batch = TestUtils.get_record_batch_by_offset(MyClient, rec.topic, 1, offset)
+    assert {:ok, new_rec} = resp
+
+    assert :ok = assert_offset(MyClient, rec, new_rec.offset)
+    record_batch = TestUtils.get_record_batch_by_offset(MyClient, rec.topic, 1, new_rec.offset)
+    assert length(record_batch) == 1
+  end
+
+  test "produce message async no batching - mfa" do
+    defmodule CB do
+      def exec(resp, arg1, arg2) do
+        send(arg1, {:ping, resp, arg2})
+      end
+    end
+
+    rec = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_async_topic",
+      partition: 1
+    }
+
+    parent = self()
+
+    assert :ok = MyClient.produce_async(rec, callback: {CB, :exec, [parent, "arg2"]})
+
+    assert_receive {:ping, resp, "arg2"}
+
+    assert {:ok, new_rec} = resp
+    assert :ok = assert_offset(MyClient, rec, new_rec.offset)
+
+    record_batch =
+      TestUtils.get_record_batch_by_offset(MyClient, rec.topic, 1, new_rec.offset)
+
     assert length(record_batch) == 1
   end
 

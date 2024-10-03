@@ -31,7 +31,7 @@ defmodule Klife.TestUtils do
 
       service_name = get_service_name(client_name, broker_id)
 
-      System.shell("docker-compose -f #{@docker_file_path} stop #{service_name} > /dev/null 2>&1")
+      System.shell("docker compose -f #{@docker_file_path} stop #{service_name} > /dev/null 2>&1")
 
       result =
         receive do
@@ -67,11 +67,11 @@ defmodule Klife.TestUtils do
       old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
 
       System.shell(
-        "docker-compose -f #{@docker_file_path} start #{service_name} > /dev/null 2>&1"
+        "docker compose -f #{@docker_file_path} start #{service_name} > /dev/null 2>&1"
       )
 
       :ok =
-        Enum.reduce_while(1..20, nil, fn _, _acc ->
+        Enum.reduce_while(1..50, nil, fn _, _acc ->
           :ok = ConnController.trigger_brokers_verification(client_name)
           new_brokers = :persistent_term.get({:known_brokers_ids, client_name})
 

@@ -16,6 +16,6 @@ defmodule Klife.Producer.Supervisor do
       {Klife.Producer.Controller, args}
     ]
 
-    Supervisor.init(children, strategy: :one_for_one)
+    Supervisor.init(children, strategy: :one_for_all)
   end
 end

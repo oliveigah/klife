@@ -129,7 +129,7 @@ defmodule Klife.Producer do
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.client_name}.#{args_map.name}",
       epochs: %{},
-      # This is the ony args that may not exist because
+      # This is the only args that may not exist because
       # it is filtered out on non txn producers
       # in order to prevent confusion on the configuration
       txn_timeout_ms: Map.get(args_map, :txn_timeout_ms, 0)
@@ -168,9 +168,18 @@ defmodule Klife.Producer do
 
   @doc false
   def handle_info(:handle_change, %__MODULE__{} = state) do
-    new_state = set_producer_id(state)
-    :ok = handle_batchers(new_state)
-    {:noreply, new_state}
+    if maybe_find_coordinator(state) != state.coordinator_id do
+      # If the coordinator has changed the easiest thing to do is
+      # to restart everything through the supervisor.
+      # This may only occur to transactional producer when
+      # its previous coordinator is not available anymore
+      # non transactional producers always have `:any` as
+      # coordinator and therefore will not stop
+      {:stop, :handle_change, state}
+    else
+      :ok = handle_batchers(state)
+      {:noreply, state}
+    end
   end
 
   @doc false
@@ -215,32 +224,11 @@ defmodule Klife.Producer do
     end
   end
 
-  defp set_producer_id(%__MODULE__{enable_idempotence: false} = state), do: state
+  defp set_producer_id(%__MODULE__{enable_idempotence: false} = state),
+    do: %{state | coordinator_id: maybe_find_coordinator(state)}
 
   defp set_producer_id(%__MODULE__{enable_idempotence: true} = state) do
-    broker =
-      case state do
-        %{txn_id: nil} ->
-          :any
-
-        %{txn_id: txn_id} ->
-          content = %{
-            key_type: 1,
-            coordinator_keys: [txn_id]
-          }
-
-          fun = fn ->
-            case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
-              {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
-                broker_id
-
-              _data ->
-                :retry
-            end
-          end
-
-          with_timeout(:timer.seconds(30), fun)
-      end
+    broker = maybe_find_coordinator(state)
 
     content = %{
       transactional_id: state.txn_id,
@@ -263,14 +251,35 @@ defmodule Klife.Producer do
       state
       | producer_id: producer_id,
         producer_epoch: p_epoch,
-        coordinator_id: if(broker != :any, do: broker, else: nil)
+        coordinator_id: broker
     }
+  end
+
+  defp maybe_find_coordinator(%__MODULE__{txn_id: nil}), do: :any
+
+  defp maybe_find_coordinator(%__MODULE__{txn_id: txn_id} = state) do
+    content = %{
+      key_type: 1,
+      coordinator_keys: [txn_id]
+    }
+
+    fun = fn ->
+      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
+        {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
+          broker_id
+
+        _data ->
+          :retry
+      end
+    end
+
+    with_timeout(:timer.seconds(30), fun)
   end
 
   @doc false
   def produce([%Record{} | _] = records, client_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
-    callback_pid = if Keyword.get(opts, :async, false), do: nil, else: self()
+    callback_pid = self()
 
     delivery_timeout_ms =
       records
@@ -307,23 +316,19 @@ defmodule Klife.Producer do
         if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
       end)
 
-    if callback_pid do
-      max_resps = List.last(records).__batch_index
-      responses = wait_produce_response(delivery_timeout_ms, max_resps)
+    max_resps = List.last(records).__batch_index
+    responses = wait_produce_response(delivery_timeout_ms, max_resps)
 
-      records
-      |> Enum.map(fn %Record{} = rec ->
-        case Map.get(responses, rec.__batch_index) do
-          {:ok, offset} ->
-            {:ok, %{rec | offset: offset}}
+    records
+    |> Enum.map(fn %Record{} = rec ->
+      case Map.get(responses, rec.__batch_index) do
+        {:ok, offset} ->
+          {:ok, %{rec | offset: offset}}
 
-          {:error, ec} ->
-            {:error, %{rec | error_code: ec}}
-        end
-      end)
-    else
-      :ok
-    end
+        {:error, ec} ->
+          {:error, %{rec | error_code: ec}}
+      end
+    end)
   end
 
   defp wait_produce_response(timeout_ms, max_resps) do
@@ -410,6 +415,7 @@ defmodule Klife.Producer do
       # main metadata ets table, therefore we need a way to
       # find out it's value.
       put_batcher_id(client_name, producer_name, t_name, p_idx, b_id)
+
       if ProducerController.get_default_producer(client_name, t_name, p_idx) == producer_name do
         ProducerController.update_batcher_id(client_name, t_name, p_idx, b_id)
       end

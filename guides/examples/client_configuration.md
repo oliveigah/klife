@@ -9,11 +9,10 @@ Here are some client configuration examples.
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       ssl: false
-    ],
-    topics: [[name: "my_topic_0"]]
+    ]
 ```
 
-This client will connect to brokers using non ssl connection and produce messages only to topic `my_topic` using the default producer and default partitioner.
+This client will connect to brokers using non ssl connection and produce messages using the default producer and default partitioner.
 
 ## SSL and custom socket opts
 
@@ -27,13 +26,12 @@ This client will connect to brokers using non ssl connection and produce message
         cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
       ],
       socket_opts: [delay_send: true]
-    ],
-    topics: [[name: "my_topic_0"]]
+    ]
 ```
 
 This client will connect to brokers using ssl connection, `connect_opts` and `socket_opts` are forwarded to erlang module `:ssl` in order to proper configure the socket. See the documentation for more details.
 
-## Defining multiple producers
+## Defining and using multiple producers
 
 ```elixir
   config :my_app, MyApp.Client,
@@ -63,10 +61,11 @@ This client will connect to brokers using ssl connection, `connect_opts` and `so
     ]
 ```
 
-This client will have a total of 3 producers, the default one plus the other 2 defined in the configuration. You can see all the configuration options for the producers in `Klife.Producer`.
+This client will have a total of 3 producers, the default one plus the other 2 defined in the configuration. You can see all the configuration options for the producers in `Klife.Producer`. 
 
+Messages produced to `my_topic_0` and `my_topic_1` will use `my_linger_ms_producer` and `my_custom_client_id_producer` respectively if no producer is set on opts. All other topics keep using the default producer.
 
-## Defining custom partitioner
+## Defining and using custom partitioner
 
 First you need to implement a module following the `Klife.Behaviours.Partitioner` behaviour.
 
@@ -100,7 +99,7 @@ Then, you need to use it on your configuration.
     ]
 ```
 
-On this client, the records produced without a specific partition will have a partition assigned using the `MyApp.MyCustomPartitioner` module.
+On this client, the records produced to `my_topic_0` without a specific partition will have a partition assigned using the `MyApp.MyCustomPartitioner` module all other topics keep using the default partitioner.
 
 ## Defining multiple txn pools
 
@@ -119,3 +118,21 @@ On this client, the records produced without a specific partition will have a pa
 ```
 
 This client will have a total of 3 txn pools, the default one plus the other two defined in the configuration. You can see all the configuration options for the producers in `Klife.TxnProducerPool`.
+
+## Using custom default producer, partitioner and txn pool
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19092", "localhost:29092"],
+      ssl: false
+    ],
+    default_producer: :my_custom_producer,
+    producers: [[name: :my_custom_producer, linger_ms: 1_000]],
+    default_partitioner: MyCustomPartitioner,
+    default_txn_pool: :my_txn_pool,
+    txn_pools: [[name: :my_txn_pool, base_txn_id: "my_custom_base_txn_id"]],
+    topics: [[name: "my_topic_0"]]
+```
+
+This cliente will have only one producer (`:my_custom_producer`) and txn pool (`:my_txn_pool`),and the default paritioner strategy will be `MyCustomPartitioner`. All this 3 configurations will be used in produce API calls to topics that does not have any override config defined in the `topics` configuration.
