@@ -17,9 +17,8 @@ defmodule Klife.Connection.MessageVersions do
     server_data = Map.get(server_map, api_key, :not_found)
 
     not_found_on_broker? = server_data == :not_found
-    should_raise? = client_data.should_raise?
 
-    if not_found_on_broker? and should_raise?,
+    if not_found_on_broker?,
       do: raise("Could not find required message #{inspect(mod)} for client #{client_name}")
 
     common_version = min(server_data.max, client_data.max)
@@ -32,26 +31,25 @@ defmodule Klife.Connection.MessageVersions do
         :ok = set_api_version(client_name, mod, common_version)
         do_setup_versions(rest, server_map, client_name)
 
-      invalid_common_version? and should_raise? ->
+      invalid_common_version? ->
         raise "Could not agree on API version for #{inspect(mod)} api_key #{api_key} for client #{client_name}. "
-
-      true ->
-        do_setup_versions(rest, server_map, client_name)
     end
   end
 
   defp client_versions do
     [
-      {M.ApiVersions, %{min: 0, max: 0, should_raise?: true}},
-      {M.CreateTopics, %{min: 0, max: 0, should_raise?: false}},
-      {M.Metadata, %{min: 1, max: 1, should_raise?: true}},
-      {M.Produce, %{min: 9, max: 9, should_raise?: false}},
-      {M.InitProducerId, %{min: 0, max: 0, should_raise?: false}},
-      {M.Fetch, %{min: 4, max: 4, should_raise?: true}},
-      {M.ListOffsets, %{min: 2, max: 2, should_raise?: true}},
-      {M.AddPartitionsToTxn, %{min: 4, max: 4, should_raise?: true}},
-      {M.FindCoordinator, %{min: 4, max: 4, should_raise?: true}},
-      {M.EndTxn, %{min: 3, max: 3, should_raise?: true}}
+      {M.ApiVersions, %{min: 0, max: 0}},
+      {M.CreateTopics, %{min: 0, max: 0}},
+      {M.Metadata, %{min: 1, max: 1}},
+      {M.Produce, %{min: 9, max: 9}},
+      {M.InitProducerId, %{min: 0, max: 0}},
+      {M.Fetch, %{min: 4, max: 4}},
+      {M.ListOffsets, %{min: 2, max: 2}},
+      {M.AddPartitionsToTxn, %{min: 4, max: 4}},
+      {M.FindCoordinator, %{min: 4, max: 4}},
+      {M.EndTxn, %{min: 3, max: 3}},
+      {M.SaslHandshake, %{min: 0, max: 1}},
+      {M.SaslAuthenticate, %{min: 0, max: 2}}
     ]
   end
 
