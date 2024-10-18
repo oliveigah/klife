@@ -6,8 +6,6 @@
 
 - Connection System
 
-  - SASL
-
 - Producer System
 
   - Implement test helper functions (assert_produced)

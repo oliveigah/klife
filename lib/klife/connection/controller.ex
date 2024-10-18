@@ -50,6 +50,13 @@ defmodule Klife.Connection.Controller do
       default: [keepalive: true],
       doc:
         "Options used to configure the open socket, which are forwarded to the `setopts/2` function of the underlying socket module `:inet` for `:gen_tcp` and `:ssl` for `:ssl` (see ssl option above.)."
+    ],
+    sasl_opts: [
+      type: {:list, :any},
+      required: false,
+      default: [],
+      doc:
+        "Options to configure SASL authentication, see SASL section for supported mechanisms and examples."
     ]
   ]
 
@@ -62,7 +69,8 @@ defmodule Klife.Connection.Controller do
     :check_client_timer_ref,
     :check_client_waiting_pids,
     :ssl,
-    :socket_opts
+    :socket_opts,
+    :sasl_opts
   ]
 
   def get_opts(), do: @connection_opts
@@ -85,6 +93,7 @@ defmodule Klife.Connection.Controller do
     bootstrap_servers = args.bootstrap_servers
     connect_opts = Keyword.merge(connect_defaults, args.connect_opts)
     socket_opts = Keyword.merge(socket_defaults, args.socket_opts)
+    sasl_opts = args.sasl_opts
     ssl = args.ssl
     client = args.client_name
 
@@ -105,7 +114,8 @@ defmodule Klife.Connection.Controller do
       known_brokers: [],
       bootstrap_conn: nil,
       check_client_timer_ref: nil,
-      check_client_waiting_pids: []
+      check_client_waiting_pids: [],
+      sasl_opts: sasl_opts
     }
 
     send(self(), :init_bootstrap_conn)
@@ -124,8 +134,18 @@ defmodule Klife.Connection.Controller do
       )
 
     negotiate_api_versions(conn, state.client_name)
+    new_sasl_opts = Connection.build_sasl_opts(state.sasl_opts, state.client_name)
+    :ok = Connection.authenticate_sasl(conn, new_sasl_opts)
+
     new_ref = Process.send_after(self(), :check_client, 0)
-    {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_client_timer_ref: new_ref}}
+
+    {:noreply,
+     %__MODULE__{
+       state
+       | bootstrap_conn: conn,
+         check_client_timer_ref: new_ref,
+         sasl_opts: new_sasl_opts
+     }}
   end
 
   def handle_info(:check_client, %__MODULE__{} = state) do
@@ -155,6 +175,7 @@ defmodule Klife.Connection.Controller do
         connect_opts: state.connect_opts,
         client_name: state.client_name,
         socket_opts: state.socket_opts,
+        sasl_opts: state.sasl_opts,
         broker_id: broker_id,
         url: url,
         ssl: state.ssl
@@ -335,7 +356,9 @@ defmodule Klife.Connection.Controller do
                url,
                ssl,
                Keyword.merge(connect_opts, active: false),
-               socket_opts
+               socket_opts,
+               # For the first connection we do not have the API versions yet so we can not pass sasl_opts
+               []
              ) do
           {:ok, conn} ->
             {:halt, conn}

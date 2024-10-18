@@ -8,8 +8,14 @@ defmodule Klife.TestUtils do
 
   @port_to_service_name %{
     19092 => "kafka1",
+    19093 => "kafka1",
+    19094 => "kafka1",
     29092 => "kafka2",
-    39092 => "kafka3"
+    29093 => "kafka2",
+    29094 => "kafka2",
+    39092 => "kafka3",
+    39093 => "kafka3",
+    39094 => "kafka3"
   }
 
   @docker_file_path Path.relative("test/compose_files/docker-compose.yml")
@@ -21,7 +27,7 @@ defmodule Klife.TestUtils do
 
     broker = Enum.find(resp.content.brokers, fn b -> b.node_id == broker_id end)
 
-    @port_to_service_name[broker.port]
+    Map.fetch!(@port_to_service_name, broker.port)
   end
 
   def stop_broker(client_name, broker_id) do
@@ -59,8 +65,16 @@ defmodule Klife.TestUtils do
   def start_broker(service_name, client_name) do
     Task.async(fn ->
       cb_ref = make_ref()
-      port_map = @port_to_service_name |> Enum.map(fn {k, v} -> {v, k} end) |> Map.new()
-      expected_url = "localhost:#{port_map[service_name]}"
+
+      port_prefix_service_map =
+        @port_to_service_name
+        |> Enum.map(fn {port, service} ->
+          {port_prefix, _} = String.split_at("#{port}", 2)
+          {service, port_prefix}
+        end)
+        |> Map.new()
+
+      expected_url_prefix = "localhost:#{port_prefix_service_map[service_name]}"
 
       :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
 
@@ -88,11 +102,13 @@ defmodule Klife.TestUtils do
           {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
             added_brokers = event_data.added_brokers
 
-            case Enum.find(added_brokers, fn {_broker_id, url} -> url == expected_url end) do
+            case Enum.find(added_brokers, fn {_broker_id, url} ->
+                   String.starts_with?(url, expected_url_prefix)
+                 end) do
               nil ->
                 {:error, :invalid_event}
 
-              {broker_id, ^expected_url} ->
+              {broker_id, _} ->
                 {:ok, broker_id}
             end
         after

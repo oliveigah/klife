@@ -41,7 +41,8 @@ defmodule Klife.Connection.SystemTest do
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         ssl: false,
         connect_opts: [],
-        socket_opts: []
+        socket_opts: [],
+        sasl_opts: []
       ]
       |> Map.new()
 
@@ -67,6 +68,40 @@ defmodule Klife.Connection.SystemTest do
         ],
         socket_opts: [
           delay_send: true
+        ],
+        sasl_opts: []
+      ]
+      |> Map.new()
+
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
+
+    brokers_list = Utils.wait_connection!(client_name)
+    assert length(brokers_list) == 3
+
+    Enum.each(brokers_list, &check_broker_connection(client_name, &1))
+  end
+
+  test "setup ssl with sasl auth", %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    input =
+      [
+        client_name: client_name,
+        bootstrap_servers: ["localhost:19094", "localhost:29094"],
+        ssl: true,
+        connect_opts: [
+          verify: :verify_peer,
+          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+        ],
+        socket_opts: [
+          delay_send: true
+        ],
+        sasl_opts: [
+          mechanism: "PLAIN",
+          mechanism_opts: [
+            username: "klifeusr",
+            password: "klifepwd"
+          ]
         ]
       ]
       |> Map.new()
@@ -88,7 +123,8 @@ defmodule Klife.Connection.SystemTest do
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         ssl: false,
         connect_opts: [],
-        socket_opts: []
+        socket_opts: [],
+        sasl_opts: []
       ]
       |> Map.new()
 
@@ -105,7 +141,8 @@ defmodule Klife.Connection.SystemTest do
         ],
         socket_opts: [
           delay_send: true
-        ]
+        ],
+        sasl_opts: []
       ]
       |> Map.new()
 
@@ -117,7 +154,8 @@ defmodule Klife.Connection.SystemTest do
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         ssl: false,
         connect_opts: [],
-        socket_opts: []
+        socket_opts: [],
+        sasl_opts: []
       ]
       |> Map.new()
 

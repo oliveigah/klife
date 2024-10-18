@@ -1,13 +1,16 @@
 defmodule Klife.Connection do
   @moduledoc false
   alias KlifeProtocol.Socket
+  alias Klife.Connection.MessageVersions, as: MV
+  alias KlifeProtocol.Messages, as: M
 
   defstruct [:socket, :host, :port, :read_timeout, :ssl]
 
-  def new(url, ssl, connect_opts, socket_opts) do
+  def new(url, ssl, connect_opts, socket_opts, sasl_opts) do
     %{host: host, port: port} = parse_url(url)
 
-    connect_opts = Keyword.merge(connect_opts, backend: get_socket_backend(ssl))
+    connect_opts =
+      Keyword.merge(connect_opts, backend: get_socket_backend(ssl), sasl_opts: sasl_opts)
 
     case Socket.connect(host, port, connect_opts) do
       {:ok, socket} ->
@@ -28,6 +31,21 @@ defmodule Klife.Connection do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  def authenticate_sasl(%__MODULE__{socket: socket} = conn, sasl_opts) do
+    Socket.authenticate(socket, get_backend(conn), sasl_opts)
+  end
+
+  def build_sasl_opts([], _), do: []
+
+  def build_sasl_opts(base_sasl_opts, client_name) do
+    msg_vsn_opts = [
+      auth_vsn: MV.get(client_name, M.SaslAuthenticate),
+      handshake_vsn: MV.get(client_name, M.SaslHandshake)
+    ]
+
+    Keyword.merge(msg_vsn_opts, base_sasl_opts)
   end
 
   defp get_socket_backend(false), do: :gen_tcp
@@ -53,4 +71,7 @@ defmodule Klife.Connection do
     [host, port] = String.split(url, ":")
     %{host: host, port: String.to_integer(port)}
   end
+
+  defp get_backend(%__MODULE__{ssl: false}), do: :gen_tcp
+  defp get_backend(%__MODULE__{ssl: true}), do: :ssl
 end

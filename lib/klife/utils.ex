@@ -62,12 +62,22 @@ defmodule Klife.Utils do
     socket_opts =
       Keyword.merge(conn_defaults.socket_opts, client_opts[:connection][:socket_opts] || [])
 
+    sasl_opts =
+      case client_opts[:connection][:sasl_opts] || [] do
+        [] ->
+          []
+
+        base_opts ->
+          Keyword.merge(base_opts, auth_vsn: 2, handshake_vsn: 1)
+      end
+
     {:ok, conn} =
       Klife.Connection.new(
         client_opts[:connection][:bootstrap_servers] |> List.first(),
         ssl,
         connect_opts,
-        socket_opts
+        socket_opts,
+        sasl_opts
       )
 
     {:ok, %{brokers: brokers_list, controller: controller_id}} =
@@ -75,7 +85,7 @@ defmodule Klife.Utils do
 
     {_id, url} = Enum.find(brokers_list, fn {id, _} -> id == controller_id end)
 
-    {:ok, new_conn} = Klife.Connection.new(url, ssl, connect_opts, socket_opts)
+    {:ok, new_conn} = Klife.Connection.new(url, ssl, connect_opts, socket_opts, sasl_opts)
 
     topics_input =
       Enum.map(client_opts[:topics], fn input ->
