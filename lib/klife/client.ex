@@ -118,8 +118,7 @@ defmodule Klife.Client do
       ]
     ],
     topics: [
-      [name: "my_topic_0", producer: :my_custom_producer],
-      [name: "my_topic_1"]
+      [name: "my_topic_0", producer: :my_custom_producer]
     ]
 
   ```
@@ -159,14 +158,14 @@ defmodule Klife.Client do
 
   As an input the `Klife.Record` may have the following attributes:
   - value (required)
+  - topic (required)
   - key (optional)
   - headers (optional)
-  - topic (required)
   - partition (optional)
 
   As an output the input record will be enriched with one or more the following attributes:
   - offset (if it was succesfully written)
-  - partition (if the partition was provided by a partitioner)
+  - partition (if it was not present in the input)
   - error_code ([kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes))
 
   So in summary the interaction goes like this:

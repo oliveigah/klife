@@ -48,8 +48,8 @@ defmodule Klife.Connection.MessageVersions do
       {M.AddPartitionsToTxn, %{min: 4, max: 4}},
       {M.FindCoordinator, %{min: 4, max: 4}},
       {M.EndTxn, %{min: 3, max: 3}},
-      {M.SaslHandshake, %{min: 0, max: 1}},
-      {M.SaslAuthenticate, %{min: 0, max: 2}}
+      {M.SaslHandshake, %{min: 1, max: 1}},
+      {M.SaslAuthenticate, %{min: 1, max: 1}}
     ]
   end
 
