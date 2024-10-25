@@ -66,10 +66,10 @@ if Mix.env() in [:dev] do
       Benchee.run(
         %{
           "default" => fn ->
-            Enum.each(1..1000, fn i -> :persistent_term.get(:unkown, false) end)
+            Enum.each(1..1000, fn _i -> :persistent_term.get(:unkown, false) end)
           end,
           "no default" => fn ->
-            Enum.each(1..1000, fn i -> :persistent_term.get(:known, false) end)
+            Enum.each(1..1000, fn _i -> :persistent_term.get(:known, false) end)
           end
         },
         time: 10,
