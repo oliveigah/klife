@@ -102,7 +102,7 @@ defmodule Klife.Utils do
       %{
         name: "non_configured_topic_1",
         num_partitions: 10,
-        replication_factor: 2,
+        replication_factor: 3,
         assignments: [],
         configs: []
       }
