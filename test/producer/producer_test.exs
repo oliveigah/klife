@@ -2,7 +2,6 @@ defmodule Klife.ProducerTest do
   use ExUnit.Case
 
   import Klife.ProcessRegistry, only: [registry_lookup: 1]
-  import Klife.Test
 
   alias Klife.Record
 
@@ -30,11 +29,6 @@ defmodule Klife.ProducerTest do
     }
 
     {:ok, _} = MyClient.produce(rec, client: client)
-  end
-
-  setup_all do
-    :ok = TestUtils.wait_producer(MyClient)
-    %{}
   end
 
   test "produce message sync no batching" do

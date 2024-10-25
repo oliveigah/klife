@@ -1,5 +1,4 @@
 defmodule Klife.TestUtils do
-  import Klife.ProcessRegistry, only: [registry_lookup: 1]
   import ExUnit.Assertions
 
   alias Klife.Connection.Broker
@@ -253,28 +252,6 @@ defmodule Klife.TestUtils do
     [%{error_code: 0, offset: offset}] = partitions
 
     offset
-  end
-
-  def wait_producer(client_name) do
-    deadline = System.monotonic_time(:millisecond) + 5_000
-    do_wait_producer(deadline, client_name)
-  end
-
-  defp do_wait_producer(deadline, client_name) do
-    if System.monotonic_time(:millisecond) < deadline do
-      case registry_lookup(
-             {Klife.TxnProducerPool, client_name, Klife.Client.default_txn_pool_name()}
-           ) do
-        [] ->
-          Process.sleep(5)
-          do_wait_producer(deadline, client_name)
-
-        [_] ->
-          :ok
-      end
-    else
-      raise "timeout waiting for producers. #{client_name}"
-    end
   end
 
   def assert_offset(

@@ -5,6 +5,6 @@
 opts = [strategy: :one_for_one, name: Test.Supervisor]
 {:ok, _} = Supervisor.start_link([MyClient], opts)
 
-:ok = Klife.TestUtils.wait_producer(MyClient)
+:ok = Klife.Testing.setup(MyClient)
 
 ExUnit.start()

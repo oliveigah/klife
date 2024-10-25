@@ -44,6 +44,7 @@ services:
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
       KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
+      KAFKA_LOG_RETENTION_MS: 600000000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -78,6 +79,7 @@ services:
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
       KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
+      KAFKA_LOG_RETENTION_MS: 600000000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -112,6 +114,7 @@ services:
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
       KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
+      KAFKA_LOG_RETENTION_MS: 600000000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
