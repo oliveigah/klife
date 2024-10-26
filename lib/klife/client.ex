@@ -118,8 +118,7 @@ defmodule Klife.Client do
       ]
     ],
     topics: [
-      [name: "my_topic_0", producer: :my_custom_producer],
-      [name: "my_topic_1"]
+      [name: "my_topic_0", producer: :my_custom_producer]
     ]
 
   ```
@@ -157,29 +156,15 @@ defmodule Klife.Client do
   Usually you will give an record to some producer API function and it will return an
   enriched record with some new attributes based on what happened.
 
-  As an input the `Klife.Record` may have the following attributes:
-  - value (required)
-  - key (optional)
-  - headers (optional)
-  - topic (required)
-  - partition (optional)
-
-  As an output the input record will be enriched with one or more the following attributes:
-  - offset (if it was succesfully written)
-  - partition (if the partition was provided by a partitioner)
-  - error_code ([kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes))
-
   So in summary the interaction goes like this:
   - Build one or more `Klife.Record`
   - Pass it to some producer API function
   - Receive an enriched version of the provided records
 
-
   ```elixir
   rec = %Klife.Record{value: "some_val", topic: "my_topic_1"}
   {:ok, %Klife.Record{offset: offset, partition: partition}} = MyClient.produce(rec)
   ```
-
   """
 
   @doc group: "Producer API"
@@ -271,6 +256,8 @@ defmodule Klife.Client do
   > topic/partition the order between them is guaranteed to be the same of the input, for records
   > of different topic/partition no order is guaranteed between them.
   >
+  > See the partial error example below for more cotext.
+  >
 
   ## Options
 
@@ -282,16 +269,15 @@ defmodule Klife.Client do
       iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
       iex> [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = MyClient.produce_batch([rec1, rec2, rec3])
 
+  Partial error example:
+
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: :rand.bytes(2_000_000), topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> [{:ok, _resp1}, {:error, %Klife.Record{error_code: 10}}, {:ok, _resp3}] = MyClient.produce_batch([rec1, rec2, rec3])
+
   In order to facilitate the response handling you can use `Klife.Record.verify_batch/1` or
   `Klife.Record.verify_batch!/1` functions.
-
-  ## Examples
-      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
-      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
-      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
-      iex> input = [rec1, rec2, rec3]
-      iex> {:ok, [_resp1, _resp2, _resp3]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
-
   """
   @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
 
@@ -500,16 +486,26 @@ defmodule Klife.Client do
         Supervisor.init(children, strategy: :one_for_one)
       end
 
+      @spec produce(Record.t(), opts :: list() | nil) :: {:ok, Record.t()} | {:error, Record.t()}
       def produce(%Record{} = rec, opts \\ []), do: Klife.produce(rec, __MODULE__, opts)
+
+      @spec produce_batch(list(Record.t()), opts :: list() | nil) ::
+              list({:ok, Record.t()} | {:error, Record.t()})
       def produce_batch(recs, opts \\ []), do: Klife.produce_batch(recs, __MODULE__, opts)
 
+      @spec produce_async(Record.t(), opts :: list() | nil) :: :ok
       def produce_async(%Record{} = rec, opts \\ []),
         do: Klife.produce_async(rec, __MODULE__, opts)
 
+      @spec produce_batch_async(Record.t(), opts :: list() | nil) :: :ok
       def produce_batch_async(recs, opts \\ []),
         do: Klife.produce_batch_async(recs, __MODULE__, opts)
 
+      @spec produce_batch_txn(list(Record.t()), opts :: list() | nil) ::
+              list({:ok, list(Record.t())}) | list({:error, list(Record.t())})
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
+
+      @spec transaction(function(), opts :: list() | nil) :: any()
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
     end
   end

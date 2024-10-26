@@ -20,6 +20,7 @@ defmodule Klife.Connection.Broker do
     :ssl,
     :connect_opts,
     :socket_opts,
+    :sasl_opts,
     :url,
     :reconnect_attempts
   ]
@@ -37,6 +38,7 @@ defmodule Klife.Connection.Broker do
     url = Keyword.fetch!(args, :url)
     ssl = Keyword.fetch!(args, :ssl)
     socket_opts = Keyword.fetch!(args, :socket_opts)
+    sasl_opts = Keyword.fetch!(args, :sasl_opts)
 
     state = %__MODULE__{
       broker_id: broker_id,
@@ -45,7 +47,8 @@ defmodule Klife.Connection.Broker do
       socket_opts: socket_opts,
       url: url,
       reconnect_attempts: 0,
-      ssl: ssl
+      ssl: ssl,
+      sasl_opts: sasl_opts
     }
 
     # This needs to be done instead of send(self(), :connect)
@@ -262,11 +265,23 @@ defmodule Klife.Connection.Broker do
            url: url,
            ssl: ssl,
            connect_opts: connect_opts,
-           socket_opts: socket_opts
+           socket_opts: socket_opts,
+           sasl_opts: sasl_opts
          } = state
        ) do
-    case Connection.new(url, ssl, Keyword.merge(connect_opts, active: :once), socket_opts) do
+    case Connection.new(
+           url,
+           ssl,
+           # Here we need active false because the current
+           # SASL implementation rely on being able to manually
+           # control IO operations on the socket during authentication
+           Keyword.merge(connect_opts, active: false),
+           socket_opts,
+           sasl_opts
+         ) do
       {:ok, conn} ->
+        # After authentication we can go back to once
+        Connection.socket_opts(conn, active: :once)
         :persistent_term.put({__MODULE__, state.client_name, state.broker_id}, conn)
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}
 

@@ -9,7 +9,7 @@ if Mix.env() in [:dev] do
       opts = [strategy: :one_for_one, name: Benchmark.Supervisor]
       {:ok, _} = Supervisor.start_link([MyClient], opts)
 
-      :ok = Klife.TestUtils.wait_producer(MyClient)
+      :ok = Klife.Testing.setup(MyClient)
 
       Process.sleep(1_000)
       apply(Mix.Tasks.Benchmark, :do_run_bench, args)
@@ -61,35 +61,15 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      :ets.new(:benchmark_table, [
-        :set,
-        :public,
-        :named_table,
-        read_concurrency: true
-      ])
-
-      :ets.new(:benchmark_table_2, [
-        :set,
-        :public,
-        :named_table
-      ])
-
-      Enum.each(1..1000, fn i ->
-        :ets.insert(:benchmark_table, {{:test, i}, i * 2})
-        :ets.insert(:benchmark_table_2, {{:test, i}, i * 2})
-        :persistent_term.put({:test, i}, i * 2)
-      end)
+      :persistent_term.put(:known, false)
 
       Benchee.run(
         %{
-          "ets read_concurrency" => fn ->
-            Enum.each(1..1000, fn i -> :ets.lookup_element(:benchmark_table, {:test, i}, 2) end)
+          "default" => fn ->
+            Enum.each(1..1000, fn _i -> :persistent_term.get(:unkown, false) end)
           end,
-          "ets no read_concurrency" => fn ->
-            Enum.each(1..1000, fn i -> :ets.lookup_element(:benchmark_table_2, {:test, i}, 2) end)
-          end,
-          "persistent_term" => fn ->
-            Enum.each(1..1000, fn i -> :persistent_term.get({:test, i}) end)
+          "no default" => fn ->
+            Enum.each(1..1000, fn _i -> :persistent_term.get(:known, false) end)
           end
         },
         time: 10,

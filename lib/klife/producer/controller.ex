@@ -10,7 +10,6 @@ defmodule Klife.Producer.Controller do
   alias KlifeProtocol.Messages
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
-  alias Klife.Utils
   alias Klife.Producer.ProducerSupervisor
 
   alias Klife.TxnProducerPool
@@ -36,7 +35,6 @@ defmodule Klife.Producer.Controller do
   def init(args) do
     client_name = args.client_name
     topics_list = args.topics
-    timer_ref = Process.send_after(self(), :check_metadata, 0)
 
     state = %__MODULE__{
       client_name: client_name,
@@ -44,7 +42,7 @@ defmodule Klife.Producer.Controller do
       txn_pools: args.txn_pools,
       topics: topics_list,
       check_metadata_waiting_pids: [],
-      check_metadata_timer_ref: timer_ref
+      check_metadata_timer_ref: nil
     }
 
     :ets.new(topics_partitions_metadata_table(client_name), [
@@ -61,11 +59,14 @@ defmodule Klife.Producer.Controller do
       read_concurrency: true
     ])
 
-    Utils.wait_connection!(client_name)
-
     :ok = PubSub.subscribe({:cluster_change, client_name})
 
-    {:ok, state}
+    {:ok, do_init(state)}
+  end
+
+  defp do_init(state) do
+    {:noreply, state} = handle_info(:check_metadata, state)
+    state
   end
 
   def handle_info(
@@ -80,81 +81,6 @@ defmodule Klife.Producer.Controller do
        state
        | check_metadata_timer_ref: new_ref
      }}
-  end
-
-  def handle_info(:handle_producers, %__MODULE__{} = state) do
-    for producer <- state.producers do
-      opts = Map.put(producer, :client_name, state.client_name)
-
-      DynamicSupervisor.start_child(
-        via_tuple({ProducerSupervisor, state.client_name}),
-        {Producer, opts}
-      )
-      |> case do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, pid}} -> send(pid, :handle_change)
-      end
-    end
-
-    send(self(), :handle_txn_producers)
-
-    {:noreply, state}
-  end
-
-  def handle_info(:handle_txn_producers, %__MODULE__{} = state) do
-    for txn_pool <- state.txn_pools,
-        txn_producer_count <- 1..txn_pool.pool_size do
-      txn_id =
-        if txn_pool.base_txn_id != "" do
-          txn_pool.base_txn_id <> "_#{txn_producer_count}"
-        else
-          :crypto.strong_rand_bytes(15)
-          |> Base.url_encode64()
-          |> binary_part(0, 15)
-          |> Kernel.<>("_#{txn_producer_count}")
-        end
-
-      txn_producer_configs = %{
-        client_name: state.client_name,
-        name: :"klife_txn_producer.#{txn_pool.name}.#{txn_producer_count}",
-        acks: :all,
-        linger_ms: 0,
-        delivery_timeout_ms: txn_pool.delivery_timeout_ms,
-        request_timeout_ms: txn_pool.request_timeout_ms,
-        retry_backoff_ms: txn_pool.retry_backoff_ms,
-        max_in_flight_requests: 1,
-        batchers_count: 1,
-        enable_idempotence: true,
-        compression_type: txn_pool.compression_type,
-        txn_id: txn_id,
-        txn_timeout_ms: txn_pool.txn_timeout_ms
-      }
-
-      DynamicSupervisor.start_child(
-        via_tuple({ProducerSupervisor, state.client_name}),
-        {Producer, txn_producer_configs}
-      )
-      |> case do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, pid}} -> send(pid, :handle_change)
-      end
-    end
-
-    for txn_pool <- state.txn_pools do
-      DynamicSupervisor.start_child(
-        via_tuple({ProducerSupervisor, state.client_name}),
-        {TxnProducerPool, Map.put(txn_pool, :client_name, state.client_name)}
-      )
-      |> case do
-        {:ok, _pid} ->
-          :ok
-
-        {:error, {:already_started, _pid}} ->
-          :ok
-      end
-    end
-
-    {:noreply, state}
   end
 
   @impl true
@@ -187,6 +113,29 @@ defmodule Klife.Producer.Controller do
           {:noreply,
            %{state | check_metadata_timer_ref: new_ref, check_metadata_waiting_pids: []}}
         end
+    end
+  end
+
+  @impl true
+  def handle_call(:trigger_check_metadata, from, state) do
+    case state do
+      %__MODULE__{check_metadata_waiting_pids: []} ->
+        Process.cancel_timer(state.check_metadata_timer_ref)
+        new_ref = Process.send_after(self(), :check_metadata, 0)
+
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_metadata_waiting_pids: [from],
+             check_metadata_timer_ref: new_ref
+         }}
+
+      %__MODULE__{} ->
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_metadata_waiting_pids: [from | state.check_metadata_waiting_pids]
+         }}
     end
   end
 
@@ -259,6 +208,79 @@ defmodule Klife.Producer.Controller do
 
   # Private functions
 
+  defp handle_producers(%__MODULE__{} = state) do
+    for producer <- state.producers do
+      opts = Map.put(producer, :client_name, state.client_name)
+
+      DynamicSupervisor.start_child(
+        via_tuple({ProducerSupervisor, state.client_name}),
+        {Producer, opts}
+      )
+      |> case do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, pid}} -> send(pid, :handle_change)
+      end
+    end
+
+    :ok
+  end
+
+  defp handle_txn_producers(%__MODULE__{} = state) do
+    for txn_pool <- state.txn_pools,
+        txn_producer_count <- 1..txn_pool.pool_size do
+      txn_id =
+        if txn_pool.base_txn_id != "" do
+          txn_pool.base_txn_id <> "_#{txn_producer_count}"
+        else
+          :crypto.strong_rand_bytes(15)
+          |> Base.url_encode64()
+          |> binary_part(0, 15)
+          |> Kernel.<>("_#{txn_producer_count}")
+        end
+
+      txn_producer_configs = %{
+        client_name: state.client_name,
+        name: :"klife_txn_producer.#{txn_pool.name}.#{txn_producer_count}",
+        acks: :all,
+        linger_ms: 0,
+        delivery_timeout_ms: txn_pool.delivery_timeout_ms,
+        request_timeout_ms: txn_pool.request_timeout_ms,
+        retry_backoff_ms: txn_pool.retry_backoff_ms,
+        max_in_flight_requests: 1,
+        batchers_count: 1,
+        enable_idempotence: true,
+        compression_type: txn_pool.compression_type,
+        txn_id: txn_id,
+        txn_timeout_ms: txn_pool.txn_timeout_ms
+      }
+
+      DynamicSupervisor.start_child(
+        via_tuple({ProducerSupervisor, state.client_name}),
+        {Producer, txn_producer_configs}
+      )
+      |> case do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, pid}} -> send(pid, :handle_change)
+      end
+    end
+
+    for txn_pool <- state.txn_pools do
+      DynamicSupervisor.start_child(
+        via_tuple({ProducerSupervisor, state.client_name}),
+        {TxnProducerPool, Map.put(txn_pool, :client_name, state.client_name)}
+      )
+      |> case do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
+      end
+    end
+
+    :ok
+  end
+
   defp setup_producers(%__MODULE__{} = state, resp) do
     %__MODULE__{
       client_name: client_name,
@@ -301,7 +323,8 @@ defmodule Klife.Producer.Controller do
       end
 
     if Enum.any?(results, &(&1 == :new)) do
-      send(self(), :handle_producers)
+      :ok = handle_producers(state)
+      :ok = handle_txn_producers(state)
     end
 
     :ok

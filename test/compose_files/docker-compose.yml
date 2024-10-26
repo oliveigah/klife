@@ -1,78 +1,124 @@
-version: '3.3'
+version: "3.3"
 
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     network_mode: host
     environment:
-    - ZOOKEEPER_SERVER_ID=1
-    - ZOOKEEPER_CLIENT_PORT=2181
-    - ZOOKEEPER_TICK_TIME=2000
-    - ZOOKEEPER_INIT_LIMIT=5
-    - ZOOKEEPER_SYNC_LIMIT=2
-    - ZOOKEEPER_SERVERS=zookeeper:2888:3888
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_SERVERS: zookeeper:2888:3888
+      KAFKA_OPTS:
+        -Djava.security.auth.login.config=/etc/kafka/zookeeper_server_jaas.conf
+        -Dzookeeper.authProvider.1=org.apache.zookeeper.server.auth.SASLAuthenticationProvider
+        -Dzookeeper.allowSaslFailedClients=false
+        -Dzookeeper.requireClientAuthScheme=sasl
+    volumes:
+      - ./sasl/zookeeper.jaas.conf:/etc/kafka/zookeeper_server_jaas.conf:ro,z
 
   kafka1:
     image: confluentinc/cp-kafka:7.6.1
     depends_on:
-    - zookeeper
+      - zookeeper
     network_mode: host
     environment:
       KAFKA_ZOOKEEPER_CONNECT: localhost:2181
       ZOOKEEPER: localhost:2181
       BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:19091,EXTERNAL_PLAIN://localhost:19092,EXTERNAL://localhost:19093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:19091,EXTERNAL_PLAIN://localhost:19092,EXTERNAL://localhost:19093,SASL_SSL://localhost:19094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
       KAFKA_SSL_KEY_PASSWORD: klifeclient
       KAFKA_SSL_KEYSTORE_PASSWORD: klifeclient
       KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeclient
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: creds
+      KAFKA_SSL_KEY_CREDENTIALS: creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
+      KAFKA_LOG_RETENTION_MS: 600000000
     volumes:
-    - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
-    - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
+      - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
+      - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
+      - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
+      - ./ssl/localhost.truststore.jks:/etc/kafka/secrets/kafka.truststore.jks
+      - ./sasl/broker.jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - ./sasl/creds:/etc/kafka/secrets/creds
 
   kafka2:
     image: confluentinc/cp-kafka:7.6.1
     depends_on:
-    - zookeeper
-    - kafka1
+      - zookeeper
+      - kafka1
     network_mode: host
     environment:
       KAFKA_ZOOKEEPER_CONNECT: localhost:2181
       ZOOKEEPER: localhost:2181
       BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:29091,EXTERNAL_PLAIN://localhost:29092,EXTERNAL://localhost:29093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:29091,EXTERNAL_PLAIN://localhost:29092,EXTERNAL://localhost:29093,SASL_SSL://localhost:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
       KAFKA_SSL_KEY_PASSWORD: klifeclient
       KAFKA_SSL_KEYSTORE_PASSWORD: klifeclient
       KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeclient
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: creds
+      KAFKA_SSL_KEY_CREDENTIALS: creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
+      KAFKA_LOG_RETENTION_MS: 600000000
     volumes:
-    - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
-    - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
+      - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
+      - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
+      - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
+      - ./ssl/localhost.truststore.jks:/etc/kafka/secrets/kafka.truststore.jks
+      - ./sasl/broker.jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - ./sasl/creds:/etc/kafka/secrets/creds
 
   kafka3:
     image: confluentinc/cp-kafka:7.6.1
     depends_on:
-    - zookeeper
-    - kafka2
+      - zookeeper
+      - kafka2
     network_mode: host
     environment:
       KAFKA_ZOOKEEPER_CONNECT: localhost:2181
       ZOOKEEPER: localhost:2181
       BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:39091,EXTERNAL_PLAIN://localhost:39092,EXTERNAL://localhost:39093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:39091,EXTERNAL_PLAIN://localhost:39092,EXTERNAL://localhost:39093,SASL_SSL://localhost:39094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
       KAFKA_SSL_KEY_PASSWORD: klifeclient
       KAFKA_SSL_KEYSTORE_PASSWORD: klifeclient
       KAFKA_SSL_TRUSTSTORE_PASSWORD: klifeclient
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: creds
+      KAFKA_SSL_KEY_CREDENTIALS: creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
+      KAFKA_LOG_RETENTION_MS: 600000000
     volumes:
-    - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
-    - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
+      - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
+      - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
+      - ./ssl/localhost.truststore.jks:/secrets/kafka.truststore.jks:ro,z
+      - ./ssl/localhost.truststore.jks:/etc/kafka/secrets/kafka.truststore.jks
+      - ./sasl/broker.jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - ./sasl/creds:/etc/kafka/secrets/creds

@@ -2,13 +2,24 @@ import Config
 
 config :klife, MyClient,
   connection: [
-    bootstrap_servers: ["localhost:19092", "localhost:29092"],
+    # SSL FALSE
+    # bootstrap_servers: ["localhost:19092", "localhost:29092"],
+    # SSL TRUE
     # bootstrap_servers: ["localhost:19093", "localhost:29093"],
-    ssl: false
-    # connect_opts: [
-    #   verify: :verify_peer,
-    #   cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-    # ],
+    # SSL TRUE AND SASL
+    bootstrap_servers: ["localhost:19094", "localhost:29094"],
+    ssl: true,
+    sasl_opts: [
+      mechanism: "PLAIN",
+      mechanism_opts: [
+        username: "klifeusr",
+        password: "klifepwd"
+      ]
+    ],
+    connect_opts: [
+      verify: :verify_peer,
+      cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+    ]
     # socket_opts: [
     #   delay_send: true
     # ]

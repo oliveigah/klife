@@ -1,25 +1,8 @@
 defmodule Klife.Utils do
   @moduledoc false
   # TODO: Everything that is in here must be moved to a proper place
-  def wait_connection!(client_name, timeout \\ :timer.seconds(5)) do
-    deadline = System.monotonic_time() + System.convert_time_unit(timeout, :millisecond, :native)
-    do_wait_connection!(client_name, deadline)
-  end
 
-  defp do_wait_connection!(client_name, deadline) do
-    if System.monotonic_time() <= deadline do
-      case :persistent_term.get({:known_brokers_ids, client_name}, :not_found) do
-        :not_found ->
-          Process.sleep(50)
-          do_wait_connection!(client_name, deadline)
-
-        data ->
-          data
-      end
-    else
-      raise "timeout while waiting for broker connection"
-    end
-  end
+  def get_brokers(client), do: :persistent_term.get({:known_brokers_ids, client})
 
   # TODO: Refactor and think about topic auto creation feature
   # right now there is a bug when the Connection system intialize before
@@ -62,20 +45,30 @@ defmodule Klife.Utils do
     socket_opts =
       Keyword.merge(conn_defaults.socket_opts, client_opts[:connection][:socket_opts] || [])
 
+    sasl_opts =
+      case client_opts[:connection][:sasl_opts] || [] do
+        [] ->
+          []
+
+        base_opts ->
+          Keyword.merge(base_opts, auth_vsn: 2, handshake_vsn: 1)
+      end
+
     {:ok, conn} =
       Klife.Connection.new(
         client_opts[:connection][:bootstrap_servers] |> List.first(),
         ssl,
         connect_opts,
-        socket_opts
+        socket_opts,
+        sasl_opts
       )
 
     {:ok, %{brokers: brokers_list, controller: controller_id}} =
-      Klife.Connection.Controller.get_client_info(conn)
+      Klife.Connection.Controller.get_cluster_info(conn)
 
     {_id, url} = Enum.find(brokers_list, fn {id, _} -> id == controller_id end)
 
-    {:ok, new_conn} = Klife.Connection.new(url, ssl, connect_opts, socket_opts)
+    {:ok, new_conn} = Klife.Connection.new(url, ssl, connect_opts, socket_opts, sasl_opts)
 
     topics_input =
       Enum.map(client_opts[:topics], fn input ->
@@ -92,7 +85,7 @@ defmodule Klife.Utils do
       %{
         name: "non_configured_topic_1",
         num_partitions: 10,
-        replication_factor: 2,
+        replication_factor: 3,
         assignments: [],
         configs: []
       }

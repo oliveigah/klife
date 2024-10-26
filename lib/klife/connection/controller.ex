@@ -19,7 +19,7 @@ defmodule Klife.Connection.Controller do
   # in order to avoid reaching this limit.
   @max_correlation_counter 200_000_000
   @check_correlation_counter_delay :timer.seconds(300)
-  @check_client_delay :timer.seconds(10)
+  @check_cluster_delay :timer.seconds(10)
 
   @connection_opts [
     bootstrap_servers: [
@@ -50,6 +50,13 @@ defmodule Klife.Connection.Controller do
       default: [keepalive: true],
       doc:
         "Options used to configure the open socket, which are forwarded to the `setopts/2` function of the underlying socket module `:inet` for `:gen_tcp` and `:ssl` for `:ssl` (see ssl option above.)."
+    ],
+    sasl_opts: [
+      type: {:list, :any},
+      required: false,
+      default: [],
+      doc:
+        "Options to configure SASL authentication, see SASL section for supported mechanisms and examples."
     ]
   ]
 
@@ -59,10 +66,11 @@ defmodule Klife.Connection.Controller do
     :known_brokers,
     :connect_opts,
     :bootstrap_conn,
-    :check_client_timer_ref,
-    :check_client_waiting_pids,
+    :check_cluster_timer_ref,
+    :check_cluster_waiting_pids,
     :ssl,
-    :socket_opts
+    :socket_opts,
+    :sasl_opts
   ]
 
   def get_opts(), do: @connection_opts
@@ -85,6 +93,7 @@ defmodule Klife.Connection.Controller do
     bootstrap_servers = args.bootstrap_servers
     connect_opts = Keyword.merge(connect_defaults, args.connect_opts)
     socket_opts = Keyword.merge(socket_defaults, args.socket_opts)
+    sasl_opts = args.sasl_opts
     ssl = args.ssl
     client = args.client_name
 
@@ -104,13 +113,22 @@ defmodule Klife.Connection.Controller do
       ssl: ssl,
       known_brokers: [],
       bootstrap_conn: nil,
-      check_client_timer_ref: nil,
-      check_client_waiting_pids: []
+      check_cluster_timer_ref: nil,
+      check_cluster_waiting_pids: [],
+      sasl_opts: sasl_opts
     }
 
-    send(self(), :init_bootstrap_conn)
+    new_state = do_init(state)
+    {:ok, new_state}
+  end
+
+  defp do_init(state) do
+    {_, state} = handle_info(:init_bootstrap_conn, state)
+    {_, state} = handle_info(:check_cluster, state)
+
     send(self(), :check_correlation_counter)
-    {:ok, state}
+
+    state
   end
 
   @impl true
@@ -124,12 +142,22 @@ defmodule Klife.Connection.Controller do
       )
 
     negotiate_api_versions(conn, state.client_name)
-    new_ref = Process.send_after(self(), :check_client, 0)
-    {:noreply, %__MODULE__{state | bootstrap_conn: conn, check_client_timer_ref: new_ref}}
+    new_sasl_opts = Connection.build_sasl_opts(state.sasl_opts, state.client_name)
+    :ok = Connection.authenticate_sasl(conn, new_sasl_opts)
+
+    new_state = %__MODULE__{
+      state
+      | bootstrap_conn: conn,
+        sasl_opts: new_sasl_opts
+    }
+
+    {_, new_state} = handle_info(:check_cluster, new_state)
+
+    {:noreply, new_state}
   end
 
-  def handle_info(:check_client, %__MODULE__{} = state) do
-    case get_client_info(state.bootstrap_conn) do
+  def handle_info(:check_cluster, %__MODULE__{} = state) do
+    case get_cluster_info(state.bootstrap_conn) do
       {:ok, %{brokers: new_brokers_list, controller: controller}} ->
         set_client_controller(controller, state.client_name)
 
@@ -137,11 +165,17 @@ defmodule Klife.Connection.Controller do
         to_remove = old_brokers -- new_brokers_list
         to_start = new_brokers_list -- old_brokers
 
-        send(self(), {:handle_brokers, to_start, to_remove})
-        next_ref = Process.send_after(self(), :check_client, @check_client_delay)
+        next_ref = Process.send_after(self(), :check_cluster, @check_cluster_delay)
 
-        {:noreply,
-         %__MODULE__{state | known_brokers: new_brokers_list, check_client_timer_ref: next_ref}}
+        new_state = %__MODULE__{
+          state
+          | known_brokers: new_brokers_list,
+            check_cluster_timer_ref: next_ref
+        }
+
+        new_state = handle_brokers(to_start, to_remove, new_state)
+
+        {:noreply, new_state}
 
       {:error, _reason} ->
         Process.send_after(self(), :init_bootstrap_conn, :timer.seconds(1))
@@ -149,12 +183,134 @@ defmodule Klife.Connection.Controller do
     end
   end
 
-  def handle_info({:handle_brokers, to_start, to_remove}, %__MODULE__{} = state) do
+  def handle_info(:check_correlation_counter, %__MODULE__{} = state) do
+    if read_correlation_id(state.client_name) >= @max_correlation_counter do
+      {:correlation_counter, state.client_name}
+      |> :persistent_term.get()
+      |> :atomics.exchange(1, 0)
+    end
+
+    Process.send_after(self(), :check_correlation_counter, @check_correlation_counter_delay)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:trigger_check_cluster, from, %__MODULE__{} = state) do
+    case state do
+      %__MODULE__{check_cluster_waiting_pids: []} ->
+        Process.cancel_timer(state.check_cluster_timer_ref)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
+
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_cluster_waiting_pids: [from],
+             check_cluster_timer_ref: new_ref
+         }}
+
+      %__MODULE__{} ->
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_cluster_waiting_pids: [from | state.check_cluster_waiting_pids]
+         }}
+    end
+  end
+
+  @impl true
+  def handle_cast(:trigger_check_cluster, %__MODULE__{} = state) do
+    case state do
+      %__MODULE__{check_cluster_waiting_pids: []} ->
+        Process.cancel_timer(state.check_cluster_timer_ref)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
+
+        {:noreply,
+         %__MODULE__{
+           state
+           | check_cluster_timer_ref: new_ref
+         }}
+    end
+  end
+
+  ## PUBLIC INTERFACE
+
+  def insert_in_flight(client_name, correlation_id) do
+    client_name
+    |> get_in_flight_messages_table_name()
+    |> :ets.insert({correlation_id, self()})
+  end
+
+  def insert_in_flight(client_name, correlation_id, callback) do
+    client_name
+    |> get_in_flight_messages_table_name()
+    |> :ets.insert({correlation_id, callback})
+  end
+
+  def take_from_in_flight(client_name, correlation_id) do
+    client_name
+    |> get_in_flight_messages_table_name()
+    |> :ets.take(correlation_id)
+    |> List.first()
+  end
+
+  def get_next_correlation_id(client_name) do
+    {:correlation_counter, client_name}
+    |> :persistent_term.get()
+    |> :atomics.add_get(1, 1)
+  end
+
+  def get_random_broker_id(client_name) do
+    {:known_brokers_ids, client_name}
+    |> :persistent_term.get()
+    |> Enum.random()
+  end
+
+  def trigger_brokers_verification(client_name) do
+    GenServer.call(via_tuple({__MODULE__, client_name}), :trigger_check_cluster)
+  end
+
+  def trigger_brokers_verification_async(client_name) do
+    GenServer.cast(via_tuple({__MODULE__, client_name}), :trigger_check_cluster)
+  end
+
+  def get_client_controller(client_name),
+    do: :persistent_term.get({:client_controller, client_name})
+
+  def get_known_brokers(client_name),
+    do: :persistent_term.get({:known_brokers_ids, client_name})
+
+  def get_cluster_info(%Connection{} = conn) do
+    req = %{
+      headers: %{correlation_id: 0},
+      content: %{include_client_authorized_operations: true, topics: []}
+    }
+
+    serialized_req = Messages.Metadata.serialize_request(req, 1)
+
+    with :ok <- Connection.write(serialized_req, conn),
+         {:ok, received_data} <- Connection.read(conn) do
+      {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
+
+      {:ok,
+       %{
+         brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
+         controller: resp.controller_id
+       }}
+    else
+      {:error, _reason} = res ->
+        res
+    end
+  end
+
+  ## PRIVATE FUNCTIONS
+
+  defp handle_brokers(to_start, to_remove, %__MODULE__{} = state) do
     Enum.each(to_start, fn {broker_id, url} ->
       broker_opts = [
         connect_opts: state.connect_opts,
         client_name: state.client_name,
         socket_opts: state.socket_opts,
+        sasl_opts: state.sasl_opts,
         broker_id: broker_id,
         url: url,
         ssl: state.ssl
@@ -197,133 +353,12 @@ defmodule Klife.Connection.Controller do
       })
     end
 
-    state.check_client_waiting_pids
+    state.check_cluster_waiting_pids
     |> Enum.reverse()
     |> Enum.each(&GenServer.reply(&1, :ok))
 
-    {:noreply, %__MODULE__{state | check_client_waiting_pids: []}}
+    %__MODULE__{state | check_cluster_waiting_pids: []}
   end
-
-  def handle_info(:check_correlation_counter, %__MODULE__{} = state) do
-    if read_correlation_id(state.client_name) >= @max_correlation_counter do
-      {:correlation_counter, state.client_name}
-      |> :persistent_term.get()
-      |> :atomics.exchange(1, 0)
-    end
-
-    Process.send_after(self(), :check_correlation_counter, @check_correlation_counter_delay)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(:trigger_check_client, from, %__MODULE__{} = state) do
-    case state do
-      %__MODULE__{check_client_waiting_pids: []} ->
-        Process.cancel_timer(state.check_client_timer_ref)
-        new_ref = Process.send_after(self(), :check_client, 0)
-
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_client_waiting_pids: [from],
-             check_client_timer_ref: new_ref
-         }}
-
-      %__MODULE__{} ->
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_client_waiting_pids: [from | state.check_client_waiting_pids]
-         }}
-    end
-  end
-
-  @impl true
-  def handle_cast(:trigger_check_client, %__MODULE__{} = state) do
-    case state do
-      %__MODULE__{check_client_waiting_pids: []} ->
-        Process.cancel_timer(state.check_client_timer_ref)
-        new_ref = Process.send_after(self(), :check_client, 0)
-
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_client_timer_ref: new_ref
-         }}
-    end
-  end
-
-  ## PUBLIC INTERFACE
-
-  def insert_in_flight(client_name, correlation_id) do
-    client_name
-    |> get_in_flight_messages_table_name()
-    |> :ets.insert({correlation_id, self()})
-  end
-
-  def insert_in_flight(client_name, correlation_id, callback) do
-    client_name
-    |> get_in_flight_messages_table_name()
-    |> :ets.insert({correlation_id, callback})
-  end
-
-  def take_from_in_flight(client_name, correlation_id) do
-    client_name
-    |> get_in_flight_messages_table_name()
-    |> :ets.take(correlation_id)
-    |> List.first()
-  end
-
-  def get_next_correlation_id(client_name) do
-    {:correlation_counter, client_name}
-    |> :persistent_term.get()
-    |> :atomics.add_get(1, 1)
-  end
-
-  def get_random_broker_id(client_name) do
-    {:known_brokers_ids, client_name}
-    |> :persistent_term.get()
-    |> Enum.random()
-  end
-
-  def trigger_brokers_verification(client_name) do
-    GenServer.call(via_tuple({__MODULE__, client_name}), :trigger_check_client)
-  end
-
-  def trigger_brokers_verification_async(client_name) do
-    GenServer.cast(via_tuple({__MODULE__, client_name}), :trigger_check_client)
-  end
-
-  def get_client_controller(client_name),
-    do: :persistent_term.get({:client_controller, client_name})
-
-  def get_known_brokers(client_name),
-    do: :persistent_term.get({:known_brokers_ids, client_name})
-
-  def get_client_info(%Connection{} = conn) do
-    req = %{
-      headers: %{correlation_id: 0},
-      content: %{include_client_authorized_operations: true, topics: []}
-    }
-
-    serialized_req = Messages.Metadata.serialize_request(req, 1)
-
-    with :ok <- Connection.write(serialized_req, conn),
-         {:ok, received_data} <- Connection.read(conn) do
-      {:ok, %{content: resp}} = Messages.Metadata.deserialize_response(received_data, 1)
-
-      {:ok,
-       %{
-         brokers: Enum.map(resp.brokers, fn b -> {b.node_id, "#{b.host}:#{b.port}"} end),
-         controller: resp.controller_id
-       }}
-    else
-      {:error, _reason} = res ->
-        res
-    end
-  end
-
-  ## PRIVATE FUNCTIONS
 
   defp get_in_flight_messages_table_name(client_name),
     do: :"in_flight_messages.#{client_name}"
@@ -335,7 +370,9 @@ defmodule Klife.Connection.Controller do
                url,
                ssl,
                Keyword.merge(connect_opts, active: false),
-               socket_opts
+               socket_opts,
+               # For the first connection we do not have the API versions yet so we can not pass sasl_opts
+               []
              ) do
           {:ok, conn} ->
             {:halt, conn}

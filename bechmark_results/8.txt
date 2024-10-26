@@ -1,0 +1,41 @@
+Operating System: Linux
+CPU Information: AMD Ryzen 7 5700U with Radeon Graphics
+Number of Available Cores: 16
+Available memory: 30.73 GB
+Elixir 1.15.7
+Erlang 25.3
+
+Benchmark suite executing with the following configuration:
+warmup: 2 s
+time: 15 s
+memory time: 2 s
+reduction time: 0 ns
+parallel: 8
+inputs: none specified
+Estimated total run time: 57 s
+
+Benchmarking brod ...
+Benchmarking kafka_ex ...
+Benchmarking klife ...
+
+Name               ips        average  deviation         median         99th %
+klife           212.86        4.70 ms    ±27.21%        4.26 ms        8.55 ms
+brod             77.58       12.89 ms    ±37.39%       12.47 ms       26.25 ms
+kafka_ex         21.93       45.60 ms     ±7.01%       46.17 ms       56.02 ms
+
+Comparison:
+klife           212.86
+brod             77.58 - 2.74x slower +8.19 ms
+kafka_ex         21.93 - 9.71x slower +40.90 ms
+
+Memory usage statistics:
+
+Name             average  deviation         median         99th %
+klife            4.07 KB     ±4.69%        4.17 KB        4.17 KB
+brod             3.29 KB     ±1.63%        3.33 KB        3.33 KB
+kafka_ex         3.33 KB     ±0.00%        3.33 KB        3.33 KB
+
+Comparison:
+klife            4.17 KB
+brod             3.29 KB - 0.81x memory usage -0.77847 KB
+kafka_ex         3.33 KB - 0.82x memory usage -0.73813 KB
