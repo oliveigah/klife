@@ -275,7 +275,7 @@ defmodule Klife.Producer.Batcher do
         %Record{__estimated_size: estimated_size} = record,
         pid
       ) do
-    if current_estimated_size + estimated_size > batch_size_bytes,
+    if current_estimated_size + estimated_size > batch_size_bytes and current_estimated_size > 0,
       do:
         state
         |> move_current_data_to_batch_queue()

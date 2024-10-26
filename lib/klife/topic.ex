@@ -22,9 +22,11 @@ defmodule Klife.Topic do
   def get_opts(), do: @topic_options
 
   @moduledoc """
-  Defines a topic
+  Defines a topic configuration.
 
-  ## Configurations
+  For now this struct is only useful for initial client configuration, but in the future it may be useful for the admin api as well.
+
+  ## Client configurations
 
   #{NimbleOptions.docs(@topic_options)}
   """

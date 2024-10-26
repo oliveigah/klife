@@ -1,4 +1,5 @@
 defmodule Klife.TestUtils do
+  @moduledoc false
   import ExUnit.Assertions
 
   alias Klife.Connection.Broker

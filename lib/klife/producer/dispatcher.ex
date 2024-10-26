@@ -141,7 +141,7 @@ defmodule Klife.Producer.Dispatcher do
 
   # TODO: Handle more specific codes
   @delivery_success_codes [0, 46]
-  @delivery_discard_codes [18, 47]
+  @delivery_discard_codes [18, 47, 10]
   def handle_info(
         {:async_broker_response, req_ref, binary_resp, M.Produce = msg_mod, msg_version},
         %__MODULE__{} = state
@@ -189,7 +189,7 @@ defmodule Klife.Producer.Dispatcher do
         cond do
           error_code in @delivery_discard_codes ->
             Logger.warning("""
-            Fatal error while producing message. Message will be discarded!
+            Non retryable error while producing message. Message will be discarded!
 
             topic: #{topic}
             partition: #{partition}

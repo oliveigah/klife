@@ -3,6 +3,8 @@ defmodule Klife.RecordTest do
 
   alias Klife.Record
 
+  doctest Klife.Record
+
   test "estimate size" do
     r1 = %Record{value: :rand.bytes(1000)}
     assert Record.estimate_size(r1) == 1080

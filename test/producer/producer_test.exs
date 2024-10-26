@@ -8,6 +8,8 @@ defmodule Klife.ProducerTest do
   alias Klife.Producer.Controller, as: ProdController
   alias Klife.TestUtils
 
+  doctest Klife.TxnProducerPool
+
   defp assert_resp_record(expected_record, response_record) do
     Enum.each(Map.from_struct(expected_record), fn {k, v} ->
       if v != nil do
@@ -40,7 +42,7 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    assert {:ok, %Record{offset: offset} = resp_rec} = MyClient.produce(record)
+    assert {:ok, %Record{offset: offset} = resp_rec} = MyClient.produce(nil)
 
     assert_resp_record(record, resp_rec)
     assert :ok = TestUtils.assert_offset(MyClient, record, offset)

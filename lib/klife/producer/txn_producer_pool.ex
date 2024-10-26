@@ -52,10 +52,35 @@ defmodule Klife.TxnProducerPool do
   @moduledoc """
   Pool of transactional producers.
 
-  ## Configurations
+  ## Client configurations
 
   #{NimbleOptions.docs(@txn_producer_options)}
+
+  ## How to use?
+
+  When configuring `Klife.Client`, users can specify a list of transactional pools to be
+  initialized for sending records to the Kafka cluster.
+
+  Once configured, users can interact with these transactional producers through
+  the `Klife.Client` transaction API.
+
+
+  ## Basic understanding
+
+  Since a single producer can only have a single open transaction at any given time
+  Klife starts a pool of transactional producers that can be checked out by other
+  processes in order to execute transactions.
+
+  Each transactional producer is a standard `Klife.Producer` but with transactional
+  capabilities. The transactional behaviour can be tweaked using its specific configurations.
+
+  ## Semantics
+
+  A more practical and guided discussion about transaction semantics can be found on `Klife.Client` transaction API.
+
   """
+
+  @doc false
   def get_opts, do: @txn_producer_options
 
   defmodule WorkerState do
@@ -113,6 +138,7 @@ defmodule Klife.TxnProducerPool do
     {:ok, worker_state, pool_state}
   end
 
+  @doc false
   def run_txn(client_name, pool_name, fun) do
     NimblePool.checkout!(pool_name(client_name, pool_name), :checkout, fn _, state ->
       result =
@@ -180,6 +206,7 @@ defmodule Klife.TxnProducerPool do
     :ok
   end
 
+  @doc false
   def produce(records, client_name, _opts) do
     case maybe_add_partition_to_txn(client_name, records) do
       :ok ->
@@ -319,6 +346,12 @@ defmodule Klife.TxnProducerPool do
     end
   end
 
+  @doc """
+  Checks if the current process is under a kafka transaction.
+
+  ## Example
+    iex> false = Klife.TxnProducerPool.in_txn?(MyClient)
+  """
   def in_txn?(client), do: not is_nil(get_txn_ctx(client))
 
   defp setup_txn_ctx(%__MODULE__.WorkerState{} = state, client) do

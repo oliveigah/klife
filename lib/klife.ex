@@ -42,10 +42,14 @@ defmodule Klife do
     ]
   ]
 
+  @doc false
   def get_produce_opts(), do: @produce_opts
+  @doc false
   def get_txn_opts(), do: @txn_opts
+  @doc false
   def get_async_opts(), do: @async_opts
 
+  @doc false
   def produce(%Record{} = record, client, opts \\ []) do
     case produce_batch([record], client, opts) do
       [resp] -> resp
@@ -53,6 +57,7 @@ defmodule Klife do
     end
   end
 
+  @doc false
   def produce_batch([%Record{} | _] = records, client, opts \\ []) do
     records =
       records
@@ -76,6 +81,8 @@ defmodule Klife do
   # because inside Dispatcher we do not have the same data and since
   # we want the async callback to receive the exact same output
   # as the sync counter part this is the easiest for now.
+
+  @doc false
   def produce_async(%Record{} = record, client, opts \\ []) do
     {:ok, _task_pid} =
       Task.start(fn ->
@@ -91,6 +98,7 @@ defmodule Klife do
     :ok
   end
 
+  @doc false
   def produce_batch_async([%Record{} | _] = records, client, opts \\ []) do
     {:ok, _task_pid} =
       Task.start(fn ->
@@ -106,6 +114,7 @@ defmodule Klife do
     :ok
   end
 
+  @doc false
   def produce_batch_txn([%Record{} | _] = records, client, opts \\ []) do
     transaction(
       fn -> records |> produce_batch(client, opts) |> Record.verify_batch() end,
@@ -114,6 +123,7 @@ defmodule Klife do
     )
   end
 
+  @doc false
   def transaction(fun, client, opts \\ []) do
     TxnProducerPool.run_txn(client, get_txn_pool(client, opts), fun)
   end

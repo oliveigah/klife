@@ -4,6 +4,8 @@ defmodule Klife.TestingTest do
   alias Klife.Testing
   alias Klife.Record
 
+  doctest Klife.Testing
+
   test "same batch" do
     val1 = :rand.bytes(1000)
     key1 = :rand.bytes(1000)

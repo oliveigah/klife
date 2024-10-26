@@ -15,6 +15,7 @@ defmodule Klife.MixProject do
       extras: [],
       docs: [
         main: "readme",
+        assets: "assets",
         extras: [
           "README.md",
           "guides/examples/client_configuration.md"
@@ -25,6 +26,17 @@ defmodule Klife.MixProject do
         groups_for_docs: [
           groups_for_docs("Producer API"),
           groups_for_docs("Transaction API")
+        ],
+        groups_for_modules: [
+          Client: [Klife.Client, Klife.Topic, Klife.Record],
+          Producer: [
+            Klife.Producer,
+            Klife.Producer.DefaultPartitioner,
+            Klife.TxnProducerPool
+          ],
+          Testing: [Klife.Testing],
+          Behaviours: [Klife.Behaviours.Partitioner],
+          Example: [MyClient]
         ]
       ]
     ]
