@@ -1,6 +1,9 @@
-# Klife
-
 [![ci](https://github.com/oliveigah/klife/actions/workflows/ci.yml/badge.svg)](https://github.com/oliveigah/klife/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/oliveigah/klife/badge.svg?branch=main)](https://coveralls.io/github/oliveigah/klife?branch=main)
+[![hex.pm badge](https://img.shields.io/badge/Package%20on%20hex.pm-informational)](https://hex.pm/packages/klife)
+[![Documentation badge](https://img.shields.io/badge/Documentation-ff69b4)][docs]
+
+# Klife
 
 Klife is a high-performance Kafka client built from the ground up with minimal dependencies.
 Currently, Klife supports producer functionality, with plans to add consumer features in the future.
