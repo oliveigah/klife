@@ -107,3 +107,19 @@ With this scenario I've executed the benchmark increasing the `parallel` attribu
 benchee from 1 to 16, doubling it each round. The results are the following:
 
 ![](./assets/producer_sync_benchmark.png "Producer Benchmark Results")
+
+## Compatibility with Kafka versions
+
+Although `Klife Protocol` give us the capability to support all the latests versions
+for now Klife uses fixed versions of the protocol that are not the latest for each message.
+
+I have plans to evolve this slowly as the project grows and I find a good way to deal
+with multiple protocol versions at the same time on the code.
+
+For now the message versions can be checked at `lib/klife/connection/message_versions.ex`
+
+For performance reasons I'm aiming to support only versions after the flexible version that
+were introduced on kafka 2.4 on KIP-482.
+
+But should not be hard to support versions prior to that, if you are willing to try Klife
+but you use an older version of kafka let me know and we can see if it is possible.
