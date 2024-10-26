@@ -20,7 +20,7 @@ defmodule Klife.TestingTest do
     rec2 = %Record{
       value: :rand.bytes(1000),
       key: key1,
-      topic: "test_no_batch_topic",
+      topic: topic,
       partition: 0
     }
 
@@ -85,7 +85,7 @@ defmodule Klife.TestingTest do
     rec2 = %Record{
       value: :rand.bytes(1000),
       key: key1,
-      topic: "test_no_batch_topic",
+      topic: topic,
       partition: 0
     }
 

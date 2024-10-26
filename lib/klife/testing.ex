@@ -8,6 +8,7 @@ defmodule Klife.Testing do
   alias Klife.Connection.Broker, as: Broker
   alias KlifeProtocol.Messages, as: M
 
+  # TODO: Rethink all_produced when consumer system is functional
   def all_produced(_client, _topic, []),
     do: raise("all_produced/3 must have at least one of the following opts value, key or headers")
 
@@ -26,7 +27,10 @@ defmodule Klife.Testing do
 
   def setup(client) do
     :ok = wait_producer(client)
+
     metas = PController.get_all_topics_partitions_metadata(client)
+
+    :ok = warmup_topics(metas, client)
 
     metas
     |> Enum.group_by(fn m -> m.leader_id end)
@@ -39,6 +43,31 @@ defmodule Klife.Testing do
         :persistent_term.put({__MODULE__, client, topic, partition}, offset)
       end)
     end)
+  end
+
+  defp warmup_topics(metas, client) do
+    recs =
+      Enum.map(metas, fn meta ->
+        if String.starts_with?(meta.topic_name, "__") do
+          nil
+        else
+          %Klife.Record{
+            topic: meta.topic_name,
+            value: "klife_warmup_txn",
+            partition: meta.partition_idx
+          }
+        end
+      end)
+      |> Enum.reject(fn e -> is_nil(e) end)
+
+    txn_fun = fn ->
+      apply(client, :produce_batch, [recs])
+      {:error, :test_txn_warmup}
+    end
+
+    {:error, :test_txn_warmup} = apply(client, :transaction, [txn_fun])
+
+    :ok
   end
 
   # TODO: Check if we can do this better
@@ -89,10 +118,10 @@ defmodule Klife.Testing do
 
     content = %{
       replica_id: -1,
-      max_wait_ms: 1000,
+      max_wait_ms: 100,
       min_bytes: 1,
       max_bytes: max_bytes,
-      isolation_level: 0,
+      isolation_level: 1,
       topics:
         metas
         |> Enum.group_by(fn meta -> meta.topic_name end, fn meta -> meta.partition_idx end)
@@ -103,7 +132,7 @@ defmodule Klife.Testing do
               Enum.map(partitions, fn p ->
                 %{
                   partition: p,
-                  fetch_offset: get_setup_offset(client_name, topic, p),
+                  fetch_offset: get_setup_offset(client_name, topic, p) + 1,
                   partition_max_bytes: round(max_bytes / length(partitions))
                 }
               end)
@@ -122,7 +151,7 @@ defmodule Klife.Testing do
     t_data.partitions
     |> List.flatten()
     |> Enum.map(fn pdata ->
-      if pdata.error_code != 0, do: raise("unexpected error code for #{inspect(pdata)}")
+      if pdata.error_code not in [0, 1], do: raise("unexpected error code for #{inspect(pdata)}")
 
       aborted_offset =
         case pdata.aborted_transactions do
