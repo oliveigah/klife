@@ -42,7 +42,7 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    assert {:ok, %Record{offset: offset} = resp_rec} = MyClient.produce(nil)
+    assert {:ok, %Record{offset: offset} = resp_rec} = MyClient.produce(record)
 
     assert_resp_record(record, resp_rec)
     assert :ok = TestUtils.assert_offset(MyClient, record, offset)
