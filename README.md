@@ -1,5 +1,7 @@
 # Klife
 
+[![ci](https://github.com/oliveigah/klife/actions/workflows/ci.yml/badge.svg)](https://github.com/oliveigah/klife/actions/workflows/ci.yml)
+
 Klife is a high-performance Kafka client built from the ground up with minimal dependencies.
 Currently, Klife supports producer functionality, with plans to add consumer features in the future.
 
