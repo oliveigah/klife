@@ -44,7 +44,7 @@ end
 
 ## Basic Usage
 
-Define your application client
+### Define your application client
 
 ```elixir
 defmodule MyApp.Client do
@@ -52,7 +52,7 @@ defmodule MyApp.Client do
 end
 ```
 
-Add basic configuration
+### Add basic configuration
 
 ```elixir
 config :my_app, MyApp.Client,
@@ -61,7 +61,7 @@ config :my_app, MyApp.Client,
     ssl: false
   ]
 ```
-Add the client to the supervision tree
+### Add the client to the supervision tree
 
 ```elixir
 children = [ MyApp.Client ]
@@ -70,7 +70,7 @@ opts = [strategy: :one_for_one, name: Example.Supervisor]
 Supervisor.start_link(children, opts)
 ```
 
-Call the producer API
+### Call the producer API
 
 ```elixir
 my_rec = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
