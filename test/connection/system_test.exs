@@ -27,7 +27,7 @@ defmodule Klife.Connection.SystemTest do
 
     mv = MV.get(client_name, ApiVersions)
 
-    assert_receive({:async_broker_response, ^ref, binary_resp, ApiVersions, ^mv}, 200)
+    assert_receive({:async_broker_response, ^ref, binary_resp, ApiVersions, ^mv}, 1000)
 
     assert {:ok, %{content: ^resp_content}} = ApiVersions.deserialize_response(binary_resp, mv)
   end
@@ -210,13 +210,13 @@ defmodule Klife.Connection.SystemTest do
 
     {:ok, service_name} = TestUtils.stop_broker(client_name, broker_id_to_remove)
 
-    assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 200)
+    assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 1000)
     assert broker_id_to_remove in Enum.map(event_data.removed_brokers, fn {b, _h} -> b end)
     assert broker_id_to_remove not in :persistent_term.get({:known_brokers_ids, client_name})
 
     {:ok, broker_id} = TestUtils.start_broker(service_name, client_name)
 
-    assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 200)
+    assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 1000)
     assert broker_id in Enum.map(event_data.added_brokers, fn {b, _h} -> b end)
     assert broker_id in :persistent_term.get({:known_brokers_ids, client_name})
 

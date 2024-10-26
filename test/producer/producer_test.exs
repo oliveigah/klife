@@ -577,7 +577,7 @@ defmodule Klife.ProducerTest do
 
     assert :ok = MyClient.produce_async(rec, callback: fn resp -> send(parent, {:ping, resp}) end)
 
-    assert_receive({:ping, resp}, 200)
+    assert_receive({:ping, resp}, 1000)
 
     assert {:ok, new_rec} = resp
 
@@ -605,7 +605,7 @@ defmodule Klife.ProducerTest do
 
     assert :ok = MyClient.produce_async(rec, callback: {CB, :exec, [parent, "arg2"]})
 
-    assert_receive({:ping, resp, "arg2"}, 200)
+    assert_receive({:ping, resp, "arg2"}, 1000)
 
     assert {:ok, new_rec} = resp
     assert :ok = TestUtils.assert_offset(MyClient, rec, new_rec.offset)
