@@ -1,31 +1,30 @@
 # Klife
 
-Klife is a performance focused Kafka client written from scratch with minimal dependencies. For now it provides only
-producer features but consumer will be done in the future.
+Klife is a high-performance Kafka client built from the ground up with minimal dependencies.
+Currently, Klife supports producer functionality, with plans to add consumer features in the future.
 
-Klife leverages [Klife Protocol](https://github.com/oliveigah/klife_protocol) in order to provide batch eficiency and
-future proof compatibility with newer versions of the protocol.
-
-The batch eficiency enable Klife to achieve great performance compared with other community clients, seeing increases of
-produce throughput up to 15x in some cases.
+To achieve high batch efficiency and ensure compatibility with evolving protocol versions, Klife
+leverages [Klife Protocol](https://github.com/oliveigah/klife_protocol). This efficiency allows
+Klife to deliver exceptional performance, with throughput improvements of up to 15x over other
+community Kafka clients in some scenarios.
 
 ## Features
 
-For now Klife have only producer features, but it is a on going project that will evolve into a consumer as well.
+Currently, Klife provides producer functionality, with plans to expand into consumer
+features as the project develops. Key features include:
 
-- Batch all data to the same broker within a single TCP request per producer
-- Minimal resource usage, only one connection per broker for each client
-- Synchronous produce returning the offset
-- Asynchronous produce with callback
-- Batch produce API for different topics/partitions
-- Automatic handle cluster and metadata changes
-- Testing helper functions to avoid mocking and run tests against a real broker
-- Simple configuration
-- Comprehensive documentation with examples and tradeoffs
-- Custom partitioner per topic
-- Support for transactions (ecto style)
-- SASL authentication (only plain for now)
-- Support for recent versions of the protocol
+- **Efficient Batching**: Batches data to the same broker in a single TCP request per producer.
+- **Minimal Resource Usage**: Only one connection per broker for each client, optimizing resource usage.
+- **Synchronous and Asynchronous Produce Options**: Synchronous produces return the offset, while asynchronous produces support callbacks.
+- **Batch Produce API**: Allows batching for multiple topics and partitions.
+- **Automatic Cluster and Metadata Management**: Automatically adapts to changes in cluster topology and metadata.
+- **Testing Utilities**: Includes helper functions for testing against a real broker without complex mocking.
+- **Simple Configuration**: Streamlined setup for straightforward use.
+- **Comprehensive Documentation**: Includes examples and explanations of trade-offs.
+- **Custom Partitioner per Topic**: Configurable partitioning for each topic.
+- **Transactional Support**: Supports transactions in an Ecto-like style.
+- **SASL Authentication**: Currently supports plain authentication.
+- **Protocol Compatibility**: Supports recent protocol versions, with forward compatibility in mind.
 
 ## Usage
 
