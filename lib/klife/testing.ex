@@ -2,7 +2,6 @@ defmodule Klife.Testing do
   @moduledoc """
   Testing function helpers
   """
-  import Klife.ProcessRegistry, only: [registry_lookup: 1]
 
   alias Klife.Producer.Controller, as: PController
   alias Klife.Connection.Broker, as: Broker
@@ -26,8 +25,6 @@ defmodule Klife.Testing do
   end
 
   def setup(client) do
-    :ok = wait_producer(client)
-
     metas = PController.get_all_topics_partitions_metadata(client)
 
     :ok = warmup_topics(metas, client)
@@ -68,29 +65,6 @@ defmodule Klife.Testing do
     {:error, :test_txn_warmup} = apply(client, :transaction, [txn_fun])
 
     :ok
-  end
-
-  # TODO: Check if we can do this better
-  defp wait_producer(client_name) do
-    deadline = System.monotonic_time(:millisecond) + 5_000
-    do_wait_producer(deadline, client_name)
-  end
-
-  defp do_wait_producer(deadline, client_name) do
-    if System.monotonic_time(:millisecond) < deadline do
-      case registry_lookup(
-             {Klife.TxnProducerPool, client_name, Klife.Client.default_txn_pool_name()}
-           ) do
-        [] ->
-          Process.sleep(5)
-          do_wait_producer(deadline, client_name)
-
-        [_] ->
-          :ok
-      end
-    else
-      raise "timeout waiting for producers. #{client_name}"
-    end
   end
 
   defp get_setup_offset(client, topic, partition) do
