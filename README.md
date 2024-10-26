@@ -30,17 +30,29 @@ features as the project develops. Key features include:
 - **SASL Authentication**: Currently supports plain authentication.
 - **Protocol Compatibility**: Supports recent protocol versions, with forward compatibility in mind.
 
-## Usage
+## Installation
 
-Checkout the `Klife.Client` docs to have more details, but the basic usage is something like this:
-
-#### 0. Add on deps
+### Add `klife` to your list of dependencies in `mix.exs`:
 
 ```elixir
-{:klife, "~> 0.1.0"},
+def deps do
+  [
+    {:klife, "~> 0.1.0"}
+  ]
+end
 ```
 
-#### 1. Add config
+## Basic Usage
+
+### Define your application client
+
+```elixir
+defmodule MyApp.Client do
+  use Klife.Client, otp_app: :my_app
+end
+```
+
+### Add basic configuration
 
 ```elixir
 config :my_app, MyApp.Client,
@@ -49,16 +61,7 @@ config :my_app, MyApp.Client,
     ssl: false
   ]
 ```
-
-#### 2. Use it on a module
-
-```elixir
-defmodule MyApp.Client do
-  use Klife.Client, otp_app: :my_app
-end
-```
-
-#### 3. Starting it on your supervision tree
+### Add the client to the supervision tree
 
 ```elixir
 children = [ MyApp.Client ]
@@ -67,12 +70,14 @@ opts = [strategy: :one_for_one, name: Example.Supervisor]
 Supervisor.start_link(children, opts)
 ```
 
-#### 4. Call the producer API on your code
+### Call the producer API
 
 ```elixir
 my_rec = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
 {:ok, %Klife.Record} = MyApp.Client.produce(my_rec)
 ```
+
+Checkout the `Klife.Client` [docs](https://hexdocs.pm/klife/Klife.Client.html) for more details
 
 ## Producer performance
 
