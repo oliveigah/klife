@@ -17,7 +17,7 @@ defmodule Klife.Connection.Controller do
   # Since the biggest signed int32 is 2,147,483,647
   # We need to eventually reset the correlation counter value
   # in order to avoid reaching this limit.
-  
+
   @max_correlation_counter 1_000_000_000
 
   @check_cluster_delay :timer.seconds(10)
@@ -217,6 +217,9 @@ defmodule Klife.Connection.Controller do
            state
            | check_cluster_timer_ref: new_ref
          }}
+
+      _ ->
+        {:noreply, state}
     end
   end
 
