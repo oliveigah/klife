@@ -46,17 +46,16 @@ defmodule Klife.Producer.Batcher do
   end
 
   def init(args) do
-    args_map = Map.new(args)
-    max_in_flight = args_map.producer_config.max_in_flight_requests
-    linger_ms = args_map.producer_config.linger_ms
-    broker_id = args_map.broker_id
-    batcher_id = args_map.id
-    producer_config = args_map.producer_config
+    max_in_flight = Keyword.fetch!(args, :producer_config).max_in_flight_requests
+    linger_ms = Keyword.fetch!(args, :producer_config).linger_ms
+    broker_id = Keyword.fetch!(args, :broker_id)
+    batcher_id = Keyword.fetch!(args, :id)
+    producer_config = Keyword.fetch!(args, :producer_config)
 
     next_send_msg_ref =
-      if linger_ms > 0,
-        do: Process.send_after(self(), :send_to_broker, linger_ms),
-        else: nil
+      if linger_ms > 0 do
+        Process.send_after(self(), :send_to_broker, linger_ms)
+      end
 
     state = %__MODULE__{
       current_batch: %{},
@@ -65,7 +64,7 @@ defmodule Klife.Producer.Batcher do
       current_estimated_size: 0,
       batch_queue: :queue.new(),
       last_batch_sent_at: System.monotonic_time(:millisecond),
-      in_flight_pool: Enum.map(1..max_in_flight, fn _ -> nil end),
+      in_flight_pool: List.duplicate(nil, max_in_flight),
       next_send_msg_ref: next_send_msg_ref,
       base_sequences: %{},
       producer_epochs: %{},
@@ -126,9 +125,11 @@ defmodule Klife.Producer.Batcher do
         add_record(acc_state, rec, callback_pid)
       end)
 
-    if on_time? and next_ref == nil,
-      do: {:reply, {:ok, delivery_timeout}, maybe_schedule_send(new_state, 0)},
-      else: {:reply, {:ok, delivery_timeout}, new_state}
+    if on_time? and next_ref == nil do
+      {:reply, {:ok, delivery_timeout}, send_after_earliest(new_state, 0)}
+    else
+      {:reply, {:ok, delivery_timeout}, new_state}
+    end
   end
 
   def handle_info(:send_to_broker, %__MODULE__{} = state) do
@@ -143,26 +144,26 @@ defmodule Klife.Producer.Batcher do
     pool_idx = Enum.find_index(in_flight_pool, &is_nil/1)
 
     on_time? = now - last_batch_sent_at >= linger_ms
-    in_flight_available? = is_number(pool_idx)
+    in_flight_available? = is_integer(pool_idx)
     has_batch_on_queue? = not :queue.is_empty(batch_queue)
     is_periodic? = linger_ms > 0
-    new_state = %{state | next_send_msg_ref: nil}
+    new_state = %__MODULE__{state | next_send_msg_ref: nil}
 
     cond do
       not in_flight_available? ->
-        {:noreply, maybe_schedule_send(new_state, 1)}
+        {:noreply, send_after_earliest(new_state, 1)}
 
       has_batch_on_queue? ->
         new_state =
           new_state
           |> dispatch_to_broker(pool_idx)
-          |> maybe_schedule_send(1)
+          |> send_after_earliest(1)
 
         {:noreply, new_state}
 
       not on_time? ->
         new_state =
-          maybe_schedule_send(new_state, linger_ms - (now - last_batch_sent_at))
+          send_after_earliest(new_state, linger_ms - (now - last_batch_sent_at))
 
         {:noreply, new_state}
 
@@ -170,7 +171,7 @@ defmodule Klife.Producer.Batcher do
         new_state =
           new_state
           |> dispatch_to_broker(pool_idx)
-          |> maybe_schedule_send(linger_ms)
+          |> send_after_earliest(linger_ms)
 
         {:noreply, new_state}
 
@@ -280,7 +281,7 @@ defmodule Klife.Producer.Batcher do
         state
         |> move_current_data_to_batch_queue()
         |> add_record_to_current_data(record, pid, estimated_size)
-        |> maybe_schedule_send(5),
+        |> send_after_earliest(5),
       else:
         state
         |> add_record_to_current_data(record, pid, estimated_size)
@@ -341,13 +342,13 @@ defmodule Klife.Producer.Batcher do
     end
   end
 
-  def maybe_schedule_send(%__MODULE__{next_send_msg_ref: nil} = state, time),
+  def send_after_earliest(%__MODULE__{next_send_msg_ref: nil} = state, time),
     do: %{
       state
       | next_send_msg_ref: Process.send_after(self(), :send_to_broker, time)
     }
 
-  def maybe_schedule_send(%__MODULE__{next_send_msg_ref: ref} = state, time)
+  def send_after_earliest(%__MODULE__{next_send_msg_ref: ref} = state, time)
       when is_reference(ref) do
     if Process.read_timer(ref) > time do
       Process.cancel_timer(ref)
@@ -508,15 +509,11 @@ defmodule Klife.Producer.Batcher do
       |> Map.fetch!({topic, partition})
       |> Map.fetch!(:last_offset_delta)
 
-    case Map.get(waiting_pids, {topic, partition}) do
-      nil ->
-        Map.put(waiting_pids, {topic, partition}, [{new_pid, offset, rec.__batch_index}])
+    new_entry = {new_pid, offset, rec.__batch_index}
 
-      current_pids ->
-        Map.replace!(waiting_pids, {topic, partition}, [
-          {new_pid, offset, rec.__batch_index} | current_pids
-        ])
-    end
+    Map.update(waiting_pids, {topic, partition}, [new_entry], fn current_pids ->
+      [new_entry | current_pids]
+    end)
   end
 
   defp get_process_name(

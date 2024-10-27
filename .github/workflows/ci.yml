@@ -28,8 +28,8 @@ jobs:
       - uses: actions/checkout@v3
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.14.5'
-          otp-version: '26.0'
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
       - run: docker compose -f "test/compose_files/docker-compose.yml" up -d
       - run: mix deps.get
       - run: mix compile --warnings-as-errors

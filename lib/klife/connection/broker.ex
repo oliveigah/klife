@@ -51,16 +51,11 @@ defmodule Klife.Connection.Broker do
       sasl_opts: sasl_opts
     }
 
-    # This needs to be done instead of send(self(), :connect)
-    # in order to prevent a race condition where the
-    # manual broker verification returns :ok to the caller
-    # before a connection is properly initialized.
-    #
-    # This bug can be reproduced by artificially increasing
-    # the time it takes to complete the connect action
-    #
-    # Since we do not expect this process to restart often
-    # it is safe to go with a longer initialization time
+    # This is done here instead of `send(self(), :connect)` because
+    # it only makes sense for the process to be added to the supervision tree
+    # if the connection is successful.
+    # This also simplifies the usage of the global :persistent_term entry because
+    # it will only exist if the process is already valid.
     state = do_connect(state)
 
     {:ok, state}
@@ -79,13 +74,11 @@ defmodule Klife.Connection.Broker do
   end
 
   def handle_info({:tcp_closed, _port}, %__MODULE__{} = state) do
-    send(self(), :connect)
-    {:noreply, state}
+    {:noreply, do_connect(state)}
   end
 
   def handle_info({:ssl_closed, {:sslsocket, _socket_details, _pids}}, %__MODULE__{} = state) do
-    send(self(), :connect)
-    {:noreply, state}
+    {:noreply, do_connect(state)}
   end
 
   def terminate(reason, %__MODULE__{} = state) do
@@ -109,12 +102,13 @@ defmodule Klife.Connection.Broker do
     }
 
     version = MessageVersions.get(client_name, message_mod)
-    data = apply(message_mod, :serialize_request, [input, version])
+    data = message_mod.serialize_request(input, version)
 
-    if Keyword.get(opts, :async, false),
-      do:
-        send_raw_async(data, message_mod, version, correlation_id, broker_id, client_name, opts),
-      else: send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name)
+    if Keyword.get(opts, :async, false) do
+      send_raw_async(data, message_mod, version, correlation_id, broker_id, client_name, opts)
+    else
+      send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name)
+    end
   end
 
   def send_raw_sync(raw_data, message_mod, msg_version, correlation_id, broker_id, client_name) do
@@ -126,7 +120,7 @@ defmodule Klife.Connection.Broker do
       :ok ->
         receive do
           {:broker_response, response} ->
-            apply(message_mod, :deserialize_response, [response, msg_version])
+            message_mod.deserialize_response(response, msg_version)
         after
           conn.read_timeout + 2000 ->
             Controller.take_from_in_flight(client_name, correlation_id)
@@ -201,7 +195,7 @@ defmodule Klife.Connection.Broker do
         #
         # The caller will assume that the message was not delivered and may send it again.
         #
-        # Dependeing on the message being sent and the idempotency configuration
+        # Depending on the message being sent and the idempotency configuration
         # this may not be a problem.
         #
         # Must revisit this later.
@@ -212,7 +206,7 @@ defmodule Klife.Connection.Broker do
         # now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
         #
         Logger.warning("""
-        Unkown correlation id received from client #{inspect(client_name)}.
+        Unknown correlation id received from client #{inspect(client_name)}.
 
         correlation_id: #{inspect(correlation_id)}
 
@@ -237,9 +231,9 @@ defmodule Klife.Connection.Broker do
 
   defp get_reconnect_delay(%__MODULE__{reconnect_attempts: attempts}) do
     max_idx = length(@reconnect_delays_seconds) - 1
-    base_delay = Enum.at(@reconnect_delays_seconds, min(attempts, max_idx))
-    jitter_delay = base_delay * (Enum.random(50..150) / 100)
-    :timer.seconds(round(jitter_delay))
+    base_delay_seconds = Enum.at(@reconnect_delays_seconds, min(attempts, max_idx))
+    jitter_delay = base_delay_seconds * 1000 * (Enum.random(50..150) / 100)
+    round(jitter_delay)
   end
 
   defp get_broker_id(:any, client_name), do: Controller.get_random_broker_id(client_name)
@@ -280,7 +274,9 @@ defmodule Klife.Connection.Broker do
            sasl_opts
          ) do
       {:ok, conn} ->
-        # After authentication we can go back to once
+        # After authentication we can go back to once.
+        # The underlying socket is stateful, so that's why
+        # we don't care about the return value of `socket_opts`.
         Connection.socket_opts(conn, active: :once)
         :persistent_term.put({__MODULE__, state.client_name, state.broker_id}, conn)
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}

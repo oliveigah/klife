@@ -66,7 +66,7 @@ defmodule Klife.MixProject do
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       # Benchmarks and tests
       {:benchee, "~> 1.0", only: :dev, runtime: false},
-      {:kafka_ex, "~> 0.13", only: :dev},
+      {:kafka_ex, "~> 0.13", only: :dev, app: false},
       {:brod, "~> 3.16", only: :dev},
       {:observer_cli, "~> 1.7", only: :dev}
     ]
