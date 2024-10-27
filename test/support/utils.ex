@@ -38,6 +38,7 @@ defmodule Klife.TestUtils do
     # of how the PubSub works.
     task = Task.async(fn -> do_stop_broker(client_name, broker_id) end)
     Task.await(task, :infinity)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
   defp do_stop_broker(client_name, broker_id) do

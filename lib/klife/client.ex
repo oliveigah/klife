@@ -423,7 +423,14 @@ defmodule Klife.Client do
       @doc false
       @impl Supervisor
       def init(_args) do
-        Klife.Client.init(__MODULE__, @otp_app, @input_opts, default_txn_pool_key(), default_producer_key(), default_partitioner_key())
+        Klife.Client.init(
+          __MODULE__,
+          @otp_app,
+          @input_opts,
+          default_txn_pool_key(),
+          default_producer_key(),
+          default_partitioner_key()
+        )
       end
 
       @spec produce(Record.t(), opts :: list() | nil) :: {:ok, Record.t()} | {:error, Record.t()}
@@ -451,7 +458,14 @@ defmodule Klife.Client do
   end
 
   @doc false
-  def init(module, otp_app, input_opts, default_txn_pool_key, default_producer_key, default_partitioner_key) do
+  def init(
+        module,
+        otp_app,
+        input_opts,
+        default_txn_pool_key,
+        default_producer_key,
+        default_partitioner_key
+      ) do
     config = Application.get_env(otp_app, module)
 
     validated_opts = NimbleOptions.validate!(config, input_opts)

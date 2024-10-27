@@ -186,7 +186,6 @@ defmodule Klife.Producer.Dispatcher do
           """)
 
           :discard
-
         else
           Logger.warning("""
           Error while producing message. Message will be retried!
