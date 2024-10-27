@@ -52,7 +52,6 @@ defmodule Klife do
   @doc false
   def produce(%Record{} = record, client, opts \\ []) do
     [resp] = produce_batch([record], client, opts)
-
     resp
   end
 

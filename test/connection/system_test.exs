@@ -200,8 +200,6 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _pid} = start_supervised(client_name)
 
-    :ok = TestUtils.wait_client(client_name, 3)
-
     brokers = :persistent_term.get({:known_brokers_ids, client_name})
     broker_id_to_remove = List.first(brokers)
     cb_ref = make_ref()

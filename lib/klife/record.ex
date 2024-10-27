@@ -26,6 +26,8 @@ defmodule Klife.Record do
     :value,
     :headers,
     :error_code,
+    :value,
+    :headers,
     :__batch_index,
     :__estimated_size
   ]
@@ -98,8 +100,8 @@ defmodule Klife.Record do
   defp get_size([]), do: 0
   defp get_size(v) when is_binary(v), do: byte_size(v)
 
-  defp get_size(v) when is_map(v),
-    do: Enum.reduce(v, 0, fn {_k, v}, acc -> acc + get_size(v) end)
+  defp get_size(val) when is_map(val),
+    do: Enum.reduce(val, 0, fn {_k, v}, acc -> acc + get_size(v) end)
 
   defp get_size(v) when is_list(v), do: Enum.reduce(v, 0, fn i, acc -> acc + get_size(i) end)
 end

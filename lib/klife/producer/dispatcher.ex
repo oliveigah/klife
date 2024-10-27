@@ -55,7 +55,7 @@ defmodule Klife.Producer.Dispatcher do
     {:ok, state}
   end
 
-  def dispatch(server, %__MODULE__.Request{} = data),
+  def dispatch(server, %Request{} = data),
     do: GenServer.call(server, {:dispatch, data})
 
   @impl true
@@ -140,7 +140,7 @@ defmodule Klife.Producer.Dispatcher do
     } = state
 
     data =
-      %__MODULE__.Request{
+      %Request{
         delivery_confirmation_pids: delivery_confirmation_pids,
         pool_idx: pool_idx,
         request_ref: ^req_ref,

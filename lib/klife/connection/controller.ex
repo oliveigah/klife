@@ -17,7 +17,9 @@ defmodule Klife.Connection.Controller do
   # Since the biggest signed int32 is 2,147,483,647
   # We need to eventually reset the correlation counter value
   # in order to avoid reaching this limit.
-  @max_correlation_counter 2_000_000_000
+  
+  @max_correlation_counter 1_000_000_000
+
   @check_cluster_delay :timer.seconds(10)
 
   @connection_opts [
@@ -102,7 +104,7 @@ defmodule Klife.Connection.Controller do
       :named_table
     ])
 
-    :persistent_term.put({:correlation_counter, client}, :atomics.new(1, []))
+    :persistent_term.put({:correlation_counter, client}, :atomics.new(1, signed: false))
 
     state = %__MODULE__{
       bootstrap_servers: bootstrap_servers,
@@ -185,7 +187,7 @@ defmodule Klife.Connection.Controller do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
         Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = Process.send_after(self(), :check_cluster, 0)
+        new_ref = send(self(), :check_cluster)
 
         {:noreply,
          %__MODULE__{
@@ -240,9 +242,16 @@ defmodule Klife.Connection.Controller do
   end
 
   def get_next_correlation_id(client_name) do
-    atomic = :persistent_term.get({:correlation_counter, client_name})
-    :atomics.compare_exchange(atomic, 1, @max_correlation_counter, 0)
-    :atomics.add_get(atomic, 1, 1)
+    # atomics wraps arround when overflowed
+    # since atomics can only be int64 we use
+    # rem/2 in order to guarantee the max value
+    # will never be reached
+    val =
+      {:correlation_counter, client_name}
+      |> :persistent_term.get()
+      |> :atomics.add_get(1, 1)
+
+    rem(val, @max_correlation_counter)
   end
 
   def get_random_broker_id(client_name) do

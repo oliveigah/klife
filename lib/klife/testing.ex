@@ -118,14 +118,9 @@ defmodule Klife.Testing do
 
   defp match_search_map?(rec, search_opts) do
     Enum.all?(search_opts, fn
-      {:value, v} ->
-        rec.value == v
-
-      {:key, v} ->
-        rec.key == v
-
-      {:headers, v} ->
-        Enum.all?(v, fn hv -> hv in rec.headers end)
+      {:value, v} -> rec.value == v
+      {:key, v} -> rec.key == v
+      {:headers, v} -> Enum.all?(v, fn hv -> hv in rec.headers end)
     end)
   end
 

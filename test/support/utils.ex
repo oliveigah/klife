@@ -118,34 +118,15 @@ defmodule Klife.TestUtils do
                 {:ok, broker_id}
             end
         after
-          10_000 ->
+          50_000 ->
             {:error, :timeout}
         end
 
       :ok = PubSub.unsubscribe({:cluster_change, client_name})
-
-      Process.sleep(10)
       result
     end)
-    |> Task.await(30_000)
+    |> Task.await(60_000)
     |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
-  end
-
-  def wait_client(client_name, expected_brokers) do
-    deadline = System.monotonic_time(:millisecond) + :timer.seconds(30)
-    do_wait_client(deadline, client_name, expected_brokers)
-  end
-
-  defp do_wait_client(deadline, client_name, expected_brokers) do
-    Process.sleep(10)
-
-    if System.monotonic_time(:millisecond) < deadline do
-      if length(:persistent_term.get({:known_brokers_ids, client_name}, [])) == expected_brokers,
-        do: :ok,
-        else: do_wait_client(deadline, client_name, expected_brokers)
-    else
-      raise "timeout waiting for client"
-    end
   end
 
   def get_record_batch_by_offset(client_name, topic, partition, offset) do

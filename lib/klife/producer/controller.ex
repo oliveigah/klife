@@ -121,7 +121,7 @@ defmodule Klife.Producer.Controller do
     case state do
       %__MODULE__{check_metadata_waiting_pids: []} ->
         Process.cancel_timer(state.check_metadata_timer_ref)
-        new_ref = Process.send_after(self(), :check_metadata, 0)
+        new_ref = send(self(), :check_metadata)
 
         {:noreply,
          %__MODULE__{
@@ -234,6 +234,7 @@ defmodule Klife.Producer.Controller do
         else
           :crypto.strong_rand_bytes(11)
           |> Base.url_encode64(padding: false)
+          |> binary_part(0, 15)
           |> Kernel.<>("_#{txn_producer_count}")
         end
 
