@@ -63,8 +63,7 @@ defmodule Klife.Testing do
 
     metas
     |> Enum.group_by(fn m -> m.leader_id end)
-    |> Enum.map(fn {leader_id, metas} -> get_records(leader_id, metas, client) end)
-    |> List.flatten()
+    |> Enum.flat_map(fn {leader_id, metas} -> get_records(leader_id, metas, client) end)
     |> Enum.filter(fn rec -> match_search_map?(rec, search_opts) end)
   end
 
@@ -79,17 +78,17 @@ defmodule Klife.Testing do
 
     :ok = warmup_topics(metas, client)
 
-    metas
-    |> Enum.group_by(fn m -> m.leader_id end)
-    |> Enum.map(fn {leader_id, metas} -> get_latest_offsets(leader_id, metas, client) end)
-    |> List.flatten()
-    |> Enum.group_by(fn {topic, _pdata} -> topic end, fn {_topic, pdata} -> pdata end)
-    |> Enum.map(fn {topic, pdatas} -> {topic, List.flatten(pdatas)} end)
-    |> Enum.each(fn {topic, pdata} ->
-      Enum.each(pdata, fn {partition, offset} ->
-        :persistent_term.put({__MODULE__, client, topic, partition}, offset)
-      end)
-    end)
+    data_by_topic =
+      metas
+      |> Enum.group_by(fn m -> m.leader_id end)
+      |> Enum.flat_map(fn {leader_id, metas} -> get_latest_offsets(leader_id, metas, client) end)
+      |> Enum.group_by(fn {topic, _pdata} -> topic end, fn {_topic, pdata} -> pdata end)
+
+    for {topic, pdatas} <- data_by_topic, pdata <- pdatas, {partition, offset} <- pdata do
+      :persistent_term.put({__MODULE__, client, topic, partition}, offset)
+    end
+
+    :ok
   end
 
   defp warmup_topics(metas, client) do
@@ -108,7 +107,7 @@ defmodule Klife.Testing do
       |> Enum.reject(fn e -> is_nil(e) end)
 
     txn_fun = fn ->
-      apply(client, :produce_batch, [recs])
+      client.produce_batch(recs)
       {:error, :test_txn_warmup}
     end
 
@@ -122,17 +121,10 @@ defmodule Klife.Testing do
   end
 
   defp match_search_map?(rec, search_opts) do
-    Enum.all?(search_opts, fn {k, v} ->
-      case k do
-        :value ->
-          rec.value == v
-
-        :key ->
-          rec.key == v
-
-        :headers ->
-          Enum.all?(v, fn hv -> hv in rec.headers end)
-      end
+    Enum.all?(search_opts, fn
+      {:value, v} -> rec.value == v
+      {:key, v} -> rec.key == v
+      {:headers, v} -> Enum.all?(v, fn hv -> hv in rec.headers end)
     end)
   end
 
@@ -174,7 +166,7 @@ defmodule Klife.Testing do
 
     t_data.partitions
     |> List.flatten()
-    |> Enum.map(fn pdata ->
+    |> Enum.flat_map(fn pdata ->
       if pdata.error_code not in [0, 1], do: raise("unexpected error code for #{inspect(pdata)}")
 
       aborted_offset =
@@ -190,8 +182,7 @@ defmodule Klife.Testing do
         |> Map.put(:first_aborted_offset, aborted_offset)
       end)
     end)
-    |> List.flatten()
-    |> Enum.map(fn batch ->
+    |> Enum.flat_map(fn batch ->
       batch.records
       |> Enum.map(fn rec ->
         new_rec =
@@ -202,7 +193,6 @@ defmodule Klife.Testing do
         if new_rec.offset >= batch.first_aborted_offset, do: nil, else: new_rec
       end)
     end)
-    |> List.flatten()
     |> Enum.reject(fn rec -> is_nil(rec) end)
     |> Enum.map(fn rec ->
       %Klife.Record{

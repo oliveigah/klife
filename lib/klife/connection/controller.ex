@@ -17,8 +17,7 @@ defmodule Klife.Connection.Controller do
   # Since the biggest signed int32 is 2,147,483,647
   # We need to eventually reset the correlation counter value
   # in order to avoid reaching this limit.
-  @max_correlation_counter 200_000_000
-  @check_correlation_counter_delay :timer.seconds(300)
+  @max_correlation_counter 1_000_000_000
   @check_cluster_delay :timer.seconds(10)
 
   @connection_opts [
@@ -103,7 +102,7 @@ defmodule Klife.Connection.Controller do
       :named_table
     ])
 
-    :persistent_term.put({:correlation_counter, client}, :atomics.new(1, []))
+    :persistent_term.put({:correlation_counter, client}, :atomics.new(1, signed: false))
 
     state = %__MODULE__{
       bootstrap_servers: bootstrap_servers,
@@ -125,8 +124,6 @@ defmodule Klife.Connection.Controller do
   defp do_init(state) do
     {_, state} = handle_info(:init_bootstrap_conn, state)
     {_, state} = handle_info(:check_cluster, state)
-
-    send(self(), :check_correlation_counter)
 
     state
   end
@@ -183,23 +180,12 @@ defmodule Klife.Connection.Controller do
     end
   end
 
-  def handle_info(:check_correlation_counter, %__MODULE__{} = state) do
-    if read_correlation_id(state.client_name) >= @max_correlation_counter do
-      {:correlation_counter, state.client_name}
-      |> :persistent_term.get()
-      |> :atomics.exchange(1, 0)
-    end
-
-    Process.send_after(self(), :check_correlation_counter, @check_correlation_counter_delay)
-    {:noreply, state}
-  end
-
   @impl true
   def handle_call(:trigger_check_cluster, from, %__MODULE__{} = state) do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
         Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = Process.send_after(self(), :check_cluster, 0)
+        new_ref = send(self(), :check_cluster)
 
         {:noreply,
          %__MODULE__{
@@ -222,7 +208,7 @@ defmodule Klife.Connection.Controller do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
         Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = Process.send_after(self(), :check_cluster, 0)
+        new_ref = send(self(), :check_cluster)
 
         {:noreply,
          %__MODULE__{
@@ -254,9 +240,16 @@ defmodule Klife.Connection.Controller do
   end
 
   def get_next_correlation_id(client_name) do
-    {:correlation_counter, client_name}
-    |> :persistent_term.get()
-    |> :atomics.add_get(1, 1)
+    # atomics wraps arround when overflowed
+    # since atomics can only be int64 we use
+    # rem/2 in order to guarantee the max value
+    # will never be reached
+    val =
+      {:correlation_counter, client_name}
+      |> :persistent_term.get()
+      |> :atomics.add_get(1, 1)
+
+    rem(val, @max_correlation_counter)
   end
 
   def get_random_broker_id(client_name) do
@@ -389,12 +382,6 @@ defmodule Klife.Connection.Controller do
         Could not connect with any boostrap server provided on configuration.
         Errors: #{inspect(conn)}
         """)
-  end
-
-  defp read_correlation_id(client_name) do
-    {:correlation_counter, client_name}
-    |> :persistent_term.get()
-    |> :atomics.get(1)
   end
 
   defp set_client_controller(broker_id, client_name),

@@ -19,13 +19,13 @@ defmodule Klife.Record do
   - error_code (if something goes wrong on produce. See [kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes) for context)
   """
   defstruct [
-    :value,
     :key,
-    :headers,
     :topic,
     :partition,
     :offset,
     :error_code,
+    :value,
+    :headers,
     :__batch_index,
     :__estimated_size
   ]
@@ -98,8 +98,8 @@ defmodule Klife.Record do
   defp get_size([]), do: 0
   defp get_size(v) when is_binary(v), do: byte_size(v)
 
-  defp get_size(v) when is_map(v),
-    do: v |> Map.to_list() |> Enum.reduce(0, fn {_k, v}, acc -> acc + get_size(v) end)
+  defp get_size(val) when is_map(val),
+    do: Enum.reduce(val, 0, fn {_k, v}, acc -> acc + get_size(v) end)
 
   defp get_size(v) when is_list(v), do: Enum.reduce(v, 0, fn i, acc -> acc + get_size(i) end)
 end

@@ -110,7 +110,7 @@ defmodule Klife.TxnProducerPool do
 
     %__MODULE__{client_name: client_name, name: pool_name} = pool_state
 
-    producer_name = :"klife_txn_producer.#{pool_name}.#{worker_id}"
+    producer_name = "klife_txn_producer.#{pool_name}.#{worker_id}"
 
     case Producer.get_pid(client_name, producer_name) do
       nil ->
@@ -118,7 +118,7 @@ defmodule Klife.TxnProducerPool do
         {:error, {:unkown_producer, client_name, producer_name}}
 
       {_pid, _} ->
-        worker = %__MODULE__.WorkerState{
+        worker = %WorkerState{
           client_name: client_name,
           producer_name: producer_name,
           worker_id: worker_id
@@ -134,7 +134,7 @@ defmodule Klife.TxnProducerPool do
   end
 
   @impl NimblePool
-  def handle_checkin(_client_state, _from, %__MODULE__.WorkerState{} = worker_state, pool_state) do
+  def handle_checkin(_client_state, _from, %WorkerState{} = worker_state, pool_state) do
     {:ok, worker_state, pool_state}
   end
 
@@ -178,7 +178,7 @@ defmodule Klife.TxnProducerPool do
       end
 
     %{
-      worker_state: %__MODULE__.WorkerState{
+      worker_state: %WorkerState{
         producer_id: p_id,
         producer_epoch: p_epoch,
         coordinator_id: coordinator_id,
@@ -211,7 +211,7 @@ defmodule Klife.TxnProducerPool do
     case maybe_add_partition_to_txn(client_name, records) do
       :ok ->
         %{
-          worker_state: %__MODULE__.WorkerState{producer_name: producer_name}
+          worker_state: %WorkerState{producer_name: producer_name}
         } =
           get_txn_ctx(client_name)
 
@@ -227,7 +227,7 @@ defmodule Klife.TxnProducerPool do
 
     txn_ctx =
       %{
-        worker_state: %__MODULE__.WorkerState{
+        worker_state: %WorkerState{
           producer_id: p_id,
           client_name: client_name,
           txn_id: txn_id,
@@ -242,10 +242,7 @@ defmodule Klife.TxnProducerPool do
         :ok
 
       to_add_tp_list ->
-        grouped_tp_list =
-          to_add_tp_list
-          |> Enum.group_by(fn {t, _p} -> t end, fn {_t, p} -> p end)
-          |> Map.to_list()
+        grouped_tp_list = Enum.group_by(to_add_tp_list, fn {t, _p} -> t end, fn {_t, p} -> p end)
 
         content = %{
           transactions: [
@@ -268,9 +265,9 @@ defmodule Klife.TxnProducerPool do
         case add_partitions_to_txn(client_name, coordinator_id, content) do
           :ok ->
             new_txn_topic_partitions =
-              Enum.reduce(tp_list, txn_topic_partitions, fn {t, p}, acc ->
-                MapSet.put(acc, {t, p})
-              end)
+              tp_list
+              |> MapSet.new()
+              |> MapSet.union(txn_topic_partitions)
 
             update_txn_ctx(client_name, %{txn_ctx | topic_partitions: new_txn_topic_partitions})
 
@@ -280,12 +277,11 @@ defmodule Klife.TxnProducerPool do
             error_map = Map.new(tp_error_list)
 
             resp =
-              records
-              |> Enum.map(fn r ->
-                %{r | error_code: Map.get(error_map, {r.topic, r.partition})}
-              end)
-              |> Enum.map(fn r ->
-                if r.error_code == 0, do: {:ok, r}, else: {:error, r}
+              Enum.map(records, fn r ->
+                error_code = Map.get(error_map, {r.topic, r.partition})
+                upd = %{r | error_code: error_code}
+
+                if error_code == 0, do: {:ok, upd}, else: {:error, upd}
               end)
 
             {:error, resp}
@@ -334,10 +330,10 @@ defmodule Klife.TxnProducerPool do
 
       not MapSet.disjoint?(result_set, stop_set) ->
         errors =
-          for t_result <- t_results, p_result <- t_result.results_by_partition do
+          for t_result <- t_results,
+              p_result <- t_result.results_by_partition do
             {{t_result.name, p_result.partition_index}, p_result.partition_error_code}
           end
-          |> Enum.reject(&is_nil/1)
 
         {:error, :stop, errors}
 
@@ -354,7 +350,7 @@ defmodule Klife.TxnProducerPool do
   """
   def in_txn?(client), do: not is_nil(get_txn_ctx(client))
 
-  defp setup_txn_ctx(%__MODULE__.WorkerState{} = state, client) do
+  defp setup_txn_ctx(%WorkerState{} = state, client) do
     {:ok,
      %{
        producer_id: producer_id,

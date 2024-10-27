@@ -55,12 +55,12 @@ defmodule Klife.Producer.Dispatcher do
     {:ok, state}
   end
 
-  def dispatch(server, %__MODULE__.Request{} = data),
+  def dispatch(server, %Request{} = data),
     do: GenServer.call(server, {:dispatch, data})
 
   @impl true
-  def handle_call({:dispatch, %__MODULE__.Request{} = data}, _from, %__MODULE__{} = state) do
-    %__MODULE__.Request{
+  def handle_call({:dispatch, %Request{} = data}, _from, %__MODULE__{} = state) do
+    %Request{
       request_ref: request_ref,
       producer_config: %{retry_backoff_ms: retry_ms},
       pool_idx: pool_idx,
@@ -99,7 +99,7 @@ defmodule Klife.Producer.Dispatcher do
   @impl true
   def handle_info({:dispatch, req_ref}, %__MODULE__{} = state) when is_reference(req_ref) do
     data =
-      %__MODULE__.Request{
+      %Request{
         request_ref: request_ref,
         producer_config: %Producer{retry_backoff_ms: retry_ms},
         pool_idx: pool_idx,
@@ -154,7 +154,7 @@ defmodule Klife.Producer.Dispatcher do
     } = state
 
     data =
-      %__MODULE__.Request{
+      %Request{
         delivery_confirmation_pids: delivery_confirmation_pids,
         pool_idx: pool_idx,
         request_ref: ^req_ref,
@@ -234,7 +234,7 @@ defmodule Klife.Producer.Dispatcher do
     to_retry_keys = Enum.map(to_retry, fn {t, p, _, _} -> {t, p} end)
     new_batch_to_send = Map.take(batch_to_send, to_retry_keys)
 
-    if new_batch_to_send == %{} do
+    if map_size(new_batch_to_send) == 0 do
       send(batcher_pid, {:request_completed, pool_idx})
       {:noreply, remove_request(state, req_ref)}
     else
@@ -251,8 +251,8 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  defp do_dispatch(%__MODULE__.Request{} = data, %__MODULE__{} = state) do
-    %__MODULE__.Request{
+  defp do_dispatch(%Request{} = data, %__MODULE__{} = state) do
+    %Request{
       producer_config: %Producer{
         request_timeout_ms: req_timeout,
         delivery_timeout_ms: delivery_timeout,

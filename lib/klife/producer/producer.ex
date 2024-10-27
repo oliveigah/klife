@@ -15,9 +15,10 @@ defmodule Klife.Producer do
 
   @producer_options [
     name: [
-      type: :atom,
+      type: {:or, [:atom, :string]},
       required: true,
-      doc: "Producer name. Can be used as an option on the producer api"
+      doc:
+        "Producer name. Must be unique per client. Can be used as an option on the producer api"
     ],
     client_id: [
       type: :string,

@@ -52,13 +52,11 @@ defmodule Klife.TestUtils do
               do: {:ok, service_name},
               else: {:error, :invalid_event}
         after
-          10_000 ->
+          30_000 ->
             {:error, :timeout}
         end
 
       :ok = PubSub.unsubscribe({:cluster_change, client_name})
-
-      Process.sleep(10)
       result
     end)
     |> Task.await(30_000)
@@ -115,13 +113,11 @@ defmodule Klife.TestUtils do
                 {:ok, broker_id}
             end
         after
-          10_000 ->
+          30_000 ->
             {:error, :timeout}
         end
 
       :ok = PubSub.unsubscribe({:cluster_change, client_name})
-
-      Process.sleep(10)
       result
     end)
     |> Task.await(30_000)

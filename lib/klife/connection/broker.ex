@@ -79,13 +79,11 @@ defmodule Klife.Connection.Broker do
   end
 
   def handle_info({:tcp_closed, _port}, %__MODULE__{} = state) do
-    send(self(), :connect)
-    {:noreply, state}
+    {:noreply, do_connect(state)}
   end
 
   def handle_info({:ssl_closed, {:sslsocket, _socket_details, _pids}}, %__MODULE__{} = state) do
-    send(self(), :connect)
-    {:noreply, state}
+    {:noreply, do_connect(state)}
   end
 
   def terminate(reason, %__MODULE__{} = state) do
@@ -109,12 +107,13 @@ defmodule Klife.Connection.Broker do
     }
 
     version = MessageVersions.get(client_name, message_mod)
-    data = apply(message_mod, :serialize_request, [input, version])
+    data = message_mod.serialize_request(input, version)
 
-    if Keyword.get(opts, :async, false),
-      do:
-        send_raw_async(data, message_mod, version, correlation_id, broker_id, client_name, opts),
-      else: send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name)
+    if Keyword.get(opts, :async, false) do
+      send_raw_async(data, message_mod, version, correlation_id, broker_id, client_name, opts)
+    else
+      send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name)
+    end
   end
 
   def send_raw_sync(raw_data, message_mod, msg_version, correlation_id, broker_id, client_name) do
@@ -126,7 +125,7 @@ defmodule Klife.Connection.Broker do
       :ok ->
         receive do
           {:broker_response, response} ->
-            apply(message_mod, :deserialize_response, [response, msg_version])
+            message_mod.deserialize_response(response, msg_version)
         after
           conn.read_timeout + 2000 ->
             Controller.take_from_in_flight(client_name, correlation_id)
@@ -237,9 +236,9 @@ defmodule Klife.Connection.Broker do
 
   defp get_reconnect_delay(%__MODULE__{reconnect_attempts: attempts}) do
     max_idx = length(@reconnect_delays_seconds) - 1
-    base_delay = Enum.at(@reconnect_delays_seconds, min(attempts, max_idx))
-    jitter_delay = base_delay * (Enum.random(50..150) / 100)
-    :timer.seconds(round(jitter_delay))
+    base_delay_seconds = Enum.at(@reconnect_delays_seconds, min(attempts, max_idx))
+    jitter_delay = base_delay_seconds * 1000 * (Enum.random(50..150) / 100)
+    round(jitter_delay)
   end
 
   defp get_broker_id(:any, client_name), do: Controller.get_random_broker_id(client_name)

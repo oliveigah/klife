@@ -423,67 +423,14 @@ defmodule Klife.Client do
       @doc false
       @impl Supervisor
       def init(_args) do
-        config = Application.get_env(@otp_app, __MODULE__)
-
-        validated_opts = NimbleOptions.validate!(config, @input_opts)
-
-        default_producer_name = validated_opts[:default_producer]
-        default_txn_pool_name = validated_opts[:default_txn_pool]
-        default_partitioner = validated_opts[:default_partitioner]
-
-        parsed_opts =
-          validated_opts
-          |> Keyword.update!(:producers, fn l ->
-            default_producer =
-              NimbleOptions.validate!(
-                [name: default_producer_name],
-                Klife.Producer.get_opts()
-              )
-
-            Enum.uniq_by(l ++ [default_producer], fn p -> p[:name] end)
-          end)
-          |> Keyword.update!(:txn_pools, fn l ->
-            default_txn_pool =
-              NimbleOptions.validate!(
-                [name: default_txn_pool_name],
-                Klife.TxnProducerPool.get_opts()
-              )
-
-            Enum.uniq_by(l ++ [default_txn_pool], fn p -> p[:name] end)
-          end)
-          |> Keyword.update(:topics, [], fn l ->
-            Enum.map(l, fn topic ->
-              topic
-              |> Keyword.put_new(:default_producer, default_producer_name)
-              |> Keyword.put_new(:default_partitioner, default_partitioner)
-            end)
-          end)
-          |> Keyword.update!(:producers, fn l -> Enum.map(l, &Map.new/1) end)
-          |> Keyword.update!(:txn_pools, fn l -> Enum.map(l, &Map.new/1) end)
-          |> Keyword.update!(:topics, fn l -> Enum.map(l, &Map.new/1) end)
-
-        conn_opts =
-          parsed_opts
-          |> Keyword.fetch!(:connection)
-          |> Map.new()
-          |> Map.put(:client_name, __MODULE__)
-
-        producer_opts =
-          parsed_opts
-          |> Keyword.take([:producers, :txn_pools, :topics])
-          |> Keyword.merge(client_name: __MODULE__)
-          |> Map.new()
-
-        children = [
-          {Klife.Connection.Supervisor, conn_opts},
-          {Klife.Producer.Supervisor, producer_opts}
-        ]
-
-        :persistent_term.put(default_txn_pool_key(), parsed_opts[:default_txn_pool])
-        :persistent_term.put(default_producer_key(), parsed_opts[:default_producer])
-        :persistent_term.put(default_partitioner_key(), parsed_opts[:default_partitioner])
-
-        Supervisor.init(children, strategy: :one_for_one)
+        Klife.Client.init(
+          __MODULE__,
+          @otp_app,
+          @input_opts,
+          default_txn_pool_key(),
+          default_producer_key(),
+          default_partitioner_key()
+        )
       end
 
       @spec produce(Record.t(), opts :: list() | nil) :: {:ok, Record.t()} | {:error, Record.t()}
@@ -508,5 +455,75 @@ defmodule Klife.Client do
       @spec transaction(function(), opts :: list() | nil) :: any()
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
     end
+  end
+
+  def init(
+        module,
+        otp_app,
+        input_opts,
+        default_txn_pool_key,
+        default_producer_key,
+        default_partitioner_key
+      ) do
+    config = Application.get_env(otp_app, module)
+
+    validated_opts = NimbleOptions.validate!(config, input_opts)
+
+    default_producer_name = validated_opts[:default_producer]
+    default_txn_pool_name = validated_opts[:default_txn_pool]
+    default_partitioner = validated_opts[:default_partitioner]
+
+    parsed_opts =
+      validated_opts
+      |> Keyword.update!(:producers, fn l ->
+        default_producer =
+          NimbleOptions.validate!(
+            [name: default_producer_name],
+            Klife.Producer.get_opts()
+          )
+
+        Enum.uniq_by([default_producer | l], fn p -> p[:name] end)
+      end)
+      |> Keyword.update!(:txn_pools, fn l ->
+        default_txn_pool =
+          NimbleOptions.validate!(
+            [name: default_txn_pool_name],
+            Klife.TxnProducerPool.get_opts()
+          )
+
+        Enum.uniq_by([default_txn_pool | l], fn p -> p[:name] end)
+      end)
+      |> Keyword.update(:topics, [], fn l ->
+        Enum.map(l, fn topic ->
+          topic
+          |> Keyword.put_new(:default_producer, default_producer_name)
+          |> Keyword.put_new(:default_partitioner, default_partitioner)
+        end)
+      end)
+      |> Keyword.update!(:producers, fn l -> Enum.map(l, &Map.new/1) end)
+      |> Keyword.update!(:txn_pools, fn l -> Enum.map(l, &Map.new/1) end)
+      |> Keyword.update!(:topics, fn l -> Enum.map(l, &Map.new/1) end)
+
+    conn_opts =
+      parsed_opts
+      |> Keyword.fetch!(:connection)
+      |> Map.new()
+      |> Map.put(:client_name, module)
+
+    producer_opts =
+      [client_name: module] ++ Keyword.take(parsed_opts, [:producers, :txn_pools, :topics])
+
+    producer_opts = Map.new(producer_opts)
+
+    children = [
+      {Klife.Connection.Supervisor, conn_opts},
+      {Klife.Producer.Supervisor, producer_opts}
+    ]
+
+    :persistent_term.put(default_txn_pool_key, parsed_opts[:default_txn_pool])
+    :persistent_term.put(default_producer_key, parsed_opts[:default_producer])
+    :persistent_term.put(default_partitioner_key, parsed_opts[:default_partitioner])
+
+    Supervisor.init(children, strategy: :one_for_one)
   end
 end

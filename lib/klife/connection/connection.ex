@@ -34,7 +34,7 @@ defmodule Klife.Connection do
   end
 
   def authenticate_sasl(%__MODULE__{socket: socket} = conn, sasl_opts) do
-    Socket.authenticate(socket, get_backend(conn), sasl_opts)
+    Socket.authenticate(socket, get_socket_backend(conn.ssl), sasl_opts)
   end
 
   def build_sasl_opts([], _), do: []
@@ -71,7 +71,4 @@ defmodule Klife.Connection do
     [host, port] = String.split(url, ":")
     %{host: host, port: String.to_integer(port)}
   end
-
-  defp get_backend(%__MODULE__{ssl: false}), do: :gen_tcp
-  defp get_backend(%__MODULE__{ssl: true}), do: :ssl
 end

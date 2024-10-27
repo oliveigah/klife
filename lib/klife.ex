@@ -51,10 +51,8 @@ defmodule Klife do
 
   @doc false
   def produce(%Record{} = record, client, opts \\ []) do
-    case produce_batch([record], client, opts) do
-      [resp] -> resp
-      resp -> resp
-    end
+    [resp] = produce_batch([record], client, opts)
+    resp
   end
 
   @doc false
@@ -129,10 +127,7 @@ defmodule Klife do
   end
 
   defp get_txn_pool(client, opts) do
-    case Keyword.get(opts, :pool_name) do
-      nil -> apply(client, :get_default_txn_pool, [])
-      val -> val
-    end
+    Keyword.get(opts, :pool_name) || client.get_default_txn_pool
   end
 
   defp maybe_add_partition(%Record{} = record, client, opts) do
