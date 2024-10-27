@@ -11,8 +11,13 @@ defmodule Klife.MixProject do
       deps: deps(),
       # docs
       name: "Klife",
+      description: "Kafka client focused on performance",
       source_url: "https://github.com/oliveigah/klife",
       extras: [],
+      package: [
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/oliveigah/klife"}
+      ],
       docs: [
         main: "readme",
         assets: "assets",

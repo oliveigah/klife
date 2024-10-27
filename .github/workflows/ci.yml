@@ -1,9 +1,9 @@
 name: ci
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 permissions:
   contents: read
@@ -17,19 +17,19 @@ jobs:
       matrix:
         include:
           - elixir: 1.17.0
-            otp: 27.0
+            otp: 27.1.2
           - elixir: 1.16.3
             otp: 26.1.2
           - elixir: 1.15.6
             otp: 24.3.4.13
-          - elixir: 1.11.4
-            otp: 21.3.8.24
+          - elixir: 1.13.4
+            otp: 23.3.4.20
     steps:
       - uses: actions/checkout@v3
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.14.5'
-          otp-version: '26.0'
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
       - run: docker compose -f "test/compose_files/docker-compose.yml" up -d
       - run: mix deps.get
       - run: mix compile --warnings-as-errors
