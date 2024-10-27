@@ -59,12 +59,12 @@ defmodule Klife.Record do
       iex> rec2 = %Klife.Record{value: :rand.bytes(2_000_000), topic: "my_topic_2"}
       iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
       iex> input = [rec1, rec2, rec3]
-      iex> {:error, %{1 => %Klife.Record{error_code: 10}}} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
+      iex> {:error, [%Klife.Record{error_code: 10}]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
   """
   def verify_batch(produce_resps) do
     case Enum.group_by(produce_resps, &elem(&1, 0), &elem(&1, 1)) do
       %{error: error_list} ->
-        {:error, Map.new(error_list, &{&1.__batch_index - 1, &1})}
+        {:error, error_list}
 
       %{ok: resp} ->
         {:ok, resp}
