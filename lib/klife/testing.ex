@@ -83,6 +83,8 @@ defmodule Klife.Testing do
     for {topic, pdatas} <- data_by_topic, pdata <- pdatas, {partition, offset} <- pdata do
       :persistent_term.put({__MODULE__, client, topic, partition}, offset)
     end
+
+    :ok
   end
 
   defp warmup_topics(metas, client) do
