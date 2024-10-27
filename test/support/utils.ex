@@ -34,35 +34,37 @@ defmodule Klife.TestUtils do
   end
 
   def stop_broker(client_name, broker_id) do
-    Task.async(fn ->
-      cb_ref = make_ref()
-      :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
+    # This must be done in a separate process because
+    # of how the PubSub works.
+    task = Task.async(fn -> do_stop_broker(client_name, broker_id) end)
+    Task.await(task, :infinity)
+  end
 
-      service_name = get_service_name(client_name, broker_id)
+  defp do_stop_broker(client_name, broker_id) do
+    cb_ref = make_ref()
+    :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
 
-      System.shell("docker compose -f #{@docker_file_path} stop #{service_name} > /dev/null 2>&1")
+    service_name = get_service_name(client_name, broker_id)
 
-      result =
-        receive do
-          {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
-            removed_brokers = event_data.removed_brokers
-            brokers_list = Enum.map(removed_brokers, fn {broker_id, _url} -> broker_id end)
+    System.shell("docker compose -f #{@docker_file_path} stop #{service_name} > /dev/null 2>&1")
 
-            if broker_id in brokers_list,
-              do: {:ok, service_name},
-              else: {:error, :invalid_event}
-        after
-          10_000 ->
-            {:error, :timeout}
-        end
+    result =
+      receive do
+        {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
+          removed_brokers = event_data.removed_brokers
+          brokers_list = Enum.map(removed_brokers, fn {broker_id, _url} -> broker_id end)
 
-      :ok = PubSub.unsubscribe({:cluster_change, client_name})
+          if broker_id in brokers_list,
+            do: {:ok, service_name},
+            else: {:error, :invalid_event}
+      after
+        30_000 ->
+          {:error, :timeout}
+      end
 
-      Process.sleep(10)
-      result
-    end)
-    |> Task.await(30_000)
-    |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
+    :ok = PubSub.unsubscribe({:cluster_change, client_name})
+
+    result
   end
 
   def start_broker(service_name, client_name) do
