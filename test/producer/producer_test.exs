@@ -237,8 +237,6 @@ defmodule Klife.ProducerTest do
   test "is able to recover from client changes" do
     topic = "test_no_batch_topic"
 
-    :ok = TestUtils.wait_client(MyClient, 3)
-
     record = %Record{
       value: :rand.bytes(10),
       key: :rand.bytes(10),
