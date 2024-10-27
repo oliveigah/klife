@@ -67,31 +67,22 @@ defmodule Klife.Producer.Dispatcher do
       batch_to_send: batch_to_send
     } = data
 
-    %__MODULE__{
-      batcher_pid: batcher_pid,
-      requests: requests,
-      timeouts: timeouts
-    } = state
-
     case do_dispatch(data, state) do
       {:ok, timeout_ref} ->
-        new_state = %{
-          state
-          | requests: Map.put(requests, request_ref, data),
-            timeouts: Map.put(timeouts, request_ref, timeout_ref)
-        }
+        new_state = put_in(state.requests[request_ref], data)
+        new_state = put_in(new_state.timeouts[request_ref], timeout_ref)
 
         {:reply, :ok, new_state}
 
       {:error, :retry} ->
         Process.send_after(self(), {:dispatch, request_ref}, retry_ms)
-        new_state = %{state | requests: Map.put(requests, request_ref, data)}
+        new_state = put_in(state.requests[request_ref], data)
         {:reply, :ok, new_state}
 
       {:error, :request_deadline} ->
         failed_topic_partitions = Map.keys(batch_to_send)
-        send(batcher_pid, {:bump_epoch, failed_topic_partitions})
-        send(batcher_pid, {:request_completed, pool_idx})
+        send(state.batcher_pid, {:bump_epoch, failed_topic_partitions})
+        send(state.batcher_pid, {:request_completed, pool_idx})
         {:reply, :ok, state}
     end
   end
@@ -106,14 +97,9 @@ defmodule Klife.Producer.Dispatcher do
         batch_to_send: batch_to_send
       } = Map.fetch!(state.requests, req_ref)
 
-    %__MODULE__{
-      batcher_pid: batcher_pid,
-      timeouts: timeouts
-    } = state
-
     case do_dispatch(data, state) do
       {:ok, timeout_ref} ->
-        {:noreply, %{state | timeouts: Map.put(timeouts, request_ref, timeout_ref)}}
+        {:noreply, put_in(state.timeouts[request_ref], timeout_ref)}
 
       {:error, :retry} ->
         Process.send_after(self(), {:dispatch, request_ref}, retry_ms)
@@ -121,8 +107,8 @@ defmodule Klife.Producer.Dispatcher do
 
       {:error, :request_deadline} ->
         failed_topic_partitions = Map.keys(batch_to_send)
-        send(batcher_pid, {:bump_epoch, failed_topic_partitions})
-        send(batcher_pid, {:request_completed, pool_idx})
+        send(state.batcher_pid, {:bump_epoch, failed_topic_partitions})
+        send(state.batcher_pid, {:request_completed, pool_idx})
         {:noreply, remove_request(state, req_ref)}
     end
   end
@@ -186,36 +172,34 @@ defmodule Klife.Producer.Dispatcher do
 
     grouped_errors =
       Enum.group_by(failure_list, fn {topic, partition, error_code, _base_offset} ->
-        cond do
-          error_code in @delivery_discard_codes ->
-            Logger.warning("""
-            Non retryable error while producing message. Message will be discarded!
+        if error_code in @delivery_discard_codes do
+          Logger.warning("""
+          Non retryable error while producing message. Message will be discarded!
 
-            topic: #{topic}
-            partition: #{partition}
-            error_code: #{error_code}
+          topic: #{topic}
+          partition: #{partition}
+          error_code: #{error_code}
 
-            client: #{client_name}
-            broker_id: #{broker_id}
-            producer_name: #{producer_name}
-            """)
+          client: #{client_name}
+          broker_id: #{broker_id}
+          producer_name: #{producer_name}
+          """)
 
-            :discard
+          :discard
+        else
+          Logger.warning("""
+          Error while producing message. Message will be retried!
 
-          true ->
-            Logger.warning("""
-            Error while producing message. Message will be retried!
+          topic: #{topic}
+          partition: #{partition}
+          error_code: #{error_code}
 
-            topic: #{topic}
-            partition: #{partition}
-            error_code: #{error_code}
+          client: #{client_name}
+          broker_id: #{broker_id}
+          producer_name: #{producer_name}
+          """)
 
-            client: #{client_name}
-            broker_id: #{broker_id}
-            producer_name: #{producer_name}
-            """)
-
-            :retry
+          :retry
         end
       end)
 

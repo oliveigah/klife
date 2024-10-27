@@ -343,10 +343,7 @@ defmodule Klife.Producer.Controller do
     for topic <- resp.topics, topic.error_code == 0 do
       config_topic = Enum.find(topics, %{}, &(&1.name == topic.name))
 
-      max_partition =
-        topic.partitions
-        |> Enum.map(& &1.partition_index)
-        |> Enum.max()
+      %{partition_index: max_partition} = Enum.max_by(topic.partitions, & &1.partition_index)
 
       data = %{
         max_partition: max_partition,
@@ -354,10 +351,7 @@ defmodule Klife.Producer.Controller do
           config_topic[:default_partitioner] || client_name.get_default_partitioner()
       }
 
-      case :ets.lookup(table_name, topic.name) do
-        [{_key, ^data}] -> :noop
-        _ -> :ets.insert(table_name, {topic.name, data})
-      end
+      :ets.insert_new(table_name, {topic.name, data})
     end
 
     :ok

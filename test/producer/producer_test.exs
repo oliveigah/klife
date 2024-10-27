@@ -1210,11 +1210,9 @@ defmodule Klife.ProducerTest do
     rec7_val = rec7.value
     rec8_val = rec8.value
 
-    assert {:error,
-            [
-              %Record{value: ^rec7_val, error_code: 55},
-              %Record{value: ^rec8_val, error_code: 3}
-            ]} =
-             MyClient.produce_batch_txn([rec7, rec8])
+    assert {:error, [
+      %Record{value: ^rec7_val, error_code: 55},
+      %Record{value: ^rec8_val, error_code: 3}
+    ]} = MyClient.produce_batch_txn([rec7, rec8])
   end
 end

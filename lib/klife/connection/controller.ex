@@ -17,7 +17,9 @@ defmodule Klife.Connection.Controller do
   # Since the biggest signed int32 is 2,147,483,647
   # We need to eventually reset the correlation counter value
   # in order to avoid reaching this limit.
+  
   @max_correlation_counter 1_000_000_000
+
   @check_cluster_delay :timer.seconds(10)
 
   @connection_opts [
@@ -397,8 +399,7 @@ defmodule Klife.Connection.Controller do
     {:ok, %{content: resp}} = Messages.ApiVersions.deserialize_response(received_data, 0)
 
     resp.api_keys
-    |> Enum.map(&{&1.api_key, %{min: &1.min_version, max: &1.max_version}})
-    |> Map.new()
+    |> Map.new(&{&1.api_key, %{min: &1.min_version, max: &1.max_version}})
     |> MessageVersions.setup_versions(client_name)
   end
 end

@@ -53,9 +53,9 @@ defmodule Klife.Producer.Batcher do
     producer_config = Keyword.fetch!(args, :producer_config)
 
     next_send_msg_ref =
-      if linger_ms > 0,
-        do: Process.send_after(self(), :send_to_broker, linger_ms),
-        else: nil
+      if linger_ms > 0 do
+        Process.send_after(self(), :send_to_broker, linger_ms)
+      end
 
     state = %__MODULE__{
       current_batch: %{},
@@ -145,7 +145,7 @@ defmodule Klife.Producer.Batcher do
     in_flight_available? = is_integer(pool_idx)
     has_batch_on_queue? = not :queue.is_empty(batch_queue)
     is_periodic? = linger_ms > 0
-    new_state = %{state | next_send_msg_ref: nil}
+    new_state = %__MODULE__{state | next_send_msg_ref: nil}
 
     cond do
       not in_flight_available? ->

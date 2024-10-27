@@ -2,9 +2,9 @@ defmodule Klife.Testing do
   @moduledoc """
   Testing helper functions.
 
-  In order to test kafka behaviour on tests we can have 2 approachs:
+  In order to test Kafka behaviour on tests we can have 2 approachs:
 
-  - Having a running kafka broker locally and testing against it
+  - Having a running Kafka broker locally and testing against it
   - Mocking all external calls to the broker
 
   `Klife.Testing` supports the first approach by offering helper functions in order to
@@ -12,19 +12,15 @@ defmodule Klife.Testing do
 
   You can use it like this:
 
-  ```elixir
-  # on test_helper.exs
-  Klife.Testing.setup(MyClient)
+      # on test_helper.exs
+      Klife.Testing.setup(MyClient)
 
-  # on your test file
-  Klife.Testing.all_produced(MyClient, "my_topic_a", value: "abc")
-  ```
-
+      # on your test file
+      Klife.Testing.all_produced(MyClient, "my_topic_a", value: "abc")
 
   The mocks approach is not supported directly by Klife but can be achieved using some
   awesome community libraries such as [Mimic](https://github.com/edgurgel/mimic) or
   [Mox](https://github.com/dashbitco/mox).
-
   """
 
   alias Klife.Producer.Controller, as: PController
@@ -70,7 +66,7 @@ defmodule Klife.Testing do
   @doc """
   Setup `Klife.Testing`, call it on your `test_helper.exs`.
 
-  In order to avoid big searchs on big local running kafka topics, this setup retrieves
+  In order to avoid big searchs on big local running Kafka topics, this setup retrieves
   all te current latests offsets and stores it to only search after them.
   """
   def setup(client) do
@@ -111,7 +107,7 @@ defmodule Klife.Testing do
       {:error, :test_txn_warmup}
     end
 
-    {:error, :test_txn_warmup} = apply(client, :transaction, [txn_fun])
+    {:error, :test_txn_warmup} = client.transaction(txn_fun)
 
     :ok
   end
@@ -175,16 +171,14 @@ defmodule Klife.Testing do
           _ -> :infinity
         end
 
-      pdata.records
-      |> Enum.map(fn rec_batch ->
+      Enum.map(pdata.records, fn rec_batch ->
         rec_batch
         |> Map.put(:partition_idx, pdata.partition_index)
         |> Map.put(:first_aborted_offset, aborted_offset)
       end)
     end)
     |> Enum.flat_map(fn batch ->
-      batch.records
-      |> Enum.map(fn rec ->
+      Enum.map(batch.records, fn rec ->
         new_rec =
           rec
           |> Map.put(:partition_idx, batch.partition_idx)
@@ -238,8 +232,7 @@ defmodule Klife.Testing do
 
     Enum.map(tdatas, fn tdata ->
       value =
-        tdata.partitions
-        |> Enum.map(fn pdata ->
+        Enum.map(tdata.partitions, fn pdata ->
           {pdata.partition_index, pdata.offset}
         end)
 

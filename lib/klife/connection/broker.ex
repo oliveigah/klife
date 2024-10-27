@@ -51,16 +51,11 @@ defmodule Klife.Connection.Broker do
       sasl_opts: sasl_opts
     }
 
-    # This needs to be done instead of send(self(), :connect)
-    # in order to prevent a race condition where the
-    # manual broker verification returns :ok to the caller
-    # before a connection is properly initialized.
-    #
-    # This bug can be reproduced by artificially increasing
-    # the time it takes to complete the connect action
-    #
-    # Since we do not expect this process to restart often
-    # it is safe to go with a longer initialization time
+    # This is done here instead of `send(self(), :connect)` because
+    # it only makes sense for the process to be added to the supervision tree
+    # if the connection is successful.
+    # This also simplifies the usage of the global :persistent_term entry because
+    # it will only exist if the process is already valid.
     state = do_connect(state)
 
     {:ok, state}
@@ -200,7 +195,7 @@ defmodule Klife.Connection.Broker do
         #
         # The caller will assume that the message was not delivered and may send it again.
         #
-        # Dependeing on the message being sent and the idempotency configuration
+        # Depending on the message being sent and the idempotency configuration
         # this may not be a problem.
         #
         # Must revisit this later.
@@ -211,7 +206,7 @@ defmodule Klife.Connection.Broker do
         # now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
         #
         Logger.warning("""
-        Unkown correlation id received from client #{inspect(client_name)}.
+        Unknown correlation id received from client #{inspect(client_name)}.
 
         correlation_id: #{inspect(correlation_id)}
 
@@ -279,7 +274,9 @@ defmodule Klife.Connection.Broker do
            sasl_opts
          ) do
       {:ok, conn} ->
-        # After authentication we can go back to once
+        # After authentication we can go back to once.
+        # The underlying socket is stateful, so that's why
+        # we don't care about the return value of `socket_opts`.
         Connection.socket_opts(conn, active: :once)
         :persistent_term.put({__MODULE__, state.client_name, state.broker_id}, conn)
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}

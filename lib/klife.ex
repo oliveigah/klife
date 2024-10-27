@@ -3,7 +3,7 @@ defmodule Klife do
   Main functions to interact with clients.
 
   Usually you will not need to call any function here directly
-  but instead use them through a module that use `Klife.Client`.
+  but instead use them through a module that uses `Klife.Client`.
   """
 
   alias Klife.Record
@@ -67,9 +67,11 @@ defmodule Klife do
         |> maybe_add_partition(client, opts)
       end)
 
-    if TxnProducerPool.in_txn?(client),
-      do: TxnProducerPool.produce(records, client, opts),
-      else: Producer.produce(records, client, opts)
+    if TxnProducerPool.in_txn?(client) do
+      TxnProducerPool.produce(records, client, opts)
+    else
+      Producer.produce(records, client, opts)
+    end
   end
 
   # The async implementation is non optimal because it may copy a lot of
@@ -127,7 +129,7 @@ defmodule Klife do
   end
 
   defp get_txn_pool(client, opts) do
-    Keyword.get(opts, :pool_name) || client.get_default_txn_pool
+    Keyword.get(opts, :pool_name) || client.get_default_txn_pool()
   end
 
   defp maybe_add_partition(%Record{} = record, client, opts) do

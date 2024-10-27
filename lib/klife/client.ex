@@ -457,6 +457,7 @@ defmodule Klife.Client do
     end
   end
 
+  @doc false
   def init(
         module,
         otp_app,

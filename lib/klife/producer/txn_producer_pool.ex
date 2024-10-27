@@ -338,15 +338,17 @@ defmodule Klife.TxnProducerPool do
         {:error, :stop, errors}
 
       true ->
+        # If we got here, it is because some entries ran into errors,
+        # but all of the errors that happened are retriable.
         :retry
     end
   end
 
   @doc """
-  Checks if the current process is under a kafka transaction.
+  Checks if the current process is under a Kafka transaction.
 
   ## Example
-    iex> false = Klife.TxnProducerPool.in_txn?(MyClient)
+      iex> false = Klife.TxnProducerPool.in_txn?(MyClient)
   """
   def in_txn?(client), do: not is_nil(get_txn_ctx(client))
 

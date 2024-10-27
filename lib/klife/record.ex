@@ -2,27 +2,29 @@ defmodule Klife.Record do
   @moduledoc """
   Kafka record representation.
 
-  It represents a Kafka record struct that will be used in the `Klife.Client` API's.
+  Represents a Kafka record struct that will be used in the `Klife.Client` APIs.
 
-  In general terms it can be used as an input or as an output data.
+  In general terms it can be used to represent input or output data.
 
   As an input the `Klife.Record` may have the following attributes:
-  - value (required)
-  - topic (required)
-  - key (optional)
-  - headers (optional)
-  - partition (optional)
+  - `:value` (required)
+  - `:topic` (required)
+  - `:key` (optional)
+  - `:headers` (optional)
+  - `:partition` (optional)
 
   As an output the input record will be added with one or more the following attributes:
-  - offset (if it was succesfully written)
-  - partition (if it was not present in the input)
-  - error_code (if something goes wrong on produce. See [kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes) for context)
+  - `:offset` (if it was succesfully written)
+  - `:partition` (if it was not present in the input)
+  - `:error_code` (if something goes wrong on produce. See [kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes) for context)
   """
   defstruct [
     :key,
     :topic,
     :partition,
     :offset,
+    :value,
+    :headers,
     :error_code,
     :value,
     :headers,
@@ -43,7 +45,7 @@ defmodule Klife.Record do
   def t, do: t()
 
   @doc """
-    Utility function to verify if all records in a `produce_batch/3` were successfully written.
+  Utility function to verify if all records in a `produce_batch/3` were successfully written.
 
   ## Examples
       iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
@@ -52,8 +54,8 @@ defmodule Klife.Record do
       iex> input = [rec1, rec2, rec3]
       iex> {:ok, [_r1, _r2, _r3]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
 
-    Partial error example. Notice that records 1 and 3 were successfully produced but only record 2
-    returns from this function.
+  Partial error example. Notice that records 1 and 3 were successfully produced but only record 2
+  returns from this function.
 
       iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
       iex> rec2 = %Klife.Record{value: :rand.bytes(2_000_000), topic: "my_topic_2"}
@@ -72,14 +74,14 @@ defmodule Klife.Record do
   end
 
   @doc """
-    Same as `verify_batch/1` but raises if any record fails and do not return ok/error tuple.
+    Same as `verify_batch/1` but raises if any record fails and does not return ok/error tuple.
 
   ## Examples
-        iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
-        iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
-        iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
-        iex> input = [rec1, rec2, rec3]
-        iex> [_r1, _r2, _r3] = MyClient.produce_batch(input) |> Klife.Record.verify_batch!()
+      iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
+      iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
+      iex> input = [rec1, rec2, rec3]
+      iex> [_r1, _r2, _r3] = MyClient.produce_batch(input) |> Klife.Record.verify_batch!()
   """
   def verify_batch!(produce_resps) do
     case verify_batch(produce_resps) do
