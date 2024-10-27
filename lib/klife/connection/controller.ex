@@ -187,7 +187,7 @@ defmodule Klife.Connection.Controller do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
         Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = send(self(), :check_cluster)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
 
         {:noreply,
          %__MODULE__{
@@ -210,7 +210,7 @@ defmodule Klife.Connection.Controller do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
         Process.cancel_timer(state.check_cluster_timer_ref)
-        new_ref = send(self(), :check_cluster)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
 
         {:noreply,
          %__MODULE__{

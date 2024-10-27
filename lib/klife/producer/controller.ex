@@ -74,7 +74,7 @@ defmodule Klife.Producer.Controller do
         %__MODULE__{client_name: client_name} = state
       ) do
     Process.cancel_timer(state.check_metadata_timer_ref)
-    new_ref = send(self(), :check_metadata)
+    new_ref = Process.send_after(self(), :check_cluster, 0)
 
     {:noreply,
      %__MODULE__{
@@ -121,7 +121,7 @@ defmodule Klife.Producer.Controller do
     case state do
       %__MODULE__{check_metadata_waiting_pids: []} ->
         Process.cancel_timer(state.check_metadata_timer_ref)
-        new_ref = send(self(), :check_metadata)
+        new_ref = Process.send_after(self(), :check_cluster, 0)
 
         {:noreply,
          %__MODULE__{
