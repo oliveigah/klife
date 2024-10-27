@@ -422,7 +422,9 @@ defmodule Klife.Client do
 
       @doc false
       @impl Supervisor
-      def init(_args), do: Klife.Client.init(@otp_app, @input_opts)
+      def init(_args) do
+        Klife.Client.init(@otp_app, @input_opts, default_txn_pool_key(), default_producer_key(), default_partitioner_key())
+      end
 
       @spec produce(Record.t(), opts :: list() | nil) :: {:ok, Record.t()} | {:error, Record.t()}
       def produce(%Record{} = rec, opts \\ []), do: Klife.produce(rec, __MODULE__, opts)
@@ -449,7 +451,7 @@ defmodule Klife.Client do
   end
 
   @doc false
-  def init(otp_app, input_opts) do
+  def init(otp_app, input_opts, default_txn_pool_key, default_producer_key, default_partitioner_key) do
     config = Application.get_env(otp_app, __MODULE__)
 
     validated_opts = NimbleOptions.validate!(config, input_opts)
@@ -505,9 +507,9 @@ defmodule Klife.Client do
       {Klife.Producer.Supervisor, producer_opts}
     ]
 
-    :persistent_term.put(default_txn_pool_key(), parsed_opts[:default_txn_pool])
-    :persistent_term.put(default_producer_key(), parsed_opts[:default_producer])
-    :persistent_term.put(default_partitioner_key(), parsed_opts[:default_partitioner])
+    :persistent_term.put(default_txn_pool_key, parsed_opts[:default_txn_pool])
+    :persistent_term.put(default_producer_key, parsed_opts[:default_producer])
+    :persistent_term.put(default_partitioner_key, parsed_opts[:default_partitioner])
 
     Supervisor.init(children, strategy: :one_for_one)
   end

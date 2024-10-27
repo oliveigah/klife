@@ -15,7 +15,7 @@ defmodule Klife.Producer do
 
   @producer_options [
     name: [
-      type: :term,
+      type: :any,
       required: true,
       doc: "Producer name. Can be used as an option on the producer api. Must be an unique value."
     ],

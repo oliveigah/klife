@@ -99,7 +99,7 @@ defmodule Klife.Producer.Dispatcher do
 
     case do_dispatch(data, state) do
       {:ok, timeout_ref} ->
-        {:noreply, put_in(state.timeouts[request_ref], timeout_ref)}}
+        {:noreply, put_in(state.timeouts[request_ref], timeout_ref)}
 
       {:error, :retry} ->
         Process.send_after(self(), {:dispatch, request_ref}, retry_ms)

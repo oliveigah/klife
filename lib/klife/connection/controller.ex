@@ -18,7 +18,6 @@ defmodule Klife.Connection.Controller do
   # We need to eventually reset the correlation counter value
   # in order to avoid reaching this limit.
   @max_correlation_counter 2_000_000_000
-  @check_correlation_counter_delay :timer.seconds(300)
   @check_cluster_delay :timer.seconds(10)
 
   @connection_opts [
@@ -125,8 +124,6 @@ defmodule Klife.Connection.Controller do
   defp do_init(state) do
     {_, state} = handle_info(:init_bootstrap_conn, state)
     {_, state} = handle_info(:check_cluster, state)
-
-    send(self(), :check_correlation_counter)
 
     state
   end
