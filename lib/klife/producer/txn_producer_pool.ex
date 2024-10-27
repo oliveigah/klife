@@ -331,8 +331,7 @@ defmodule Klife.TxnProducerPool do
       not MapSet.disjoint?(result_set, stop_set) ->
         errors =
           for t_result <- t_results,
-              p_result <- t_result.results_by_partition,
-              p_result.partition_error_code in stop_set do
+              p_result <- t_result.results_by_partition do
             {{t_result.name, p_result.partition_index}, p_result.partition_error_code}
           end
 
