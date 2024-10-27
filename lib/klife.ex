@@ -67,11 +67,9 @@ defmodule Klife do
         |> maybe_add_partition(client, opts)
       end)
 
-    if TxnProducerPool.in_txn?(client) do
-      TxnProducerPool.produce(records, client, opts)
-    else
-      Producer.produce(records, client, opts)
-    end
+    if TxnProducerPool.in_txn?(client),
+      do: TxnProducerPool.produce(records, client, opts),
+      else: Producer.produce(records, client, opts)
   end
 
   # The async implementation is non optimal because it may copy a lot of

@@ -351,7 +351,10 @@ defmodule Klife.Producer.Controller do
           config_topic[:default_partitioner] || client_name.get_default_partitioner()
       }
 
-      :ets.insert_new(table_name, {topic.name, data})
+      case :ets.lookup(table_name, topic.name) do
+        [{_key, ^data}] -> :noop
+        _ -> :ets.insert(table_name, {topic.name, data})
+      end
     end
 
     :ok

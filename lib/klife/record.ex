@@ -23,8 +23,6 @@ defmodule Klife.Record do
     :topic,
     :partition,
     :offset,
-    :value,
-    :headers,
     :error_code,
     :value,
     :headers,
