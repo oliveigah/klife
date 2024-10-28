@@ -19,6 +19,7 @@ features as the project develops. Key features include:
 
 - **Efficient Batching**: Batches data to the same broker in a single TCP request per producer.
 - **Minimal Resource Usage**: Only one connection per broker for each client, optimizing resource usage.
+- **Exactly Once Semantics (EOS)**: Providing safe retries with idempotency on the protocol level.
 - **Synchronous and Asynchronous Produce Options**: Synchronous produces return the offset, while asynchronous produces support callbacks.
 - **Batch Produce API**: Allows batching for multiple topics and partitions.
 - **Automatic Cluster and Metadata Management**: Automatically adapts to changes in cluster topology and metadata.
@@ -61,6 +62,7 @@ config :my_app, MyApp.Client,
     ssl: false
   ]
 ```
+
 ### Add the client to the supervision tree
 
 ```elixir
