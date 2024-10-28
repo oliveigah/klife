@@ -123,7 +123,8 @@ defmodule Klife.Client do
 
   ```
 
-  You can see more configuration examples on the ["Client configuration examples"](guides/examples/client_configuration.md) section.
+  You can see more configuration examples on the ["Client configuration examples"](guides/examples/client_configuration.md) section
+  or an working application example on the `example` folder on the project's repository.
 
   ### Configuration options:
 

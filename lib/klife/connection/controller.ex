@@ -60,7 +60,7 @@ defmodule Klife.Connection.Controller do
         "Options to configure SASL authentication, see SASL section for supported mechanisms and examples."
     ]
   ]
-
+  @derive {Inspect, except: [:sasl_opts]}
   defstruct [
     :bootstrap_servers,
     :client_name,

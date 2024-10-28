@@ -43,32 +43,28 @@ defmodule Klife.Record do
   def t, do: t()
 
   @doc """
-  Utility function to verify if all records in a `produce_batch/3` were successfully written.
+  Utility function to verify if all records in a `produce_batch/3` were successfully produced.
 
   ## Examples
       iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
       iex> rec2 = %Klife.Record{value: "my_val_2", topic: "my_topic_2"}
       iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
       iex> input = [rec1, rec2, rec3]
-      iex> {:ok, [_r1, _r2, _r3]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
+      iex> {:ok, [%Klife.Record{value: "my_val_1"}, _r2, _r3]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
 
-  Partial error example. Notice that records 1 and 3 were successfully produced but only record 2
-  returns from this function.
+  Partial error example. Notice that records 1 and 3 were successfully produced and only record 2
+  has errors, so the function will return `{:error, [rec1, rec2, rec3]}`
 
       iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
       iex> rec2 = %Klife.Record{value: :rand.bytes(2_000_000), topic: "my_topic_2"}
       iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
       iex> input = [rec1, rec2, rec3]
-      iex> {:error, [%Klife.Record{error_code: 10}]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
+      iex> {:error, [_rec1, %Klife.Record{error_code: 10}, _rec3]} = MyClient.produce_batch(input) |> Klife.Record.verify_batch()
   """
   def verify_batch(produce_resps) do
-    case Enum.group_by(produce_resps, &elem(&1, 0), &elem(&1, 1)) do
-      %{error: error_list} ->
-        {:error, error_list}
-
-      %{ok: resp} ->
-        {:ok, resp}
-    end
+    if Enum.any?(produce_resps, &match?({:error, %__MODULE__{}}, &1)),
+      do: {:error, Enum.map(produce_resps, fn {_ok_error, rec} -> rec end)},
+      else: {:ok, Enum.map(produce_resps, fn {_ok_error, rec} -> rec end)}
   end
 
   @doc """

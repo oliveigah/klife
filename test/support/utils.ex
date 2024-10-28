@@ -36,8 +36,13 @@ defmodule Klife.TestUtils do
   def stop_broker(client_name, broker_id) do
     # This must be done in a separate process because
     # of how the PubSub works.
-    task = Task.async(fn -> do_stop_broker(client_name, broker_id) end)
-    Task.await(task, :infinity)
+    Task.async(fn -> do_stop_broker(client_name, broker_id) end)
+    |> Task.await(:infinity)
+    # This sleep of 10 seconds is needed because we must
+    # give some time to the producer system react to the cluster
+    # change. One way to avoid this, would be having pubsub
+    # events related to the producer system but it does not
+    # exists yet.
     |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
   end
 
@@ -59,7 +64,7 @@ defmodule Klife.TestUtils do
             do: {:ok, service_name},
             else: {:error, :invalid_event}
       after
-        30_000 ->
+        40_000 ->
           {:error, :timeout}
       end
 
@@ -69,64 +74,71 @@ defmodule Klife.TestUtils do
   end
 
   def start_broker(service_name, client_name) do
-    Task.async(fn ->
-      cb_ref = make_ref()
-
-      port_prefix_service_map =
-        @port_to_service_name
-        |> Enum.map(fn {port, service} ->
-          {port_prefix, _} = String.split_at("#{port}", 2)
-          {service, port_prefix}
-        end)
-        |> Map.new()
-
-      expected_url_prefix = "localhost:#{port_prefix_service_map[service_name]}"
-
-      :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
-
-      old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
-
-      System.shell(
-        "docker compose -f #{@docker_file_path} start #{service_name} > /dev/null 2>&1"
-      )
-
-      :ok =
-        Enum.reduce_while(1..50, nil, fn _, _acc ->
-          :ok = ConnController.trigger_brokers_verification(client_name)
-          new_brokers = :persistent_term.get({:known_brokers_ids, client_name})
-
-          if old_brokers != new_brokers do
-            {:halt, :ok}
-          else
-            Process.sleep(500)
-            {:cont, nil}
-          end
-        end)
-
-      result =
-        receive do
-          {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
-            added_brokers = event_data.added_brokers
-
-            case Enum.find(added_brokers, fn {_broker_id, url} ->
-                   String.starts_with?(url, expected_url_prefix)
-                 end) do
-              nil ->
-                {:error, :invalid_event}
-
-              {broker_id, _} ->
-                {:ok, broker_id}
-            end
-        after
-          50_000 ->
-            {:error, :timeout}
-        end
-
-      :ok = PubSub.unsubscribe({:cluster_change, client_name})
-      result
-    end)
-    |> Task.await(60_000)
+    # This must be done in a separate process because
+    # of how the PubSub works.
+    Task.async(fn -> do_start_broker(service_name, client_name) end)
+    |> Task.await(:infinity)
+    # This sleep of 10 seconds is needed because we must
+    # give some time to the producer system react to the cluster
+    # change. One way to avoid this, would be having pubsub
+    # events related to the producer system but it does not
+    # exists yet.
     |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
+  end
+
+  defp do_start_broker(service_name, client_name) do
+    cb_ref = make_ref()
+
+    port_prefix_service_map =
+      @port_to_service_name
+      |> Enum.map(fn {port, service} ->
+        {port_prefix, _} = String.split_at("#{port}", 2)
+        {service, port_prefix}
+      end)
+      |> Map.new()
+
+    expected_url_prefix = "localhost:#{port_prefix_service_map[service_name]}"
+
+    :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
+
+    old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
+
+    System.shell("docker compose -f #{@docker_file_path} start #{service_name} > /dev/null 2>&1")
+
+    :ok =
+      Enum.reduce_while(1..50, nil, fn _, _acc ->
+        :ok = ConnController.trigger_brokers_verification(client_name)
+        new_brokers = :persistent_term.get({:known_brokers_ids, client_name})
+
+        if old_brokers != new_brokers do
+          {:halt, :ok}
+        else
+          Process.sleep(500)
+          {:cont, nil}
+        end
+      end)
+
+    result =
+      receive do
+        {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
+          added_brokers = event_data.added_brokers
+
+          case Enum.find(added_brokers, fn {_broker_id, url} ->
+                 String.starts_with?(url, expected_url_prefix)
+               end) do
+            nil ->
+              {:error, :invalid_event}
+
+            {broker_id, _} ->
+              {:ok, broker_id}
+          end
+      after
+        50_000 ->
+          {:error, :timeout}
+      end
+
+    :ok = PubSub.unsubscribe({:cluster_change, client_name})
+    result
   end
 
   def get_record_batch_by_offset(client_name, topic, partition, offset) do

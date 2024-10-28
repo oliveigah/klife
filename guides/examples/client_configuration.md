@@ -14,7 +14,7 @@ Here are some client configuration examples.
 
 This client will connect to brokers using non ssl connection and produce messages using the default producer and default partitioner.
 
-## SSL and custom socket opts
+## SSL with SASL and custom socket opts
 
 ```elixir
   config :my_app, MyApp.Client,
@@ -25,7 +25,14 @@ This client will connect to brokers using non ssl connection and produce message
         verify: :verify_peer,
         cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
       ],
-      socket_opts: [delay_send: true]
+      socket_opts: [delay_send: true],
+      sasl_opts: [
+        mechanism: "PLAIN",
+        mechanism_opts: [
+          username: "klifeusr",
+          password: "klifepwd"
+        ]
+      ],
     ]
 ```
 
@@ -51,17 +58,17 @@ This client will connect to brokers using ssl connection, `connect_opts` and `so
     ],
     topics: [
       [
-        name: "my_topic_0", 
+        name: "my_topic_0",
         default_producer: :my_linger_ms_producer
       ],
       [
-        name: "my_topic_1", 
+        name: "my_topic_1",
         default_producer: :my_custom_client_id_producer
       ]
     ]
 ```
 
-This client will have a total of 3 producers, the default one plus the other 2 defined in the configuration. You can see all the configuration options for the producers in `Klife.Producer`. 
+This client will have a total of 3 producers, the default one plus the other 2 defined in the configuration. You can see all the configuration options for the producers in `Klife.Producer`.
 
 Messages produced to `my_topic_0` and `my_topic_1` will use `my_linger_ms_producer` and `my_custom_client_id_producer` respectively if no producer is set on opts. All other topics keep using the default producer.
 
@@ -93,7 +100,7 @@ Then, you need to use it on your configuration.
     ],
     topics: [
       [
-        name: "my_topic_0", 
+        name: "my_topic_0",
         default_partitioner: MyApp.MyCustomPartitioner
       ]
     ]
@@ -101,7 +108,7 @@ Then, you need to use it on your configuration.
 
 On this client, the records produced to `my_topic_0` without a specific partition will have a partition assigned using the `MyApp.MyCustomPartitioner` module all other topics keep using the default partitioner.
 
-## Defining multiple txn pools
+## Defining multiple transactional (txn) pools
 
 ```elixir
   config :my_app, MyApp.Client,
