@@ -7,7 +7,6 @@ defmodule Klife.Producer.Controller do
 
   alias Klife.PubSub
 
-  alias KlifeProtocol.Messages
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
   alias Klife.Producer.ProducerSupervisor
@@ -88,9 +87,7 @@ defmodule Klife.Producer.Controller do
         :check_metadata,
         %__MODULE__{client_name: client_name} = state
       ) do
-    content = %{topics: nil}
-
-    case Broker.send_message(Messages.Metadata, client_name, :controller, content) do
+    case Broker.metadata(client_name) do
       {:error, _} ->
         :ok = ConnController.trigger_brokers_verification(client_name)
         new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
