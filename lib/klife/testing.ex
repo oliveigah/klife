@@ -201,7 +201,7 @@ defmodule Klife.Testing do
     end)
   end
 
-  defp get_latest_offsets(leader_id, metas, client_name) do
+  def get_latest_offsets(leader_id, metas, client_name) do
     content = %{
       replica_id: -1,
       isolation_level: 1,

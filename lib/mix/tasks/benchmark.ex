@@ -2,6 +2,8 @@ if Mix.env() in [:dev] do
   defmodule Mix.Tasks.Benchmark do
     use Mix.Task
 
+    alias Klife.Producer.Controller, as: PController
+
     def run(args) do
       Application.ensure_all_started(:klife)
 
@@ -76,6 +78,75 @@ if Mix.env() in [:dev] do
         memory_time: 2,
         parallel: parallel |> String.to_integer()
       )
+    end
+
+    def do_run_bench("producer_async", parallel) do
+      %{
+        records_0: records_0,
+        records_1: records_1,
+      } = generate_data()
+
+      # start producing with both Klife and Erlkaf in an infine loop
+      :erlkaf.start()
+
+      producer_config = [bootstrap_servers: "localhost:19092"]
+      :ok = :erlkaf.create_producer(:erlkaf_test_producer, producer_config)
+      erlkaf_topic = List.first(records_1).topic
+
+      pid_erlkaf =
+        Task.start(fn ->
+          Enum.reduce(1..1_000_000, 0, fn i, acc ->
+            erlkaf_msg = Enum.random(records_1)
+            :erlkaf.produce(:erlkaf_test_producer, erlkaf_topic, erlkaf_msg.key, erlkaf_msg.value)
+          end)
+        end)
+
+      klife_topic = List.first(records_0).topic
+
+      pid_klife =
+        Task.start(fn ->
+          Enum.reduce(1..1_000_000, 0, fn i, acc ->
+            klife_msg = Enum.random(records_0)
+
+            MyClient.produce_async(klife_msg)
+          end)
+        end)
+
+      Process.sleep(1000)
+
+      starting_offset = get_offset_by_topic([klife_topic, erlkaf_topic]) |> dbg()
+
+      IO.puts("Starting the test, 5 seconds to first measure")
+
+      Process.sleep(5000)
+
+      new_offset = get_offset_by_topic([klife_topic, erlkaf_topic]) |> dbg()
+
+      new_klife_offset = Map.get(new_offset, klife_topic) - Map.get(starting_offset, klife_topic)
+
+      new_erlkaf_offset =
+        Map.get(new_offset, erlkaf_topic) - Map.get(starting_offset, erlkaf_topic)
+
+      IO.puts(
+        "Klife:\t#{new_klife_offset}\nErlkaf:\t#{new_erlkaf_offset}\nDifference:#{new_klife_offset / new_erlkaf_offset}x"
+      )
+    end
+
+    defp get_offset_by_topic(topics) do
+      metas = PController.get_all_topics_partitions_metadata(MyClient)
+
+      data_by_topic =
+        metas
+        |> Enum.group_by(fn m -> m.leader_id end)
+        |> Enum.flat_map(fn {leader_id, metas} ->
+          Klife.Testing.get_latest_offsets(leader_id, metas, MyClient)
+        end)
+        |> Enum.filter(fn {topic, _pdata} -> Enum.member?(topics, topic) end)
+        |> Enum.group_by(fn {topic, _pdata} -> topic end, fn {_topic, pdata} -> pdata end)
+        |> Enum.map(fn {k, v} ->
+          {k, List.flatten(v) |> Enum.map(fn {_p, offset} -> offset end) |> Enum.sum()}
+        end)
+        |> Map.new()
     end
 
     def do_run_bench("producer_sync", parallel) do
