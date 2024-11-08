@@ -7,9 +7,12 @@ defmodule Klife.Connection.Broker do
 
   require Logger
 
+  alias KlifeProtocol.Messages
+
   alias Klife.Connection
   alias Klife.Connection.Controller
   alias Klife.Connection.MessageVersions
+
 
   @reconnect_delays_seconds [1, 1, 1, 1, 5, 5, 10]
 
@@ -174,6 +177,11 @@ defmodule Klife.Connection.Broker do
     end
   end
 
+  def metadata(client_name) do
+    content = %{topics: nil}
+    send_message(Messages.Metadata, client_name, :controller, content)
+  end
+
   defp reply_message(<<correlation_id::32-signed, _rest::binary>> = reply, client_name, conn) do
     case Controller.take_from_in_flight(client_name, correlation_id) do
       # sync send
@@ -239,7 +247,7 @@ defmodule Klife.Connection.Broker do
   defp get_broker_id(:any, client_name), do: Controller.get_random_broker_id(client_name)
 
   defp get_broker_id(:controller, client_name),
-    do: Controller.get_client_controller(client_name)
+    do: Controller.get_cluster_controller(client_name)
 
   defp get_broker_id(broker_id, _client_name), do: broker_id
 
