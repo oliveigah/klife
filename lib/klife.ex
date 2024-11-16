@@ -57,15 +57,7 @@ defmodule Klife do
 
   @doc false
   def produce_batch([%Record{} | _] = records, client, opts \\ []) do
-    records =
-      records
-      |> Enum.with_index(1)
-      |> Enum.map(fn {rec, idx} ->
-        rec
-        |> Map.replace!(:__estimated_size, Record.estimate_size(rec))
-        |> Map.replace!(:__batch_index, idx)
-        |> maybe_add_partition(client, opts)
-      end)
+    records = prepare_records(records, client, opts)
 
     if TxnProducerPool.in_txn?(client),
       do: TxnProducerPool.produce(records, client, opts),
@@ -74,22 +66,25 @@ defmodule Klife do
 
   @doc false
   def produce_async(%Record{} = record, client, opts \\ []) do
-    produce_batch_async([record], client, opts)
+    prepared_rec = prepare_records(record, client, opts)
+    Producer.produce_async([prepared_rec], client, opts)
   end
 
   @doc false
   def produce_batch_async([%Record{} | _] = records, client, opts \\ []) do
-    records =
-      records
-      |> Enum.with_index(1)
-      |> Enum.map(fn {rec, idx} ->
-        rec
-        |> Map.replace!(:__estimated_size, Record.estimate_size(rec))
-        |> Map.replace!(:__batch_index, idx)
-        |> maybe_add_partition(client, opts)
-      end)
+    case opts[:callback] do
+      nil ->
+        records = prepare_records(records, client, opts)
+        Producer.produce_async(records, client, opts)
 
-    Producer.produce_async(records, client, opts)
+      {m, f, args} ->
+        Task.start(fn -> apply(m, f, [produce_batch(records, client, opts) | args]) end)
+        :ok
+
+      fun when is_function(fun, 1) ->
+        Task.start(fn -> fun.(produce_batch(records, client, opts)) end)
+        :ok
+    end
   end
 
   @doc false
@@ -125,5 +120,21 @@ defmodule Klife do
       record ->
         record
     end
+  end
+
+  defp prepare_records(%Record{} = rec, client, opts) do
+    [new_rec] = prepare_records([rec], client, opts)
+    new_rec
+  end
+
+  defp prepare_records(recs, client, opts) when is_list(recs) do
+    recs
+    |> Enum.with_index(1)
+    |> Enum.map(fn {rec, idx} ->
+      rec
+      |> Map.replace!(:__estimated_size, Record.estimate_size(rec))
+      |> Map.replace!(:__batch_index, idx)
+      |> maybe_add_partition(client, opts)
+    end)
   end
 end

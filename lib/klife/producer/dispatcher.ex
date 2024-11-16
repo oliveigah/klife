@@ -176,7 +176,7 @@ defmodule Klife.Producer.Dispatcher do
             records_map
             |> Map.fetch!({topic, partition})
             |> Map.fetch!(batch_offset)
-            |> Map.put(:offset, base_offset + batch_offset)
+            |> Map.replace!(:offset, base_offset + batch_offset)
 
           Task.start(m, f, [{:ok, callback_rec} | a])
 
@@ -185,7 +185,7 @@ defmodule Klife.Producer.Dispatcher do
             records_map
             |> Map.fetch!({topic, partition})
             |> Map.fetch!(batch_offset)
-            |> Map.put(:offset, base_offset + batch_offset)
+            |> Map.replace!(:offset, base_offset + batch_offset)
 
           Task.start(fn -> fun.({:ok, callback_rec}) end)
       end)

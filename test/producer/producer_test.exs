@@ -602,9 +602,7 @@ defmodule Klife.ProducerTest do
                callback: fn resp -> send(parent, {:ping, resp}) end
              )
 
-    assert_receive({:ping, {:ok, %Record{key: ^key1} = new_rec1}}, 1000)
-    assert_receive({:ping, {:ok, %Record{key: ^key2} = new_rec2}}, 1000)
-    assert_receive({:ping, {:ok, %Record{key: ^key3} = new_rec3}}, 1000)
+    assert_receive({:ping, [{:ok, new_rec1}, {:ok, new_rec2}, {:ok, new_rec3}]}, 1000)
 
     assert :ok = TestUtils.assert_offset(MyClient, rec1, new_rec1.offset)
     assert :ok = TestUtils.assert_offset(MyClient, rec2, new_rec2.offset)

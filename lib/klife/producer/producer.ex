@@ -400,23 +400,7 @@ defmodule Klife.Producer do
 
     delivery_timeout_ms =
       records
-      |> Enum.group_by(fn r -> {r.topic, r.partition} end)
-      |> Enum.map(fn {{t, p}, recs} ->
-        %{
-          broker_id: broker_id,
-          producer_name: default_producer,
-          batcher_id: default_batcher_id
-        } = ProducerController.get_topics_partitions_metadata(client_name, t, p)
-
-        new_key =
-          if opt_producer,
-            do: {broker_id, opt_producer, get_batcher_id(client_name, opt_producer, t, p)},
-            else: {broker_id, default_producer, default_batcher_id}
-
-        {new_key, recs}
-      end)
-      |> Enum.group_by(fn {key, _recs} -> key end, fn {_key, recs} -> recs end)
-      |> Enum.map(fn {k, v} -> {k, List.flatten(v)} end)
+      |> group_records_by_batcher(client_name, opt_producer)
       |> Enum.reduce(0, fn {key, recs}, acc ->
         {broker_id, producer, batcher_id} = key
 
@@ -453,6 +437,24 @@ defmodule Klife.Producer do
     callback = Keyword.get(opts, :callback)
 
     records
+    |> group_records_by_batcher(client_name, opt_producer)
+    |> Enum.each(fn {key, recs} ->
+      {broker_id, producer, batcher_id} = key
+
+      :ok =
+        Batcher.produce_async(
+          recs,
+          client_name,
+          broker_id,
+          producer,
+          batcher_id,
+          callback
+        )
+    end)
+  end
+
+  defp group_records_by_batcher(records, client_name, opt_producer) do
+    records
     |> Enum.group_by(fn r -> {r.topic, r.partition} end)
     |> Enum.map(fn {{t, p}, recs} ->
       %{
@@ -470,19 +472,6 @@ defmodule Klife.Producer do
     end)
     |> Enum.group_by(fn {key, _recs} -> key end, fn {_key, recs} -> recs end)
     |> Enum.map(fn {k, v} -> {k, List.flatten(v)} end)
-    |> Enum.each(fn {key, recs} ->
-      {broker_id, producer, batcher_id} = key
-
-      :ok =
-        Batcher.produce_async(
-          recs,
-          client_name,
-          broker_id,
-          producer,
-          batcher_id,
-          callback
-        )
-    end)
   end
 
   defp wait_produce_response(timeout_ms, max_resps) do
