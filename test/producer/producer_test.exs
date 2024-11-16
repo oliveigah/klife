@@ -611,40 +611,6 @@ defmodule Klife.ProducerTest do
     assert :ok = TestUtils.assert_offset(MyClient, rec3, new_rec3.offset)
   end
 
-  test "produce message batch async - no callback" do
-    key1 = :rand.bytes(10)
-
-    rec1 = %Record{
-      value: :rand.bytes(10),
-      key: key1,
-      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
-      topic: "test_async_topic",
-      partition: 1
-    }
-
-    key2 = :rand.bytes(10)
-
-    rec2 = %Record{
-      value: :rand.bytes(10),
-      key: key2,
-      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
-      topic: "test_no_batch_topic",
-      partition: 1
-    }
-
-    key3 = :rand.bytes(10)
-
-    rec3 = %Record{
-      value: :rand.bytes(10),
-      key: key3,
-      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
-      topic: "test_async_topic",
-      partition: 3
-    }
-
-    assert :ok = MyClient.produce_batch_async([rec1, rec2, rec3])
-  end
-
   test "produce message async no batching - anon fun" do
     rec = %Record{
       value: :rand.bytes(10),

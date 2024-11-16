@@ -198,7 +198,7 @@ defmodule Klife.Client do
 
   > #### Semantics and guarantees {: .info}
   >
-  > This functions is implemented as `Task.start/1` calling [`produce/2`](c:produce/2).
+  > This functions executes the callback using `Task.start/1`.
   > Therefore there is no guarantees about record delivery or callback execution.
 
   ## Options
