@@ -18,25 +18,30 @@ defmodule Klife.TestUtils.AsyncProducerBenchmark do
   defp run_benchmark("erlkaf", topics, records) do
     :erlkaf.start()
 
-    producer_config = [bootstrap_servers: "localhost:19092"]
+    producer_config = [
+      bootstrap_servers: "localhost:19092",
+      max_in_flight: 1,
+      enable_idempotence: true,
+      sticky_partitioning_linger_ms: 0,
+      batch_size: 512_000
+    ]
 
     :ok = :erlkaf.create_producer(:erlkaf_test_producer, producer_config)
 
-    client_pid =
-      Task.start(fn ->
-        Enum.map(1..@number_of_records, fn _i ->
-          erlkaf_msg = Enum.random(records)
+    Task.start(fn ->
+      Enum.map(1..@number_of_records, fn _i ->
+        erlkaf_msg = Enum.random(records)
 
-          :erlkaf.produce(
-            :erlkaf_test_producer,
-            erlkaf_msg.topic,
-            erlkaf_msg.key,
-            erlkaf_msg.value
-          )
-        end)
-
-        :ok
+        :erlkaf.produce(
+          :erlkaf_test_producer,
+          erlkaf_msg.topic,
+          erlkaf_msg.key,
+          erlkaf_msg.value
+        )
       end)
+
+      :ok
+    end)
 
     result = measurement_collector("erlkaf", topics)
 
