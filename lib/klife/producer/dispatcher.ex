@@ -8,7 +8,8 @@ defmodule Klife.Producer.Dispatcher do
       :delivery_confirmation_pids,
       :pool_idx,
       :base_time,
-      :request_ref
+      :request_ref,
+      :records_map
     ]
   end
 
@@ -145,7 +146,8 @@ defmodule Klife.Producer.Dispatcher do
         pool_idx: pool_idx,
         request_ref: ^req_ref,
         batch_to_send: batch_to_send,
-        producer_config: %{name: producer_name, client_name: client_name} = p_config
+        producer_config: %{name: producer_name, client_name: client_name} = p_config,
+        records_map: records_map
       } = Map.fetch!(requests, req_ref)
 
     {:ok, resp} = apply(msg_mod, :deserialize_response, [binary_resp, msg_version])
@@ -165,8 +167,27 @@ defmodule Klife.Producer.Dispatcher do
       delivery_confirmation_pids
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
-      |> Enum.each(fn {pid, batch_offset, batch_idx} ->
-        send(pid, {:klife_produce, {:ok, base_offset + batch_offset}, batch_idx})
+      |> Enum.each(fn
+        {pid, batch_offset, batch_idx} when is_pid(pid) ->
+          send(pid, {:klife_produce, {:ok, base_offset + batch_offset}, batch_idx})
+
+        {{m, f, a}, batch_offset} ->
+          callback_rec =
+            records_map
+            |> Map.fetch!({topic, partition})
+            |> Map.fetch!(batch_offset)
+            |> Map.put(:offset, base_offset + batch_offset)
+
+          Task.start(m, f, [{:ok, callback_rec} | a])
+
+        {fun, batch_offset} when is_function(fun, 1) ->
+          callback_rec =
+            records_map
+            |> Map.fetch!({topic, partition})
+            |> Map.fetch!(batch_offset)
+            |> Map.put(:offset, base_offset + batch_offset)
+
+          Task.start(fn -> fun.({:ok, callback_rec}) end)
       end)
     end)
 
@@ -210,8 +231,27 @@ defmodule Klife.Producer.Dispatcher do
       delivery_confirmation_pids
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
-      |> Enum.each(fn {pid, _batch_offset, batch_idx} ->
-        send(pid, {:klife_produce, {:error, error_code}, batch_idx})
+      |> Enum.each(fn
+        {pid, _batch_offset, batch_idx} when is_pid(pid) ->
+          send(pid, {:klife_produce, {:error, error_code}, batch_idx})
+
+        {{m, f, a}, batch_offset} ->
+          callback_rec =
+            records_map
+            |> Map.fetch!({topic, partition})
+            |> Map.fetch!(batch_offset)
+            |> Map.put(:error_code, error_code)
+
+          Task.start(m, f, [{:error, callback_rec} | a])
+
+        {fun, batch_offset} when is_function(fun, 1) ->
+          callback_rec =
+            records_map
+            |> Map.fetch!({topic, partition})
+            |> Map.fetch!(batch_offset)
+            |> Map.put(:error_code, error_code)
+
+          Task.start(fn -> fun.({:error, callback_rec}) end)
       end)
     end)
 

@@ -448,6 +448,43 @@ defmodule Klife.Producer do
     end)
   end
 
+  def produce_async([%Record{} | _] = records, client_name, opts) do
+    opt_producer = Keyword.get(opts, :producer)
+    callback = Keyword.get(opts, :callback)
+
+    records
+    |> Enum.group_by(fn r -> {r.topic, r.partition} end)
+    |> Enum.map(fn {{t, p}, recs} ->
+      %{
+        broker_id: broker_id,
+        producer_name: default_producer,
+        batcher_id: default_batcher_id
+      } = ProducerController.get_topics_partitions_metadata(client_name, t, p)
+
+      new_key =
+        if opt_producer,
+          do: {broker_id, opt_producer, get_batcher_id(client_name, opt_producer, t, p)},
+          else: {broker_id, default_producer, default_batcher_id}
+
+      {new_key, recs}
+    end)
+    |> Enum.group_by(fn {key, _recs} -> key end, fn {_key, recs} -> recs end)
+    |> Enum.map(fn {k, v} -> {k, List.flatten(v)} end)
+    |> Enum.each(fn {key, recs} ->
+      {broker_id, producer, batcher_id} = key
+
+      :ok =
+        Batcher.produce_async(
+          recs,
+          client_name,
+          broker_id,
+          producer,
+          batcher_id,
+          callback
+        )
+    end)
+  end
+
   defp wait_produce_response(timeout_ms, max_resps) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_produce_response(deadline, max_resps, 0, %{})

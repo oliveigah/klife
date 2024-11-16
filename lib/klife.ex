@@ -72,44 +72,24 @@ defmodule Klife do
       else: Producer.produce(records, client, opts)
   end
 
-  # The async implementation is non optimal because it may copy a lot of
-  # data to the new task process. Ideally we could solve this by making
-  # Dispatcher start the callback task instead of send message to the
-  # waiting pid but it would be hard to keep the same API this way
-  # because inside Dispatcher we do not have the same data and since
-  # we want the async callback to receive the exact same output
-  # as the sync counter part this is the easiest for now.
-
   @doc false
   def produce_async(%Record{} = record, client, opts \\ []) do
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        resp = produce(record, client, opts)
-
-        case opts[:callback] do
-          {m, f, args} -> apply(m, f, [resp | args])
-          fun when is_function(fun, 1) -> fun.(resp)
-          _ -> :noop
-        end
-      end)
-
-    :ok
+    produce_batch_async([record], client, opts)
   end
 
   @doc false
   def produce_batch_async([%Record{} | _] = records, client, opts \\ []) do
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        resp = produce_batch(records, client, opts)
-
-        case opts[:callback] do
-          {m, f, args} -> apply(m, f, [resp | args])
-          fun when is_function(fun, 1) -> fun.(resp)
-          _ -> :noop
-        end
+    records =
+      records
+      |> Enum.with_index(1)
+      |> Enum.map(fn {rec, idx} ->
+        rec
+        |> Map.replace!(:__estimated_size, Record.estimate_size(rec))
+        |> Map.replace!(:__batch_index, idx)
+        |> maybe_add_partition(client, opts)
       end)
 
-    :ok
+    Producer.produce_async(records, client, opts)
   end
 
   @doc false
