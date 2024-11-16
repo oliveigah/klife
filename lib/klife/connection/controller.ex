@@ -158,7 +158,7 @@ defmodule Klife.Connection.Controller do
   def handle_info(:check_cluster, %__MODULE__{} = state) do
     case get_cluster_info(state.bootstrap_conn) do
       {:ok, %{brokers: new_brokers_list, controller: controller}} ->
-        set_client_controller(controller, state.client_name)
+        set_cluster_controller(controller, state.client_name)
 
         old_brokers = state.known_brokers
         to_remove = old_brokers -- new_brokers_list
@@ -271,8 +271,8 @@ defmodule Klife.Connection.Controller do
     GenServer.cast(via_tuple({__MODULE__, client_name}), :trigger_check_cluster)
   end
 
-  def get_client_controller(client_name),
-    do: :persistent_term.get({:client_controller, client_name})
+  def get_cluster_controller(client_name),
+    do: :persistent_term.get({:cluster_controller, client_name})
 
   def get_known_brokers(client_name),
     do: :persistent_term.get({:known_brokers_ids, client_name})
@@ -389,8 +389,8 @@ defmodule Klife.Connection.Controller do
         """)
   end
 
-  defp set_client_controller(broker_id, client_name),
-    do: :persistent_term.put({:client_controller, client_name}, broker_id)
+  defp set_cluster_controller(broker_id, client_name),
+    do: :persistent_term.put({:cluster_controller, client_name}, broker_id)
 
   defp negotiate_api_versions(%Connection{} = conn, client_name) do
     :ok =

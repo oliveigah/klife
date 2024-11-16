@@ -564,6 +564,53 @@ defmodule Klife.ProducerTest do
     assert length(record_batch) == 1
   end
 
+  test "produce message batch async - anon fun" do
+    key1 = :rand.bytes(10)
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: key1,
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_async_topic",
+      partition: 1
+    }
+
+    key2 = :rand.bytes(10)
+
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: key2,
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_no_batch_topic",
+      partition: 1
+    }
+
+    key3 = :rand.bytes(10)
+
+    rec3 = %Record{
+      value: :rand.bytes(10),
+      key: key3,
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: "test_async_topic",
+      partition: 3
+    }
+
+    parent = self()
+
+    assert :ok =
+             MyClient.produce_batch_async([rec1, rec2, rec3],
+               callback: fn resp -> send(parent, {:ping, resp}) end
+             )
+
+    assert_receive({:ping, {:ok, %Record{key: ^key1} = new_rec1}}, 1000)
+    assert_receive({:ping, {:ok, %Record{key: ^key2} = new_rec2}}, 1000)
+    assert_receive({:ping, {:ok, %Record{key: ^key3} = new_rec3}}, 1000)
+
+    assert :ok = TestUtils.assert_offset(MyClient, rec1, new_rec1.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec2, new_rec2.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec3, new_rec3.offset)
+  end
+
   test "produce message async no batching - anon fun" do
     rec = %Record{
       value: :rand.bytes(10),

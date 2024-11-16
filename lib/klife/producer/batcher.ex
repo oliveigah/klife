@@ -105,6 +105,19 @@ defmodule Klife.Producer.Batcher do
     |> GenServer.call({:produce, records, callback_pid})
   end
 
+  def produce_async(
+        [%Record{} | _] = records,
+        client_name,
+        broker_id,
+        producer_name,
+        batcher_id,
+        mfa_or_fun
+      ) do
+    client_name
+    |> get_process_name(broker_id, producer_name, batcher_id)
+    |> GenServer.cast({:produce_async, records, mfa_or_fun})
+  end
+
   def handle_call(
         {:produce, [%Record{} | _] = recs, callback_pid},
         _from,
@@ -128,6 +141,28 @@ defmodule Klife.Producer.Batcher do
     if on_time? and next_ref == nil,
       do: {:reply, {:ok, delivery_timeout}, schedule_send_if_earlier(new_state, 0)},
       else: {:reply, {:ok, delivery_timeout}, new_state}
+  end
+
+  def handle_cast(
+        {:produce_async, [%Record{} | _] = recs, mfa_or_fun},
+        %__MODULE__{} = state
+      ) do
+    %{
+      producer_config: %{linger_ms: linger_ms},
+      last_batch_sent_at: last_batch_sent_at,
+      next_send_msg_ref: next_ref
+    } = state
+
+    now = System.monotonic_time(:millisecond)
+
+    on_time? = now - last_batch_sent_at >= linger_ms
+
+    new_state =
+      Enum.reduce(recs, state, fn rec, acc_state -> add_record(acc_state, rec, mfa_or_fun) end)
+
+    if on_time? and next_ref == nil,
+      do: {:noreply, schedule_send_if_earlier(new_state, 0)},
+      else: {:noreply, new_state}
   end
 
   def handle_info(:send_to_broker, %__MODULE__{} = state) do
@@ -319,6 +354,7 @@ defmodule Klife.Producer.Batcher do
         dispatcher_req = %Dispatcher.Request{
           base_time: batch_base_time,
           batch_to_send: batch_to_send,
+          records_map: build_records_map(batch_to_send),
           delivery_confirmation_pids: waiting_pids,
           pool_idx: pool_idx,
           producer_config: pconfig,
@@ -510,6 +546,61 @@ defmodule Klife.Producer.Batcher do
     new_entry = {new_pid, offset, rec.__batch_index}
 
     Map.update(waiting_pids, {t, p}, [new_entry], fn curr_pids -> [new_entry | curr_pids] end)
+  end
+
+  defp add_waiting_pid(
+         waiting_pids,
+         new_batch,
+         {_m, _f, _a} = mfa,
+         %Record{topic: t, partition: p}
+       ) do
+    offset =
+      new_batch
+      |> Map.fetch!({t, p})
+      |> Map.fetch!(:last_offset_delta)
+
+    new_entry = {mfa, offset}
+
+    Map.update(waiting_pids, {t, p}, [new_entry], fn curr_pids -> [new_entry | curr_pids] end)
+  end
+
+  defp add_waiting_pid(
+         waiting_pids,
+         new_batch,
+         fun,
+         %Record{topic: t, partition: p}
+       )
+       when is_function(fun, 1) do
+    offset =
+      new_batch
+      |> Map.fetch!({t, p})
+      |> Map.fetch!(:last_offset_delta)
+
+    new_entry = {fun, offset}
+
+    Map.update(waiting_pids, {t, p}, [new_entry], fn curr_pids -> [new_entry | curr_pids] end)
+  end
+
+  defp build_records_map(batch_to_send) do
+    batch_to_send
+    |> Enum.map(fn {{t, p}, batch} ->
+      rec_map =
+        batch.records
+        |> Enum.map(fn rec ->
+          {rec.offset_delta,
+           %Record{
+             headers: rec.headers,
+             key: rec.key,
+             partition: p,
+             topic: t,
+             value: rec.value
+           }}
+        end)
+        |> Map.new()
+
+      {{t, p}, rec_map}
+    end)
+    |> Map.new()
   end
 
   defp get_process_name(

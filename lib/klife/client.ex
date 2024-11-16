@@ -198,7 +198,7 @@ defmodule Klife.Client do
 
   > #### Semantics and guarantees {: .info}
   >
-  > This functions is implemented as `Task.start/1` calling [`produce/2`](c:produce/2).
+  > This functions executes the callback using `Task.start/1`.
   > Therefore there is no guarantees about record delivery or callback execution.
 
   ## Options
@@ -286,12 +286,16 @@ defmodule Klife.Client do
   @doc """
   Produce a batch of records asynchronoulsy.
 
-  The same as [`produce_batch/2`](c:produce_batch/2) but returns immediately. Accepts a callback
-  option to execute arbitrary code after response is obtained.
+  The same as [`produce_batch/2`](c:produce_batch/2) but do not wait for the response. Accepts a callback
+  option to execute arbitrary code for each record in the batch.
+
+  > #### Beware of callback execution {: .warning}
+  > The callback is called for each record, so if the batch contains 3 records the callback will be
+  > executed up to 3 times.
 
   > #### Semantics and guarantees {: .info}
   >
-  > This functions is implemented as `Task.start/1` calling [`produce_batch/2`](c:produce_batch/2).
+  > This functions calls the callback for each record in the batch using `Task.start/1`.
   > Therefore there is no guarantees about record delivery or callback execution.
 
   ## Options
@@ -306,7 +310,7 @@ defmodule Klife.Client do
       iex> rec3 = %Klife.Record{value: "my_val_3", topic: "my_topic_3"}
       iex> input = [rec1, rec2, rec3]
       iex> :ok = MyClient.produce_batch_async(input, callback: fn resp ->
-      ...>  [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = resp
+      ...>  {:ok, _some_resp} = resp
       ...> end)
 
       Using MFA:
@@ -315,7 +319,7 @@ defmodule Klife.Client do
       ...>    def exec(resp, my_arg1, my_arg2) do
       ...>      "arg1" = my_arg1
       ...>      "arg2" = my_arg2
-      ...>      [{:ok, _resp1}, {:ok, _resp2}, {:ok, _resp3}] = resp
+      ...>      {:ok, _some_resp} = resp
       ...>    end
       ...> end
       iex> rec1 = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
