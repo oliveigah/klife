@@ -111,18 +111,24 @@ defmodule Klife.Producer.Batcher do
         broker_id,
         producer_name,
         batcher_id,
-        mfa_or_fun
+        callback
       ) do
     client_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenServer.cast({:produce_async, records, mfa_or_fun})
+    |> GenServer.cast({:produce_async, records, callback})
   end
 
-  def handle_call(
-        {:produce, [%Record{} | _] = recs, callback_pid},
-        _from,
-        %__MODULE__{} = state
-      ) do
+  def handle_call({:produce, [%Record{} | _] = recs, cb_pid}, _from, %__MODULE__{} = state) do
+    {new_state, delivery_timeout} = do_produce(state, recs, cb_pid)
+    {:reply, {:ok, delivery_timeout}, new_state}
+  end
+
+  def handle_cast({:produce_async, [%Record{} | _] = recs, callback}, %__MODULE__{} = state) do
+    {new_state, _timeout} = do_produce(state, recs, callback)
+    {:noreply, new_state}
+  end
+
+  defp do_produce(%__MODULE__{} = state, recs, cb_or_pid) do
     %{
       producer_config: %{linger_ms: linger_ms, delivery_timeout_ms: delivery_timeout},
       last_batch_sent_at: last_batch_sent_at,
@@ -130,39 +136,19 @@ defmodule Klife.Producer.Batcher do
     } = state
 
     now = System.monotonic_time(:millisecond)
-
     on_time? = now - last_batch_sent_at >= linger_ms
 
     new_state =
       Enum.reduce(recs, state, fn rec, acc_state ->
-        add_record(acc_state, rec, callback_pid)
+        add_record(acc_state, rec, cb_or_pid)
       end)
 
-    if on_time? and next_ref == nil,
-      do: {:reply, {:ok, delivery_timeout}, schedule_send_if_earlier(new_state, 0)},
-      else: {:reply, {:ok, delivery_timeout}, new_state}
-  end
-
-  def handle_cast(
-        {:produce_async, [%Record{} | _] = recs, mfa_or_fun},
-        %__MODULE__{} = state
-      ) do
-    %{
-      producer_config: %{linger_ms: linger_ms},
-      last_batch_sent_at: last_batch_sent_at,
-      next_send_msg_ref: next_ref
-    } = state
-
-    now = System.monotonic_time(:millisecond)
-
-    on_time? = now - last_batch_sent_at >= linger_ms
-
     new_state =
-      Enum.reduce(recs, state, fn rec, acc_state -> add_record(acc_state, rec, mfa_or_fun) end)
+      if on_time? and next_ref == nil,
+        do: schedule_send_if_earlier(new_state, 0),
+        else: new_state
 
-    if on_time? and next_ref == nil,
-      do: {:noreply, schedule_send_if_earlier(new_state, 0)},
-      else: {:noreply, new_state}
+    {new_state, delivery_timeout}
   end
 
   def handle_info(:send_to_broker, %__MODULE__{} = state) do
@@ -314,7 +300,7 @@ defmodule Klife.Producer.Batcher do
         state
         |> move_current_data_to_batch_queue()
         |> add_record_to_current_data(record, pid, estimated_size)
-        |> schedule_send_if_earlier(5),
+        |> schedule_send_if_earlier(1),
       else:
         state
         |> add_record_to_current_data(record, pid, estimated_size)
