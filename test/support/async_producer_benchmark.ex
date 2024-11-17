@@ -1,9 +1,13 @@
 defmodule Klife.TestUtils.AsyncProducerBenchmark do
+  require Logger
+
   alias Klife.Producer.Controller, as: PController
 
   @number_of_records 5_000_000
 
-  def run(clients, sample_data) do
+  def run(clients) do
+    sample_data = generate_data()
+
     topics = [
       List.first(sample_data.records_0).topic,
       List.first(sample_data.records_1).topic,
@@ -12,7 +16,15 @@ defmodule Klife.TestUtils.AsyncProducerBenchmark do
 
     records = sample_data.records_0 ++ sample_data.records_1 ++ sample_data.records_2
 
-    Enum.map(clients, &run_benchmark(&1, topics, records)) |> dbg()
+    client_results = Enum.map(clients, &run_benchmark(&1, topics, records))
+
+    results = Enum.zip(clients, client_results) |> Map.new()
+    IO.puts("Client  | Result    | Compared to klife")
+    Enum.each(results, fn {client, result} ->
+      IO.puts(
+        "#{client}\t| #{result}   | x#{results_compared_to_klife(result, results)}"
+      )
+    end)
   end
 
   defp run_benchmark("erlkaf", topics, records) do
@@ -43,7 +55,7 @@ defmodule Klife.TestUtils.AsyncProducerBenchmark do
       :ok
     end)
 
-    result = measurement_collector("erlkaf", topics)
+    result = measurement_collector(topics)
 
     :erlkaf.stop()
 
@@ -56,11 +68,10 @@ defmodule Klife.TestUtils.AsyncProducerBenchmark do
         Enum.map(1..@number_of_records, fn _i ->
           klife_msg = Enum.random(records)
           MyClient.produce_async(klife_msg)
-          Process.sleep(1)
         end)
       end)
 
-    result = measurement_collector("klife", topics)
+    result = measurement_collector(topics)
 
     Process.exit(client_pid, :kill)
 
@@ -82,39 +93,19 @@ defmodule Klife.TestUtils.AsyncProducerBenchmark do
       end)
     end)
 
-    result = measurement_collector("klife", topics)
+    result = measurement_collector(topics)
 
     :brod.stop()
 
     result
   end
 
-  defp measurement_collector(client, topics) do
+  defp measurement_collector(topics) do
     starting_offset = get_total_offsets(topics)
 
-    IO.puts("Starting to measure #{client} , 2 seconds to first measure")
+    Process.sleep(10000)
 
-    Process.sleep(2000)
-    measurement = get_total_offsets(topics) - starting_offset
-    IO.puts("Measurement 1: #{measurement}")
-
-    Process.sleep(2000)
-    measurement = get_total_offsets(topics) - starting_offset
-    IO.puts("Measurement 2: #{measurement}")
-
-    Process.sleep(2000)
-    measurement = get_total_offsets(topics) - starting_offset
-    IO.puts("Measurement 3: #{measurement}")
-
-    Process.sleep(2000)
-    measurement = get_total_offsets(topics) - starting_offset
-    IO.puts("Measurement 4: #{measurement}")
-
-    Process.sleep(2000)
-    measurement = get_total_offsets(topics) - starting_offset
-    IO.puts("Measurement 5: #{measurement}")
-
-    measurement
+    get_total_offsets(topics) - starting_offset
   end
 
   defp get_total_offsets(topics), do: get_offset_by_topic(topics) |> Map.values() |> Enum.sum()
@@ -134,5 +125,54 @@ defmodule Klife.TestUtils.AsyncProducerBenchmark do
         {k, List.flatten(v) |> Enum.map(fn {_p, offset} -> offset end) |> Enum.sum()}
       end)
       |> Map.new()
+  end
+
+  defp generate_data() do
+    topic0 = "async_benchmark_topic_0"
+    topic1 = "async_benchmark_topic_1"
+    topic2 = "async_benchmark_topic_2"
+
+    max_partition = 30
+
+    records_0 =
+      Enum.map(0..(max_partition - 1), fn p ->
+        %Klife.Record{
+          value: :rand.bytes(1_000),
+          key: :rand.bytes(50),
+          topic: topic0,
+          partition: p
+        }
+      end)
+
+    records_1 =
+      Enum.map(0..(max_partition - 1), fn p ->
+        %Klife.Record{
+          value: :rand.bytes(1_000),
+          key: :rand.bytes(50),
+          topic: topic1,
+          partition: p
+        }
+      end)
+
+    records_2 =
+      Enum.map(0..(max_partition - 1), fn p ->
+        %Klife.Record{
+          value: :rand.bytes(1_000),
+          key: :rand.bytes(50),
+          topic: topic2,
+          partition: p
+        }
+      end)
+
+    %{
+      records_0: records_0,
+      records_1: records_1,
+      records_2: records_2,
+      max_partition: max_partition
+    }
+  end
+
+  defp results_compared_to_klife(result, results) do
+    result / Map.get(results, "klife") |> Float.round(2)
   end
 end

@@ -30,7 +30,12 @@ config :klife, MyClient,
   producers: [
     [
       name: :benchmark_producer,
-      client_id: "my_custom_client_id"
+      client_id: "my_custom_client_id",
+    ],
+    [
+      name: :async_benchmark_producer,
+      client_id: "my_custom_client_id",
+      batchers_count: 4
     ],
     [
       name: :benchmark_producer_in_flight,
@@ -67,6 +72,18 @@ config :klife, MyClient,
     [
       name: "benchmark_topic_2",
       default_producer: :benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_0",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_1",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_2",
+      default_producer: :async_benchmark_producer
     ],
     [
       name: "benchmark_topic_in_flight",

@@ -82,9 +82,7 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("producer_async", parallel) do
-      sample_data = generate_data()
-
-      AsyncProducerBenchmark.run(["klife", "erlkaf", "brod"], sample_data)
+      AsyncProducerBenchmark.run(["klife", "erlkaf", "brod"])
     end
 
     def do_run_bench("producer_sync", parallel) do
