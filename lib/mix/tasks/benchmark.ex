@@ -2,6 +2,9 @@ if Mix.env() in [:dev] do
   defmodule Mix.Tasks.Benchmark do
     use Mix.Task
 
+    alias Klife.Producer.Controller, as: PController
+    alias Klife.TestUtils.AsyncProducerBenchmark
+
     def run(args) do
       Application.ensure_all_started(:klife)
 
@@ -76,6 +79,10 @@ if Mix.env() in [:dev] do
         memory_time: 2,
         parallel: parallel |> String.to_integer()
       )
+    end
+
+    def do_run_bench("producer_async", parallel) do
+      AsyncProducerBenchmark.run(["klife", "erlkaf", "brod"])
     end
 
     def do_run_bench("producer_sync", parallel) do

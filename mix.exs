@@ -73,6 +73,7 @@ defmodule Klife.MixProject do
       {:benchee, "~> 1.0", only: :dev, runtime: false},
       {:kafka_ex, "~> 0.13", only: :dev},
       {:brod, "~> 3.16", only: :dev},
+      {:erlkaf, "~> 2.1.6", only: :dev},
       {:observer_cli, "~> 1.7", only: :dev}
     ]
   end
