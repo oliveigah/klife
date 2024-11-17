@@ -82,7 +82,7 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("producer_async", parallel) do
-      AsyncProducerBenchmark.run(["klife", "erlkaf", "brod"])
+      AsyncProducerBenchmark.run(["klife", "erlkaf", "brod"], String.to_integer(parallel))
     end
 
     def do_run_bench("producer_sync", parallel) do

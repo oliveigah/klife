@@ -30,12 +30,12 @@ config :klife, MyClient,
   producers: [
     [
       name: :benchmark_producer,
-      client_id: "my_custom_client_id",
+      client_id: "my_custom_client_id"
     ],
     [
       name: :async_benchmark_producer,
       client_id: "my_custom_client_id",
-      batchers_count: 4
+      batchers_count: 32
     ],
     [
       name: :benchmark_producer_in_flight,
@@ -74,15 +74,39 @@ config :klife, MyClient,
       default_producer: :benchmark_producer
     ],
     [
-      name: "async_benchmark_topic_0",
+      name: "async_benchmark_topic_klife_0",
       default_producer: :async_benchmark_producer
     ],
     [
-      name: "async_benchmark_topic_1",
+      name: "async_benchmark_topic_klife_1",
       default_producer: :async_benchmark_producer
     ],
     [
-      name: "async_benchmark_topic_2",
+      name: "async_benchmark_topic_klife_2",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_erlkaf_0",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_erlkaf_1",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_erlkaf_2",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_brod_0",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_brod_1",
+      default_producer: :async_benchmark_producer
+    ],
+    [
+      name: "async_benchmark_topic_brod_2",
       default_producer: :async_benchmark_producer
     ],
     [

@@ -1,0 +1,4 @@
+Client  | Result   | Compared to klife
+brod	| 926471   | x0.76
+erlkaf	| 573942   | x0.47
+klife	| 1223524  | x1.0
