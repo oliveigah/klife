@@ -83,7 +83,9 @@ Checkout the `Klife.Client` [docs](https://hexdocs.pm/klife/Klife.Client.html) f
 
 ## Producer performance
 
-In order to test the performance I've prepared a benchmark that uses [benchee](https://github.com/bencheeorg/benchee) to produce
+### Produce sync
+
+In order to test sync produce the performance I've prepared a benchmark that uses [benchee](https://github.com/bencheeorg/benchee) to produce
 kafka records on kafka cluster running locally on my machine.
 
 The details can be checked out on `benchmark.ex` mix task and the results on `bechmark_results`.
@@ -117,7 +119,24 @@ The relevant client configuration are equal on all clients and they are:
 With this scenario I've executed the benchmark increasing the `parallel` attribute from
 benchee from 1 to 16, doubling it each round. The results are the following:
 
-![](./assets/producer_sync_benchmark.png "Producer Benchmark Results")
+![](./assets/producer_sync_benchmark.png "Producer Sync Benchmark Results")
+
+### Produce async
+
+The asynchronous benchmark spawns N parallel processes producing to one of 3 topics in a loop. After 10 seconds,
+it calculates the difference between the initial and current offsets for each topic partition to determine
+the total records produced and the throughput (records per second).
+
+The details can be checked out on `async_producer_benchmark.ex`.
+
+To reproduce it on your setup you can run (16 is the N value):
+
+```
+bash start-kafka.sh
+mix benchmark producer_async 16
+```
+
+![](./assets/producer_async_benchmark.png "Producer Async Benchmark Results")
 
 ## Compatibility with Kafka versions
 

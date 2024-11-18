@@ -140,6 +140,40 @@ config :klife, MyClient,
     [name: "my_topic_3"]
   ]
 
+# consumers: [
+#   [
+#     group_name: "klife_consumer_group_1",
+#     group_type: :consumer,
+#     topics: [
+#       {"my_topic", MyHandler}
+#     ]
+#   ],
+#   [
+#     group_name: "klife_share_group_1",
+#     group_type: :share,
+#     topics: [
+#       {"my_topic", MyHandler},
+#       {CustomTopicMatch, MyOtherHandler}
+#     ]
+#   ],
+#   [
+#     group_name: "klife_classic_group_1",
+#     group_type: :classic,
+#     topics: [
+#       {"my_topic", MyHandler},
+#       {CustomTopicMatch, MyOtherHandler}
+#     ]
+#   ],
+#   [
+#     group_name: "klife_classic_group_1",
+#     group_type: :classic,
+#     topics: [
+#       {"my_topic", MyHandler},
+#       {CustomTopicMatch, MyOtherHandler}
+#     ]
+#   ]
+# ]
+
 if config_env() == :dev do
   import_config "#{config_env()}.exs"
 end
