@@ -43,7 +43,7 @@ defmodule Klife.TestUtils do
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
     # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(30)) end)
   end
 
   defp do_stop_broker(client_name, broker_id) do
@@ -83,7 +83,7 @@ defmodule Klife.TestUtils do
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
     # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(10)) end)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(30)) end)
   end
 
   defp do_start_broker(service_name, client_name) do
@@ -258,7 +258,7 @@ defmodule Klife.TestUtils do
         opts \\ []
       ) do
     partition = Keyword.get(opts, :partition, expected_record.partition)
-    iso_lvl = Keyword.get(opts, :isolation, :committed)
+    iso_lvl = Keyword.get(opts, :isolation, :uncommitted)
     txn_status = Keyword.get(opts, :txn_status, :committed)
 
     client
@@ -268,8 +268,6 @@ defmodule Klife.TestUtils do
         :not_found
 
       {stored_record, status} ->
-        assert status == txn_status
-
         Enum.each(Map.from_struct(expected_record), fn {k, v} ->
           case k do
             :value -> assert v == stored_record.value
@@ -278,6 +276,10 @@ defmodule Klife.TestUtils do
             _ -> :noop
           end
         end)
+
+        assert status == txn_status
+
+        :ok
     end
   end
 

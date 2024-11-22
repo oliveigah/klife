@@ -76,8 +76,7 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    assert {:ok, %Record{} = rec} =
-             MyClient.produce(record, producer: :benchmark_producer)
+    assert {:ok, %Record{} = rec} = MyClient.produce(record, producer: :benchmark_producer)
 
     assert :ok = TestUtils.assert_offset(MyClient, record, rec.offset)
 
@@ -139,8 +138,7 @@ defmodule Klife.ProducerTest do
              {:ok, %Record{} = resp_rec1},
              {:ok, %Record{} = resp_rec2},
              {:ok, %Record{} = resp_rec3}
-           ] =
-             Task.await_many([task_1, task_2, task_3], 2_000)
+           ] = Task.await_many([task_1, task_2, task_3], 2_000)
 
     assert resp_rec2.offset - resp_rec1.offset == 1
     assert resp_rec3.offset - resp_rec2.offset == 1
@@ -210,8 +208,7 @@ defmodule Klife.ProducerTest do
              {:ok, %Record{} = resp_rec1},
              {:ok, %Record{} = resp_rec2},
              {:ok, %Record{} = resp_rec3}
-           ] =
-             Task.await_many([task_1, task_2, task_3], 2_000)
+           ] = Task.await_many([task_1, task_2, task_3], 2_000)
 
     assert resp_rec2.offset - resp_rec1.offset == 1
     assert resp_rec3.offset - resp_rec2.offset == 1
@@ -233,7 +230,7 @@ defmodule Klife.ProducerTest do
     assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
   end
 
-  @tag cluster_change: true, capture_log: true
+  @tag cluster_change: true, capture_log: true, timeout: 90_000
   test "is able to recover from client changes" do
     topic = "test_no_batch_topic"
 
@@ -467,8 +464,7 @@ defmodule Klife.ProducerTest do
              [{:ok, %Record{offset: offset1_1}}, {:ok, %Record{offset: offset1_2}}],
              [{:ok, %Record{offset: offset2_1}}, {:ok, %Record{offset: offset2_2}}],
              [{:ok, %Record{offset: offset3_1}}, {:ok, %Record{offset: offset3_2}}]
-           ] =
-             Task.await_many([task_1, task_2, task_3], 2_000)
+           ] = Task.await_many([task_1, task_2, task_3], 2_000)
 
     assert offset2_1 - offset1_1 == 1
     assert offset3_1 - offset2_1 == 1
@@ -655,8 +651,7 @@ defmodule Klife.ProducerTest do
     assert {:ok, new_rec} = resp
     assert :ok = TestUtils.assert_offset(MyClient, rec, new_rec.offset)
 
-    record_batch =
-      TestUtils.get_record_batch_by_offset(MyClient, rec.topic, 1, new_rec.offset)
+    record_batch = TestUtils.get_record_batch_by_offset(MyClient, rec.topic, 1, new_rec.offset)
 
     assert length(record_batch) == 1
   end
@@ -702,8 +697,7 @@ defmodule Klife.ProducerTest do
          t1_data.batcher_id}
       )
 
-    [{producer_pid, _}] =
-      registry_lookup({Klife.Producer, client_name, default_producer_name})
+    [{producer_pid, _}] = registry_lookup({Klife.Producer, client_name, default_producer_name})
 
     assert [
              {:ok, %Record{}},
@@ -876,12 +870,12 @@ defmodule Klife.ProducerTest do
                {:error, resp1 ++ resp2}
              end)
 
-    TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :aborted)
+    TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :aborted, isolation: :committed)
   end
 
   test "txn produce message - commits" do
@@ -1074,17 +1068,13 @@ defmodule Klife.ProducerTest do
                           TestUtils.assert_offset(MyClient, rec1, offset1, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec1, offset1,
-                            isolation: :uncommitted
-                          )
+                          TestUtils.assert_offset(MyClient, rec1, offset1, isolation: :uncommitted)
 
                  assert :not_found =
                           TestUtils.assert_offset(MyClient, rec2, offset2, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec2, offset2,
-                            isolation: :uncommitted
-                          )
+                          TestUtils.assert_offset(MyClient, rec2, offset2, isolation: :uncommitted)
 
                  {:ok, resp}
                end,
@@ -1109,25 +1099,19 @@ defmodule Klife.ProducerTest do
                           TestUtils.assert_offset(MyClient, rec3, offset3, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec3, offset3,
-                            isolation: :uncommitted
-                          )
+                          TestUtils.assert_offset(MyClient, rec3, offset3, isolation: :uncommitted)
 
                  assert :not_found =
                           TestUtils.assert_offset(MyClient, rec4, offset4, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec4, offset4,
-                            isolation: :uncommitted
-                          )
+                          TestUtils.assert_offset(MyClient, rec4, offset4, isolation: :uncommitted)
 
                  assert :not_found =
                           TestUtils.assert_offset(MyClient, rec5, offset5, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec5, offset5,
-                            isolation: :uncommitted
-                          )
+                          TestUtils.assert_offset(MyClient, rec5, offset5, isolation: :uncommitted)
 
                  Process.put(:raised_offsets, {offset3, offset4, offset5})
                  raise "crazy error"
@@ -1136,9 +1120,9 @@ defmodule Klife.ProducerTest do
              )
 
     {offset3, offset4, offset5} = Process.get(:raised_offsets)
-    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :aborted)
-    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :aborted)
+    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :aborted, isolation: :committed)
+    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :aborted, isolation: :committed)
 
     assert {:ok, {:ok, %Record{offset: offset6}}} =
              MyClient.transaction(
@@ -1151,9 +1135,7 @@ defmodule Klife.ProducerTest do
                           TestUtils.assert_offset(MyClient, rec6, offset6, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec6, offset6,
-                            isolation: :uncommitted
-                          )
+                          TestUtils.assert_offset(MyClient, rec6, offset6, isolation: :uncommitted)
 
                  {:ok, resp}
                end,
@@ -1218,8 +1200,7 @@ defmodule Klife.ProducerTest do
               %Record{offset: offset1},
               %Record{offset: offset2},
               %Record{offset: offset3}
-            ]} =
-             MyClient.produce_batch_txn([rec1, rec2, rec3])
+            ]} = MyClient.produce_batch_txn([rec1, rec2, rec3])
 
     TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :committed)
     TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :committed)
