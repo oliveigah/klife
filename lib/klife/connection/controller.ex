@@ -5,6 +5,8 @@ defmodule Klife.Connection.Controller do
 
   import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]
 
+  require Logger
+
   alias Klife.PubSub
 
   alias KlifeProtocol.Messages
@@ -299,6 +301,63 @@ defmodule Klife.Connection.Controller do
         res
     end
   end
+
+  def disable_feature(:connection, client_name) do
+    raise "Could not agree on a required message for the connection system on client #{inspect(client_name)} . Check logs for details."
+  end
+
+  def disable_feature(:producer = feature, client_name) do
+    Logger.warning("""
+    Producer feature will be disabled.
+
+    This may happen because of:
+    - API version negotiation failures
+    - Client configuration
+
+    """)
+
+    :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
+  end
+
+  def disable_feature(:txn_producer = feature, client_name) do
+    Logger.warning("""
+    Transactions feature will be disabled.
+
+    This may happen because of:
+    - API version negotiation failures
+    - Client configuration
+
+    """)
+
+    :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
+  end
+
+  def disable_feature(:producer_idempotence = feature, client_name) do
+    Logger.warning("""
+    Producer idempotence feature will be disabled .
+
+    This may happen because of:
+    - API version negotiation failures
+
+    """)
+
+    :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
+  end
+
+  def disable_feature(:sasl = feature, client_name) do
+    Logger.warning("""
+    SASL feature will be disabled.
+
+    This may happen because of:
+    - API version negotiation failures
+
+    """)
+
+    :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
+  end
+
+  def disabled_feature?(client_name, feature),
+    do: :persistent_term.get({__MODULE__, client_name, feature, :disabled?}, false)
 
   ## PRIVATE FUNCTIONS
 

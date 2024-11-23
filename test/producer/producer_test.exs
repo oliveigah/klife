@@ -1068,13 +1068,17 @@ defmodule Klife.ProducerTest do
                           TestUtils.assert_offset(MyClient, rec1, offset1, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec1, offset1, isolation: :uncommitted)
+                          TestUtils.assert_offset(MyClient, rec1, offset1,
+                            isolation: :uncommitted
+                          )
 
                  assert :not_found =
                           TestUtils.assert_offset(MyClient, rec2, offset2, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec2, offset2, isolation: :uncommitted)
+                          TestUtils.assert_offset(MyClient, rec2, offset2,
+                            isolation: :uncommitted
+                          )
 
                  {:ok, resp}
                end,
@@ -1099,19 +1103,25 @@ defmodule Klife.ProducerTest do
                           TestUtils.assert_offset(MyClient, rec3, offset3, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec3, offset3, isolation: :uncommitted)
+                          TestUtils.assert_offset(MyClient, rec3, offset3,
+                            isolation: :uncommitted
+                          )
 
                  assert :not_found =
                           TestUtils.assert_offset(MyClient, rec4, offset4, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec4, offset4, isolation: :uncommitted)
+                          TestUtils.assert_offset(MyClient, rec4, offset4,
+                            isolation: :uncommitted
+                          )
 
                  assert :not_found =
                           TestUtils.assert_offset(MyClient, rec5, offset5, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec5, offset5, isolation: :uncommitted)
+                          TestUtils.assert_offset(MyClient, rec5, offset5,
+                            isolation: :uncommitted
+                          )
 
                  Process.put(:raised_offsets, {offset3, offset4, offset5})
                  raise "crazy error"
@@ -1135,7 +1145,9 @@ defmodule Klife.ProducerTest do
                           TestUtils.assert_offset(MyClient, rec6, offset6, isolation: :committed)
 
                  assert :ok =
-                          TestUtils.assert_offset(MyClient, rec6, offset6, isolation: :uncommitted)
+                          TestUtils.assert_offset(MyClient, rec6, offset6,
+                            isolation: :uncommitted
+                          )
 
                  {:ok, resp}
                end,

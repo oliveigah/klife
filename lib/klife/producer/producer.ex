@@ -345,6 +345,13 @@ defmodule Klife.Producer do
     do: %{state | coordinator_id: maybe_find_coordinator(state)}
 
   defp set_producer_id(%__MODULE__{enable_idempotence: true} = state) do
+    if ConnController.disabled_feature?(state.client_name, :producer_idempotence) do
+      raise """
+        Producer idempotence feature is disabled but producer #{state.name} has idempotence enabled.
+        Please check for API versions problems or disable idempotence on this producer.
+      """
+    end
+
     broker = maybe_find_coordinator(state)
 
     content = %{

@@ -63,6 +63,13 @@ defmodule Klife.Client do
       required: false,
       doc: "List of topics that may have special configurations",
       default: []
+    ],
+    disabled_features: [
+      type: {:list, {:in, [:producer, :txn_producer]}},
+      type_doc: "List atoms representing a features to disable.",
+      required: false,
+      doc: "`:producer` disable producer feature. `:txn_producer` disables transactions.",
+      default: []
     ]
   ]
 
@@ -532,6 +539,10 @@ defmodule Klife.Client do
     :persistent_term.put(default_txn_pool_key, parsed_opts[:default_txn_pool])
     :persistent_term.put(default_producer_key, parsed_opts[:default_producer])
     :persistent_term.put(default_partitioner_key, parsed_opts[:default_partitioner])
+
+    Enum.each(parsed_opts[:disabled_features], fn feature ->
+      Klife.Connection.Controller.disable_feature(feature, module)
+    end)
 
     Supervisor.init(children, strategy: :one_for_one)
   end

@@ -24,6 +24,7 @@ config :klife, MyClient,
     #   delay_send: true
     # ]
   ],
+  # disabled_features: [:producer],
   txn_pools: [
     [name: :my_test_pool_1, pool_size: 1]
   ],

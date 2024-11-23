@@ -10,6 +10,7 @@ defmodule Klife do
   alias Klife.Producer
   alias Klife.TxnProducerPool
   alias Klife.Producer.Controller, as: PController
+  alias Klife.Connection.Controller, as: ConnController
 
   @produce_opts [
     producer: [
@@ -59,19 +60,39 @@ defmodule Klife do
   def produce_batch([%Record{} | _] = records, client, opts \\ []) do
     records = prepare_records(records, client, opts)
 
-    if TxnProducerPool.in_txn?(client),
-      do: TxnProducerPool.produce(records, client, opts),
-      else: Producer.produce(records, client, opts)
+    if TxnProducerPool.in_txn?(client) do
+      TxnProducerPool.produce(records, client, opts)
+    else
+      if ConnController.disabled_feature?(client, :producer) do
+        raise """
+        You have tried to call the Produce API, but the producer feature is disabled. Check logs for details.
+        """
+      end
+
+      Producer.produce(records, client, opts)
+    end
   end
 
   @doc false
   def produce_async(%Record{} = record, client, opts \\ []) do
+    if ConnController.disabled_feature?(client, :producer) do
+      raise """
+      You have tried to call the Produce API, but the producer feature is disabled. Check logs for details.
+      """
+    end
+
     prepared_rec = prepare_records(record, client, opts)
     Producer.produce_async([prepared_rec], client, opts)
   end
 
   @doc false
   def produce_batch_async([%Record{} | _] = records, client, opts \\ []) do
+    if ConnController.disabled_feature?(client, :producer) do
+      raise """
+      You have tried to call the Produce API, but the producer feature is disabled. Check logs for details.
+      """
+    end
+
     case opts[:callback] do
       nil ->
         records = prepare_records(records, client, opts)
@@ -98,6 +119,12 @@ defmodule Klife do
 
   @doc false
   def transaction(fun, client, opts \\ []) do
+    if ConnController.disabled_feature?(client, :txn_producer) do
+      raise """
+      You have tried to call the Transaction API, but the txn_producer feature is disabled. Check logs for details.
+      """
+    end
+
     TxnProducerPool.run_txn(client, get_txn_pool(client, opts), fun)
   end
 

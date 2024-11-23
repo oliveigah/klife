@@ -13,7 +13,6 @@ defmodule Klife.Connection.Broker do
   alias Klife.Connection.Controller
   alias Klife.Connection.MessageVersions
 
-
   @reconnect_delays_seconds [1, 1, 1, 1, 5, 5, 10]
 
   defstruct [

@@ -322,8 +322,15 @@ defmodule Klife.Producer.Controller do
       end
 
     if any_new? do
-      :ok = handle_producers(state)
-      :ok = handle_txn_producers(state)
+      :ok =
+        if ConnController.disabled_feature?(client_name, :producer),
+          do: :ok,
+          else: handle_producers(state)
+
+      :ok =
+        if ConnController.disabled_feature?(client_name, :txn_producer),
+          do: :ok,
+          else: handle_txn_producers(state)
     end
 
     :ok
