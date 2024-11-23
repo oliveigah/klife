@@ -4,6 +4,8 @@ defmodule Klife.Producer do
 
   import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]
 
+  require Logger
+
   alias Klife.Record
 
   alias Klife.Producer.Batcher
@@ -364,7 +366,14 @@ defmodule Klife.Producer do
         {:ok, %{content: %{error_code: 0, producer_id: producer_id, producer_epoch: p_epoch}}} ->
           {producer_id, p_epoch}
 
-        _data ->
+        {:ok, %{content: %{error_code: ec}}} ->
+          Logger.error(
+            "Error code #{ec} returned from broker for client #{state.client_name} on #{inspect(M.InitProducerId)} call"
+          )
+
+          :retry
+
+        _ ->
           :retry
       end
     end
@@ -384,13 +393,20 @@ defmodule Klife.Producer do
   defp maybe_find_coordinator(%__MODULE__{txn_id: txn_id} = state) do
     content = %{
       key_type: 1,
-      coordinator_keys: [txn_id]
+      key: txn_id
     }
 
     fun = fn ->
       case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
-        {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
+        {:ok, %{content: %{error_code: 0, node_id: broker_id}}} ->
           broker_id
+
+        {:ok, %{content: %{error_code: ec}}} ->
+          Logger.error(
+            "Error code #{ec} returned from broker for client #{state.client_name} on #{inspect(M.FindCoordinator)} call"
+          )
+
+          :retry
 
         _data ->
           :retry
