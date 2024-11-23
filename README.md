@@ -38,7 +38,7 @@ features as the project develops. Key features include:
 ```elixir
 def deps do
   [
-    {:klife, "~> 0.3.0"}
+    {:klife, "~> 0.5.0"}
   ]
 end
 ```
