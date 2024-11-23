@@ -368,7 +368,7 @@ defmodule Klife.Producer do
 
         {:ok, %{content: %{error_code: ec}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for client #{state.client_name} on #{inspect(M.InitProducerId)} call"
+            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.InitProducerId)} call"
           )
 
           :retry
@@ -403,7 +403,7 @@ defmodule Klife.Producer do
 
         {:ok, %{content: %{error_code: ec}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for client #{state.client_name} on #{inspect(M.FindCoordinator)} call"
+            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.FindCoordinator)} call"
           )
 
           :retry

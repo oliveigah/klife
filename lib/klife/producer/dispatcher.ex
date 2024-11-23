@@ -201,7 +201,7 @@ defmodule Klife.Producer.Dispatcher do
           partition: #{partition}
           error_code: #{error_code}
 
-          client: #{client_name}
+          client: #{inspect(client_name)}
           broker_id: #{broker_id}
           producer_name: #{producer_name}
           """)

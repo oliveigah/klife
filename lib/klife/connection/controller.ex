@@ -308,7 +308,7 @@ defmodule Klife.Connection.Controller do
 
   def disable_feature(:producer = feature, client_name) do
     Logger.warning("""
-    Producer feature will be disabled.
+    Producer feature will be disabled for client #{inspect(client_name)}.
 
     This may happen because of:
     - API version negotiation failures
@@ -321,7 +321,7 @@ defmodule Klife.Connection.Controller do
 
   def disable_feature(:txn_producer = feature, client_name) do
     Logger.warning("""
-    Transactions feature will be disabled.
+    Transactions feature will be disabled for client #{inspect(client_name)}.
 
     This may happen because of:
     - API version negotiation failures
@@ -334,7 +334,7 @@ defmodule Klife.Connection.Controller do
 
   def disable_feature(:producer_idempotence = feature, client_name) do
     Logger.warning("""
-    Producer idempotence feature will be disabled .
+    Producer idempotence feature will be disabled for client #{inspect(client_name)}.
 
     This may happen because of:
     - API version negotiation failures
@@ -346,7 +346,7 @@ defmodule Klife.Connection.Controller do
 
   def disable_feature(:sasl = feature, client_name) do
     Logger.warning("""
-    SASL feature will be disabled.
+    SASL feature will be disabled for client #{inspect(client_name)}.
 
     This may happen because of:
     - API version negotiation failures
