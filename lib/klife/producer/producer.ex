@@ -426,6 +426,7 @@ defmodule Klife.Producer do
       |> group_records_by_batcher(client_name, opt_producer)
       |> Enum.reduce(0, fn {key, recs}, acc ->
         {broker_id, producer, batcher_id} = key
+        recs = Enum.map(recs, fn %Record{} = rec -> %Record{rec | __callback: callback_pid} end)
 
         {:ok, delivery_timeout_ms} =
           Batcher.produce(
@@ -433,8 +434,7 @@ defmodule Klife.Producer do
             client_name,
             broker_id,
             producer,
-            batcher_id,
-            callback_pid
+            batcher_id
           )
 
         if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
@@ -463,6 +463,7 @@ defmodule Klife.Producer do
     |> group_records_by_batcher(client_name, opt_producer)
     |> Enum.each(fn {key, recs} ->
       {broker_id, producer, batcher_id} = key
+      recs = Enum.map(recs, fn %Record{} = rec -> %Record{rec | __callback: callback} end)
 
       :ok =
         Batcher.produce_async(
@@ -470,8 +471,7 @@ defmodule Klife.Producer do
           client_name,
           broker_id,
           producer,
-          batcher_id,
-          callback
+          batcher_id
         )
     end)
   end
@@ -543,7 +543,8 @@ defmodule Klife.Producer do
         Batcher.start_link([
           {:broker_id, broker_id},
           {:id, batcher_id},
-          {:producer_config, state}
+          {:producer_config, state},
+          {:batcher_config, build_batcher_config(state)}
         ])
 
       case result do
@@ -553,6 +554,15 @@ defmodule Klife.Producer do
     end
 
     :ok
+  end
+
+  defp build_batcher_config(%__MODULE__{} = state) do
+    [
+      {:batch_wait_time_ms, state.linger_ms},
+      {:max_in_flight, state.max_in_flight_requests},
+      {:batch_max_size, state.batch_size_bytes},
+      {:batch_max_count, :infinity}
+    ]
   end
 
   defp update_topic_partition_metadata(%__MODULE__{} = state, batchers_per_broker) do

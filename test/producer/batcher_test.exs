@@ -1,11 +1,14 @@
 defmodule Klife.Producer.BatcherTest do
+  # TODO: Add proper test to GenBatcher
+
   use ExUnit.Case
   alias Klife.Record
   alias Klife.Producer
   alias Klife.Producer.Batcher
+  alias Klife.GenBatcher
 
   test "add records to batch" do
-    state = %Batcher{
+    user_state = %Batcher{
       producer_config: %Producer{
         acks: :all,
         batch_size_bytes: 16000,
@@ -21,17 +24,22 @@ defmodule Klife.Producer.BatcherTest do
         retry_backoff_ms: 1000
       },
       broker_id: 1002,
-      current_batch: %{},
-      current_waiting_pids: %{},
-      current_estimated_size: 0,
-      current_base_time: nil,
-      last_batch_sent_at: System.monotonic_time(:millisecond),
-      in_flight_pool: [nil, nil],
-      next_send_msg_ref: nil,
-      batch_queue: :queue.new(),
       base_sequences: %{},
       producer_epochs: %{}
     }
+
+    state =
+      %GenBatcher{
+        user_state: user_state,
+        current_batch: Batcher.init_batch(user_state) |> elem(1),
+        current_batch_size: 0,
+        current_batch_item_count: 0,
+        batch_wait_time_ms: 10_000,
+        in_flight_pool: [nil, nil],
+        next_dispatch_msg_ref: nil,
+        batch_queue: :queue.new(),
+        last_batch_sent_at: System.monotonic_time(:millisecond)
+      }
 
     %{value: rec_val, key: rec_key, headers: rec_headers} =
       rec = %Record{
@@ -46,13 +54,13 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec], self()},
+               {:insert_on_batch, [rec], [100]},
                {self(), nil},
                state
              )
 
-    assert new_state.current_estimated_size == 100
-    assert [inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
+    assert new_state.current_batch_size == 100
+    assert [inserted_rec_1] = new_state.current_batch.data[{"my_topic_1", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -76,13 +84,15 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec], self()},
+               {:insert_on_batch, [rec], [200]},
                {self(), nil},
                new_state
              )
 
-    assert new_state.current_estimated_size == 300
-    assert [inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
+    assert new_state.current_batch_size == 300
+
+    assert [inserted_rec_2, ^inserted_rec_1] =
+             new_state.current_batch.data[{"my_topic_1", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -106,16 +116,17 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec], self()},
+               {:insert_on_batch, [rec], [300]},
                {self(), nil},
                new_state
              )
 
-    assert new_state.current_estimated_size == 600
+    assert new_state.current_batch_size == 600
 
-    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
+    assert [^inserted_rec_2, ^inserted_rec_1] =
+             new_state.current_batch.data[{"my_topic_1", 0}].records
 
-    assert [inserted_rec_3] = new_state.current_batch[{"my_topic_1", 1}].records
+    assert [inserted_rec_3] = new_state.current_batch.data[{"my_topic_1", 1}].records
 
     assert %{
              value: ^rec_val,
@@ -139,18 +150,19 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec], self()},
+               {:insert_on_batch, [rec], [400]},
                {self(), nil},
                new_state
              )
 
-    assert new_state.current_estimated_size == 1000
+    assert new_state.current_batch_size == 1000
 
-    assert [^inserted_rec_2, ^inserted_rec_1] = new_state.current_batch[{"my_topic_1", 0}].records
+    assert [^inserted_rec_2, ^inserted_rec_1] =
+             new_state.current_batch.data[{"my_topic_1", 0}].records
 
-    assert [^inserted_rec_3] = new_state.current_batch[{"my_topic_1", 1}].records
+    assert [^inserted_rec_3] = new_state.current_batch.data[{"my_topic_1", 1}].records
 
-    assert [inserted_rec_4] = new_state.current_batch[{"topic_b", 0}].records
+    assert [inserted_rec_4] = new_state.current_batch.data[{"topic_b", 0}].records
 
     assert %{
              value: ^rec_val,
@@ -163,7 +175,7 @@ defmodule Klife.Producer.BatcherTest do
   end
 
   test "batch add records to batch" do
-    state = %Batcher{
+    user_state = %Batcher{
       producer_config: %Producer{
         acks: :all,
         batch_size_bytes: 16000,
@@ -179,17 +191,22 @@ defmodule Klife.Producer.BatcherTest do
         retry_backoff_ms: 1000
       },
       broker_id: 1002,
-      current_batch: %{},
-      current_waiting_pids: %{},
-      current_estimated_size: 0,
-      current_base_time: nil,
-      last_batch_sent_at: System.monotonic_time(:millisecond),
-      in_flight_pool: [nil, nil],
-      next_send_msg_ref: nil,
-      batch_queue: :queue.new(),
       base_sequences: %{},
       producer_epochs: %{}
     }
+
+    state =
+      %GenBatcher{
+        user_state: user_state,
+        current_batch: Batcher.init_batch(user_state) |> elem(1),
+        current_batch_size: 0,
+        current_batch_item_count: 0,
+        batch_wait_time_ms: 10_000,
+        in_flight_pool: [nil, nil],
+        next_dispatch_msg_ref: nil,
+        batch_queue: :queue.new(),
+        last_batch_sent_at: System.monotonic_time(:millisecond)
+      }
 
     %{value: rec1_val, key: rec1_key, headers: rec1_headers} =
       rec1 = %Record{
@@ -226,19 +243,19 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec1, rec2, rec3], self()},
+               {:insert_on_batch, [rec1, rec2, rec3], [100, 200, 300]},
                {self(), nil},
                state
              )
 
-    assert new_state.current_estimated_size == 100 + 200 + 300
+    assert new_state.current_batch_size == 100 + 200 + 300
 
     assert [
              inserted_rec_1,
              inserted_rec_2,
              inserted_rec_3
            ] =
-             new_state.current_batch[{"my_topic_1", 0}].records |> Enum.reverse()
+             new_state.current_batch.data[{"my_topic_1", 0}].records |> Enum.reverse()
 
     assert %{
              value: ^rec1_val,
@@ -313,12 +330,12 @@ defmodule Klife.Producer.BatcherTest do
 
     assert {:reply, {:ok, 60000}, new_state} =
              Batcher.handle_call(
-               {:produce, [rec1, rec2, rec3, rec4], self()},
+               {:insert_on_batch, [rec1, rec2, rec3, rec4], [400, 500, 600, 700]},
                {self(), nil},
                new_state
              )
 
-    assert new_state.current_estimated_size == 600 + 400 + 500 + 600 + 700
+    assert new_state.current_batch_size == 600 + 400 + 500 + 600 + 700
 
     assert [
              _,
@@ -326,7 +343,7 @@ defmodule Klife.Producer.BatcherTest do
              _,
              inserted_rec_1
            ] =
-             new_state.current_batch[{"my_topic_1", 0}].records |> Enum.reverse()
+             new_state.current_batch.data[{"my_topic_1", 0}].records |> Enum.reverse()
 
     assert %{
              value: ^rec1_val,
@@ -341,7 +358,7 @@ defmodule Klife.Producer.BatcherTest do
              inserted_rec_2,
              inserted_rec_3
            ] =
-             new_state.current_batch[{"my_topic_2", 0}].records |> Enum.reverse()
+             new_state.current_batch.data[{"my_topic_2", 0}].records |> Enum.reverse()
 
     assert %{
              value: ^rec2_val,
@@ -364,7 +381,7 @@ defmodule Klife.Producer.BatcherTest do
     assert [
              inserted_rec_4
            ] =
-             new_state.current_batch[{"my_topic_3", 0}].records |> Enum.reverse()
+             new_state.current_batch.data[{"my_topic_3", 0}].records |> Enum.reverse()
 
     assert %{
              value: ^rec4_val,

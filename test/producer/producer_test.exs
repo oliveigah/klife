@@ -709,6 +709,7 @@ defmodule Klife.ProducerTest do
     before_epoch =
       batcher_pid
       |> :sys.get_state()
+      |> Map.get(:user_state)
       |> Map.get(:producer_epochs)
       |> Map.fetch!(tp_key)
 
@@ -723,7 +724,7 @@ defmodule Klife.ProducerTest do
 
     :ok =
       Enum.reduce_while(1..50, nil, fn _, _ ->
-        state = :sys.get_state(batcher_pid)
+        state = :sys.get_state(batcher_pid) |> Map.get(:user_state)
 
         new_epoch =
           state

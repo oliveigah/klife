@@ -64,7 +64,7 @@ defmodule Klife.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:klife_protocol, "~> 0.7.0"},
+      {:klife_protocol, "~> 0.8.0"},
       {:nimble_options, "~> 1.0"},
       {:nimble_pool, "~> 1.1"},
       # docs
@@ -72,7 +72,7 @@ defmodule Klife.MixProject do
       # Benchmarks and tests
       {:benchee, "~> 1.0", only: :dev, runtime: false},
       {:kafka_ex, "~> 0.13", only: :dev},
-      {:brod, "~> 3.16", only: :dev},
+      {:brod, "~> 4.4", only: :dev},
       {:erlkaf, "~> 2.1.6", only: :dev},
       {:observer_cli, "~> 1.7", only: :dev}
     ]

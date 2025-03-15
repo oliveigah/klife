@@ -4,9 +4,8 @@ defmodule Klife.Producer.Dispatcher do
     @moduledoc false
     defstruct [
       :producer_config,
-      :batch_to_send,
+      :data_to_send,
       :delivery_confirmation_pids,
-      :pool_idx,
       :base_time,
       :request_ref,
       :records_map
@@ -27,6 +26,8 @@ defmodule Klife.Producer.Dispatcher do
   alias Klife.Connection.Broker
   alias Klife.Producer
   alias KlifeProtocol.Messages, as: M
+
+  alias Klife.GenBatcher
 
   require Logger
 
@@ -64,8 +65,7 @@ defmodule Klife.Producer.Dispatcher do
     %Request{
       request_ref: request_ref,
       producer_config: %{retry_backoff_ms: retry_ms},
-      pool_idx: pool_idx,
-      batch_to_send: batch_to_send
+      data_to_send: data_to_send
     } = data
 
     case do_dispatch(data, state) do
@@ -81,9 +81,9 @@ defmodule Klife.Producer.Dispatcher do
         {:reply, :ok, new_state}
 
       {:error, :request_deadline} ->
-        failed_topic_partitions = Map.keys(batch_to_send)
+        failed_topic_partitions = Map.keys(data_to_send)
         send(state.batcher_pid, {:bump_epoch, failed_topic_partitions})
-        send(state.batcher_pid, {:request_completed, pool_idx})
+        GenBatcher.complete_dispatch(state.batcher_pid, request_ref)
         {:reply, :ok, state}
     end
   end
@@ -94,8 +94,7 @@ defmodule Klife.Producer.Dispatcher do
       %Request{
         request_ref: request_ref,
         producer_config: %Producer{retry_backoff_ms: retry_ms},
-        pool_idx: pool_idx,
-        batch_to_send: batch_to_send
+        data_to_send: data_to_send
       } = Map.fetch!(state.requests, req_ref)
 
     case do_dispatch(data, state) do
@@ -107,9 +106,9 @@ defmodule Klife.Producer.Dispatcher do
         {:noreply, state}
 
       {:error, :request_deadline} ->
-        failed_topic_partitions = Map.keys(batch_to_send)
+        failed_topic_partitions = Map.keys(data_to_send)
         send(state.batcher_pid, {:bump_epoch, failed_topic_partitions})
-        send(state.batcher_pid, {:request_completed, pool_idx})
+        GenBatcher.complete_dispatch(state.batcher_pid, request_ref)
         {:noreply, remove_request(state, req_ref)}
     end
   end
@@ -134,7 +133,6 @@ defmodule Klife.Producer.Dispatcher do
         %__MODULE__{} = state
       ) do
     %__MODULE__{
-      batcher_pid: batcher_pid,
       requests: requests,
       broker_id: broker_id,
       timeouts: timeouts
@@ -143,9 +141,8 @@ defmodule Klife.Producer.Dispatcher do
     data =
       %Request{
         delivery_confirmation_pids: delivery_confirmation_pids,
-        pool_idx: pool_idx,
         request_ref: ^req_ref,
-        batch_to_send: batch_to_send,
+        data_to_send: data_to_send,
         producer_config: %{name: producer_name, client_name: client_name} = p_config,
         records_map: records_map
       } = Map.fetch!(requests, req_ref)
@@ -256,14 +253,14 @@ defmodule Klife.Producer.Dispatcher do
     end)
 
     to_retry_keys = Enum.map(to_retry, fn {t, p, _, _} -> {t, p} end)
-    new_batch_to_send = Map.take(batch_to_send, to_retry_keys)
+    new_data_to_send = Map.take(data_to_send, to_retry_keys)
 
-    if map_size(new_batch_to_send) == 0 do
-      send(batcher_pid, {:request_completed, pool_idx})
+    if map_size(new_data_to_send) == 0 do
+      GenBatcher.complete_dispatch(state.batcher_pid, req_ref)
       {:noreply, remove_request(state, req_ref)}
     else
       Process.send_after(self(), {:dispatch, req_ref}, p_config.retry_backoff_ms)
-      new_req_data = %{data | batch_to_send: new_batch_to_send}
+      new_req_data = %{data | data_to_send: new_data_to_send}
 
       new_state = %{
         state
@@ -285,7 +282,7 @@ defmodule Klife.Producer.Dispatcher do
         acks: acks,
         txn_id: txn_id
       },
-      batch_to_send: batch_to_send,
+      data_to_send: data_to_send,
       base_time: base_time,
       request_ref: req_ref
     } = data
@@ -297,7 +294,7 @@ defmodule Klife.Producer.Dispatcher do
       transactional_id: txn_id,
       acks: if(acks == :all, do: -1, else: acks),
       timeout_ms: req_timeout,
-      topic_data: parse_batch_before_send(batch_to_send)
+      topic_data: parse_data_before_send(data_to_send)
     }
 
     before_deadline? = now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
@@ -326,8 +323,8 @@ defmodule Klife.Producer.Dispatcher do
     Broker.send_message(M.Produce, client_name, broker_id, content, headers, opts)
   end
 
-  defp parse_batch_before_send(batch_to_send) do
-    batch_to_send
+  defp parse_data_before_send(data_to_send) do
+    data_to_send
     |> Enum.group_by(fn {k, _} -> elem(k, 0) end, fn {k, v} -> {elem(k, 1), v} end)
     |> Enum.map(fn {topic, partitions_list} ->
       %{
