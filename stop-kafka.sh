@@ -1,2 +1,5 @@
 #!/bin/bash
-docker compose -f ./test/compose_files/docker-compose.yml down --volumes
+
+VERSION=${1:-"latest"}
+
+docker-compose -f ./test/compose_files/docker-compose-kafka-${VERSION}.yml down --volumes

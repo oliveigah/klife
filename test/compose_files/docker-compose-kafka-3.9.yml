@@ -1,36 +1,31 @@
 version: "3.3"
 
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.1
+  controller1:
+    image: apache/kafka:3.9.0
     network_mode: host
     environment:
-      ZOOKEEPER_SERVER_ID: 1
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_INIT_LIMIT: 5
-      ZOOKEEPER_SYNC_LIMIT: 2
-      ZOOKEEPER_SERVERS: zookeeper:2888:3888
-      KAFKA_OPTS:
-        -Djava.security.auth.login.config=/etc/kafka/zookeeper_server_jaas.conf
-        -Dzookeeper.authProvider.1=org.apache.zookeeper.server.auth.SASLAuthenticationProvider
-        -Dzookeeper.allowSaslFailedClients=false
-        -Dzookeeper.requireClientAuthScheme=sasl
-    volumes:
-      - ./sasl/zookeeper.jaas.conf:/etc/kafka/zookeeper_server_jaas.conf:ro,z
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: controller
+      KAFKA_LISTENERS: CONTROLLER://localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
   kafka1:
-    image: confluentinc/cp-kafka:7.6.1
+    image: apache/kafka:3.9.0
     depends_on:
-      - zookeeper
+      - controller1
     network_mode: host
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: localhost:2181
-      ZOOKEEPER: localhost:2181
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:19091,EXTERNAL_PLAIN://localhost:19092,EXTERNAL://localhost:19093,SASL_SSL://localhost:19094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
       KAFKA_SSL_KEY_PASSWORD: klifeclient
@@ -44,7 +39,8 @@ services:
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
       KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
-      KAFKA_LOG_RETENTION_MS: 600000000
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -54,18 +50,19 @@ services:
       - ./sasl/creds:/etc/kafka/secrets/creds
 
   kafka2:
-    image: confluentinc/cp-kafka:7.6.1
+    image: apache/kafka:3.9.0
     depends_on:
-      - zookeeper
+      - controller1
       - kafka1
     network_mode: host
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: localhost:2181
-      ZOOKEEPER: localhost:2181
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:29091,EXTERNAL_PLAIN://localhost:29092,EXTERNAL://localhost:29093,SASL_SSL://localhost:29094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
       KAFKA_SSL_KEY_PASSWORD: klifeclient
@@ -79,7 +76,8 @@ services:
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
       KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
-      KAFKA_LOG_RETENTION_MS: 600000000
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -89,18 +87,19 @@ services:
       - ./sasl/creds:/etc/kafka/secrets/creds
 
   kafka3:
-    image: confluentinc/cp-kafka:7.6.1
+    image: apache/kafka:3.9.0
     depends_on:
-      - zookeeper
+      - controller1
       - kafka2
     network_mode: host
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: localhost:2181
-      ZOOKEEPER: localhost:2181
+      KAFKA_NODE_ID: 4
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       BOOTSTRAP_SERVERS: localhost:19091,localhost:29091,localhost:39091
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://localhost:39091,EXTERNAL_PLAIN://localhost:39092,EXTERNAL://localhost:39093,SASL_SSL://localhost:39094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_PLAIN:PLAINTEXT,EXTERNAL:SSL,SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT
       KAFKA_SSL_KEYSTORE_LOCATION: /secrets/kafka.keystore.jks
       KAFKA_SSL_TRUSTSTORE_LOCATION: /secrets/kafka.truststore.jks
       KAFKA_SSL_KEY_PASSWORD: klifeclient
@@ -114,7 +113,8 @@ services:
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: broker_truststore_creds
       KAFKA_SASL_KERBEROS_SERVICE_NAME: klife
-      KAFKA_LOG_RETENTION_MS: 600000000
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks:ro,z
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks

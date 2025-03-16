@@ -1,3 +1,5 @@
 #!/bin/bash
-bash ./stop-kafka.sh
-docker compose -f ./test/compose_files/docker-compose.yml up --force-recreate
+VERSION=${1:-"latest"}
+
+bash ./stop-kafka.sh "$VERSION"
+docker-compose -f ./test/compose_files/docker-compose-kafka-${VERSION}.yml up --force-recreate

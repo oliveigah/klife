@@ -21,7 +21,10 @@ defmodule Klife.TestUtils do
     39094 => "kafka3"
   }
 
-  @docker_file_path Path.relative("test/compose_files/docker-compose.yml")
+  def get_docker_compose_file do
+    vsn = System.fetch_env!("KLIFE_KAFKA_VSN")
+    Path.relative("test/compose_files/docker-compose-kafka-#{vsn}.yml")
+  end
 
   defp get_service_name(client_name, broker_id) do
     content = %{include_client_authorized_operations: true, topics: []}
@@ -52,7 +55,9 @@ defmodule Klife.TestUtils do
 
     service_name = get_service_name(client_name, broker_id)
 
-    System.shell("docker compose -f #{@docker_file_path} stop #{service_name} > /dev/null 2>&1")
+    System.shell(
+      "docker compose -f #{get_docker_compose_file()} stop #{service_name} > /dev/null 2>&1"
+    )
 
     result =
       receive do
@@ -103,7 +108,9 @@ defmodule Klife.TestUtils do
 
     old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
 
-    System.shell("docker compose -f #{@docker_file_path} start #{service_name} > /dev/null 2>&1")
+    System.shell(
+      "docker compose -f #{get_docker_compose_file()} start #{service_name} > /dev/null 2>&1"
+    )
 
     :ok =
       Enum.reduce_while(1..50, nil, fn _, _acc ->

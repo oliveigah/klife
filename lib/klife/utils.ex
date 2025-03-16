@@ -97,16 +97,17 @@ defmodule Klife.Utils do
       %{
         content: %{
           topics: topics_input,
-          timeout_ms: 15_000
+          timeout_ms: 15_000,
+          validate_only: false
         },
         headers: %{correlation_id: 123}
       }
-      |> KlifeProtocol.Messages.CreateTopics.serialize_request(0)
+      |> KlifeProtocol.Messages.CreateTopics.serialize_request(2)
       |> Klife.Connection.write(new_conn)
 
     {:ok, received_data} = Klife.Connection.read(new_conn)
 
-    KlifeProtocol.Messages.CreateTopics.deserialize_response(received_data, 0)
+    KlifeProtocol.Messages.CreateTopics.deserialize_response(received_data, 2)
     |> case do
       {:ok, %{content: content}} ->
         case Enum.filter(content.topics, fn e -> e.error_code not in [0, 36] end) do
