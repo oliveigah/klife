@@ -23,7 +23,7 @@ defmodule Klife.GenBatcher do
   @type user_state :: term()
 
   @callback init_state(init_arg) :: {:ok, user_state} | {:error, reason :: term}
-  @callback init_batch(user_state) :: {:ok, batch}
+  @callback init_batch(user_state) :: {:ok, batch, user_state}
   @callback get_size(batch_insert_item) :: size :: non_neg_integer()
   @callback handle_insert_item(batch_insert_item, batch, user_state) ::
               {
@@ -36,7 +36,7 @@ defmodule Klife.GenBatcher do
   @callback handle_insert_response(list(batch_insert_item), user_state) :: term
   @callback handle_dispatch(batch, user_state, reference) :: dispatch_response
 
-  def start_link(mod, args, opts) do
+  def start_link(mod, args, opts \\ []) do
     GenServer.start_link(mod, args, opts)
   end
 
@@ -64,12 +64,13 @@ defmodule Klife.GenBatcher do
 
   def complete_dispatch(batcher_pid, dispatch_ref) do
     send(batcher_pid, {:complete_dispatch, dispatch_ref})
+    :ok
   end
 
   # State functions
 
   def init(mod, args) do
-    batcher_config = Keyword.fetch!(args, :batcher_config)
+    {batcher_config, args} = Keyword.pop!(args, :batcher_config)
     batch_wait_time_ms = Keyword.get(batcher_config, :batch_wait_time_ms, 0)
     max_in_flight = Keyword.get(batcher_config, :max_in_flight, 1)
     batch_max_size = Keyword.get(batcher_config, :max_batch_size, :infinity)
@@ -95,7 +96,7 @@ defmodule Klife.GenBatcher do
     }
 
     with {:ok, user_state} <- mod.init_state(args),
-         {:ok, batch} <- mod.init_batch(user_state) do
+         {:ok, batch, user_state} <- mod.init_batch(user_state) do
       new_state = %__MODULE__{
         base_state
         | user_state: user_state,
@@ -286,13 +287,14 @@ defmodule Klife.GenBatcher do
   end
 
   defp reset_current_batch(%__MODULE__{} = state, mod) do
-    {:ok, new_batch} = mod.init_batch(state.user_state)
+    {:ok, new_batch, user_state} = mod.init_batch(state.user_state)
 
     %__MODULE__{
       state
       | current_batch: new_batch,
         current_batch_size: 0,
-        current_batch_item_count: 0
+        current_batch_item_count: 0,
+        user_state: user_state
     }
   end
 

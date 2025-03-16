@@ -1,6 +1,4 @@
 defmodule Klife.Producer.BatcherTest do
-  # TODO: Add proper test to GenBatcher
-
   use ExUnit.Case
   alias Klife.Record
   alias Klife.Producer

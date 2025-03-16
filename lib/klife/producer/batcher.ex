@@ -92,13 +92,13 @@ defmodule Klife.Producer.Batcher do
   end
 
   @impl true
-  def init_batch(%__MODULE__{} = _state) do
+  def init_batch(%__MODULE__{} = state) do
     {:ok,
      %__MODULE__.Batch{
        data: %{},
        waiting_pids: %{},
        base_time: nil
-     }}
+     }, state}
   end
 
   @impl true
