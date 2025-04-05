@@ -1,6 +1,6 @@
 %{
-  "crc32cer": {:hex, :crc32cer, "0.1.11", "b550da6d615feb72a882d15d020f8f7dee72dfb2cb1bcdf3b1ee8dc2afd68cfc", [:rebar3], [], "hexpm", "a39b8f0b1990ac1bf06c3a247fc6a178b740cdfc33c3b53688dc7dd6b1855942"},
-  "klife_protocol": {:hex, :klife_protocol, "0.7.0", "1effd0742a6f993eba3593400cb1b209b3e00b6766a24d4a48351f13703849bc", [:mix], [{:crc32cer, "~> 0.1.8", [hex: :crc32cer, repo: "hexpm", optional: false]}, {:snappyer, "~> 1.2.7", [hex: :snappyer, repo: "hexpm", optional: false]}], "hexpm", "1d95fbb79f45955752918fa246e4409526924fd28f36508022949df2c0c12c4d"},
+  "crc32cer": {:hex, :crc32cer, "0.1.12", "b018bd5dcbba9c35972822f53ad40b6b483d453204ef67daf92af3a314bbfbf6", [:rebar3], [], "hexpm", "56ad9380651c2c4cb21d7741c91cbcc4709e032fd31a98a33f007ee30e526972"},
+  "klife_protocol": {:hex, :klife_protocol, "0.8.0", "d35272c5cddfab81661552816b4b2b46aa5e397a95c19a6258f77f4ae947e271", [:mix], [{:crc32cer, "~> 0.1.11", [hex: :crc32cer, repo: "hexpm", optional: false]}, {:snappyer, "~> 1.2.10", [hex: :snappyer, repo: "hexpm", optional: false]}], "hexpm", "c33b685950edf425e4917c4b4e2b2dbef1411ea32064fdc51fc2c7da533c7e10"},
   "nimble_options": {:hex, :nimble_options, "1.1.1", "e3a492d54d85fc3fd7c5baf411d9d2852922f66e69476317787a7b2bb000a61b", [:mix], [], "hexpm", "821b2470ca9442c4b6984882fe9bb0389371b8ddec4d45a9504f00a66f650b44"},
   "nimble_pool": {:hex, :nimble_pool, "1.1.0", "bf9c29fbdcba3564a8b800d1eeb5a3c58f36e1e11d7b7fb2e084a643f645f06b", [:mix], [], "hexpm", "af2e4e6b34197db81f7aad230c1118eac993acc0dae6bc83bac0126d4ae0813a"},
   "snappyer": {:hex, :snappyer, "1.2.10", "023e9ae00e969b0997208b5de7d3b12bb46ec6bc5411e8dc53e7b3f435b8f0fd", [:rebar3], [], "hexpm", "f55bd9ed147e7163cb3acd1e431a7ff2c9e31ceacbb8308786094fb64551c284"},

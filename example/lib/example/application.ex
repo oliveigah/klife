@@ -8,7 +8,8 @@ defmodule Example.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      Example.MySimplestClient
+      Example.MySimplestClient,
+      Example.Consumers.SimplestConsumerGroup
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

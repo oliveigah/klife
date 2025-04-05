@@ -47,10 +47,11 @@ defmodule Klife.Connection.MessageVersions do
       {M.Fetch, %{min: 4, max: 4, required_for: []}},
       {M.ListOffsets, %{min: 2, max: 2, required_for: []}},
       {M.AddPartitionsToTxn, %{min: 4, max: 4, required_for: [:txn_producer]}},
-      {M.FindCoordinator, %{min: 1, max: 1, required_for: [:txn_producer]}},
+      {M.FindCoordinator, %{min: 1, max: 6, required_for: [:txn_producer]}},
       {M.EndTxn, %{min: 3, max: 3, required_for: [:txn_producer]}},
       {M.SaslHandshake, %{min: 1, max: 1, required_for: [:sasl]}},
-      {M.SaslAuthenticate, %{min: 1, max: 1, required_for: [:sasl]}}
+      {M.SaslAuthenticate, %{min: 1, max: 1, required_for: [:sasl]}},
+      {M.ConsumerGroupHeartbeat, %{min: 0, max: 1, required_for: [:consumer_group]}}
     ]
   end
 

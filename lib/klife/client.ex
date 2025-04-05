@@ -8,6 +8,7 @@ defmodule Klife.Client do
   @default_producer_name :klife_default_producer
   @default_partitioner Klife.Producer.DefaultPartitioner
   @default_txn_pool :klife_default_txn_pool
+  @default_fetcher_name :klife_default_fetcher
 
   @doc false
   def default_producer_name(), do: @default_producer_name
@@ -27,6 +28,13 @@ defmodule Klife.Client do
       default: @default_producer_name,
       doc:
         "Name of the producer to be used on produce API calls when a specific producer is not provided via configuration or option. If not provided a default producer will be started automatically."
+    ],
+    producers: [
+      type: {:list, {:keyword_list, Klife.Producer.get_opts()}},
+      type_doc: "List of `Klife.Producer` configurations",
+      required: false,
+      default: [],
+      doc: "List of configurations, each starting a new producer for use with produce api."
     ],
     default_partitioner: [
       type: :atom,
@@ -50,19 +58,26 @@ defmodule Klife.Client do
       doc:
         "List of configurations, each starting a pool of transactional producers for use with transactional api."
     ],
-    producers: [
-      type: {:list, {:keyword_list, Klife.Producer.get_opts()}},
-      type_doc: "List of `Klife.Producer` configurations",
-      required: false,
-      default: [],
-      doc: "List of configurations, each starting a new producer for use with produce api."
-    ],
     topics: [
       type: {:list, {:keyword_list, Klife.Topic.get_opts()}},
       type_doc: "List of `Klife.Topic` configurations",
       required: false,
       doc: "List of topics that may have special configurations",
       default: []
+    ],
+    default_fetcher: [
+      type: :atom,
+      required: false,
+      default: @default_fetcher_name,
+      doc:
+        "Name of the default fetcher to be used on the consumer API when a specific fetcher is not provided via configuration or option. If not provided a default fetcher will be started automatically."
+    ],
+    fetchers: [
+      type: {:list, {:keyword_list, Klife.Consumer.Fetcher.get_opts()}},
+      type_doc: "List of `Klife.Consumer.Fetcher` configurations",
+      required: false,
+      default: [],
+      doc: "List of configurations, each starting a new fetcher to be used with consumer api."
     ],
     disabled_features: [
       type: {:list, {:in, [:producer, :txn_producer]}},
@@ -430,10 +445,12 @@ defmodule Klife.Client do
       defp default_txn_pool_key(), do: {__MODULE__, :default_txn_pool}
       defp default_producer_key(), do: {__MODULE__, :default_producer}
       defp default_partitioner_key(), do: {__MODULE__, :default_partitioner}
+      defp default_fetcher_key(), do: {__MODULE__, :default_fetcher}
 
       def get_default_txn_pool(), do: :persistent_term.get(default_txn_pool_key())
       def get_default_producer(), do: :persistent_term.get(default_producer_key())
       def get_default_partitioner(), do: :persistent_term.get(default_partitioner_key())
+      def get_default_fetcher(), do: :persistent_term.get(default_fetcher_key())
 
       @doc false
       @impl Supervisor
@@ -444,7 +461,8 @@ defmodule Klife.Client do
           @input_opts,
           default_txn_pool_key(),
           default_producer_key(),
-          default_partitioner_key()
+          default_partitioner_key(),
+          default_fetcher_key()
         )
       end
 
@@ -479,7 +497,8 @@ defmodule Klife.Client do
         input_opts,
         default_txn_pool_key,
         default_producer_key,
-        default_partitioner_key
+        default_partitioner_key,
+        default_fetcher_key
       ) do
     config = Application.get_env(otp_app, module)
 
@@ -488,6 +507,7 @@ defmodule Klife.Client do
     default_producer_name = validated_opts[:default_producer]
     default_txn_pool_name = validated_opts[:default_txn_pool]
     default_partitioner = validated_opts[:default_partitioner]
+    default_fetcher_name = validated_opts[:default_fetcher]
 
     parsed_opts =
       validated_opts
@@ -498,7 +518,7 @@ defmodule Klife.Client do
             Klife.Producer.get_opts()
           )
 
-        Enum.uniq_by([default_producer | l], fn p -> p[:name] end)
+        Enum.uniq_by(l ++ [default_producer], fn p -> p[:name] end)
       end)
       |> Keyword.update!(:txn_pools, fn l ->
         default_txn_pool =
@@ -507,7 +527,16 @@ defmodule Klife.Client do
             Klife.TxnProducerPool.get_opts()
           )
 
-        Enum.uniq_by([default_txn_pool | l], fn p -> p[:name] end)
+        Enum.uniq_by(l ++ [default_txn_pool], fn p -> p[:name] end)
+      end)
+      |> Keyword.update!(:fetchers, fn l ->
+        default_fetcher =
+          NimbleOptions.validate!(
+            [name: default_fetcher_name],
+            Klife.Consumer.Fetcher.get_opts()
+          )
+
+        Enum.uniq_by(l ++ [default_fetcher], fn f -> f[:name] end)
       end)
       |> Keyword.update(:topics, [], fn l ->
         Enum.map(l, fn topic ->
@@ -516,29 +545,33 @@ defmodule Klife.Client do
           |> Keyword.put_new(:default_partitioner, default_partitioner)
         end)
       end)
-      |> Keyword.update!(:producers, fn l -> Enum.map(l, &Map.new/1) end)
-      |> Keyword.update!(:txn_pools, fn l -> Enum.map(l, &Map.new/1) end)
-      |> Keyword.update!(:topics, fn l -> Enum.map(l, &Map.new/1) end)
+      |> Klife.Helpers.keyword_list_to_map()
 
     conn_opts =
       parsed_opts
-      |> Keyword.fetch!(:connection)
-      |> Map.new()
+      |> Map.fetch!(:connection)
       |> Map.put(:client_name, module)
 
     producer_opts =
-      [client_name: module] ++ Keyword.take(parsed_opts, [:producers, :txn_pools, :topics])
+      parsed_opts
+      |> Map.take([:producers, :txn_pools, :topics])
+      |> Map.put(:client_name, module)
 
-    producer_opts = Map.new(producer_opts)
+    consumer_opts =
+      parsed_opts
+      |> Map.take([:fetchers])
+      |> Map.put(:client_name, module)
 
     children = [
       {Klife.Connection.Supervisor, conn_opts},
-      {Klife.Producer.Supervisor, producer_opts}
+      {Klife.Producer.Supervisor, producer_opts},
+      {Klife.Consumer.Supervisor, consumer_opts}
     ]
 
     :persistent_term.put(default_txn_pool_key, parsed_opts[:default_txn_pool])
     :persistent_term.put(default_producer_key, parsed_opts[:default_producer])
     :persistent_term.put(default_partitioner_key, parsed_opts[:default_partitioner])
+    :persistent_term.put(default_fetcher_key, parsed_opts[:default_fetcher])
 
     Enum.each(parsed_opts[:disabled_features], fn feature ->
       Klife.Connection.Controller.disable_feature(feature, module)

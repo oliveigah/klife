@@ -25,6 +25,7 @@ defmodule Klife.GenBatcher do
   @callback init_state(init_arg) :: {:ok, user_state} | {:error, reason :: term}
   @callback init_batch(user_state) :: {:ok, batch, user_state}
   @callback get_size(batch_insert_item) :: size :: non_neg_integer()
+  @callback fit_on_batch?(batch_insert_item, batch) :: boolean()
   @callback handle_insert_item(batch_insert_item, batch, user_state) ::
               {
                 :ok,
@@ -127,9 +128,10 @@ defmodule Klife.GenBatcher do
         size_overflow? = new_size > batch_max_size
         count_overflow? = new_count > batch_max_count
         empty_current? = current_batch_item_count == 0
+        fit_on_current? = mod.fit_on_batch?(item, current_batch)
 
         cond do
-          (size_overflow? or count_overflow?) and not empty_current? ->
+          (size_overflow? or count_overflow? or not fit_on_current?) and not empty_current? ->
             new_state =
               acc_state
               |> move_batch_to_queue(mod)

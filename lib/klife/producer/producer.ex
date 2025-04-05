@@ -12,6 +12,9 @@ defmodule Klife.Producer do
   alias Klife.Producer.Controller, as: ProducerController
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
+  alias Klife.Connection.MessageVersions, as: MV
+
+  alias Klife.Helpers
 
   alias KlifeProtocol.Messages, as: M
 
@@ -25,7 +28,7 @@ defmodule Klife.Producer do
     client_id: [
       type: :string,
       doc:
-        "String used on all requests for the client. If not provided the following string is used: \"klife_producer.{client_name}.{producer_name}\""
+        "String used on all requests. If not provided the following string is used: \"klife_producer.{client_name}.{producer_name}\""
     ],
     acks: [
       type: {:in, [:all, 1]},
@@ -378,7 +381,7 @@ defmodule Klife.Producer do
       end
     end
 
-    {producer_id, p_epoch} = with_timeout(:timer.seconds(30), fun)
+    {producer_id, p_epoch} = Helpers.with_timeout!(fun, :timer.seconds(30))
 
     %__MODULE__{
       state
@@ -391,17 +394,37 @@ defmodule Klife.Producer do
   defp maybe_find_coordinator(%__MODULE__{txn_id: nil}), do: :any
 
   defp maybe_find_coordinator(%__MODULE__{txn_id: txn_id} = state) do
-    content = %{
-      key_type: 1,
-      key: txn_id
-    }
+    content =
+      if MV.get(state.client_name, M.FindCoordinator) <= 3 do
+        %{
+          key_type: 1,
+          key: txn_id
+        }
+      else
+        %{
+          key_type: 1,
+          coordinator_keys: [txn_id]
+        }
+      end
 
     fun = fn ->
       case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
+        # vsn <= 3
         {:ok, %{content: %{error_code: 0, node_id: broker_id}}} ->
           broker_id
 
         {:ok, %{content: %{error_code: ec}}} ->
+          Logger.error(
+            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.FindCoordinator)} call"
+          )
+
+          :retry
+
+        # vsn > 3
+        {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
+          broker_id
+
+        {:ok, %{content: %{coordinators: [%{error_code: ec}]}}} ->
           Logger.error(
             "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.FindCoordinator)} call"
           )
@@ -413,7 +436,7 @@ defmodule Klife.Producer do
       end
     end
 
-    with_timeout(:timer.seconds(30), fun)
+    Helpers.with_timeout!(fun, :timer.seconds(30))
   end
 
   @doc false
@@ -607,25 +630,5 @@ defmodule Klife.Producer do
 
   defp get_batcher_id(client_name, producer_name, topic, partition) do
     :persistent_term.get({__MODULE__, client_name, producer_name, topic, partition})
-  end
-
-  defp with_timeout(timeout, fun) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_with_timeout(deadline, fun)
-  end
-
-  defp do_with_timeout(deadline, fun) do
-    if System.monotonic_time(:millisecond) < deadline do
-      case fun.() do
-        :retry ->
-          Process.sleep(Enum.random(50..150))
-          do_with_timeout(deadline, fun)
-
-        val ->
-          val
-      end
-    else
-      raise "timeout while waiting for broker response"
-    end
   end
 end

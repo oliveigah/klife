@@ -7,4 +7,9 @@ opts = [strategy: :one_for_one, name: Test.Supervisor]
 
 :ok = Klife.Testing.setup(MyClient)
 
+case System.fetch_env("KLIFE_KAFKA_VSN") do
+  {:ok, _} -> :noop
+  :error -> System.put_env("KLIFE_KAFKA_VSN", "4.0")
+end
+
 ExUnit.start()

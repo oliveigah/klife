@@ -91,6 +91,22 @@ defmodule Klife.Record do
     80 + get_size(record.value) + get_size(record.key) + get_size(record.headers)
   end
 
+  def parse_from_protocol(t, p, record_batch) do
+    base_offset = record_batch[:base_offset]
+    record_list = Enum.with_index(record_batch[:records])
+
+    Enum.map(record_list, fn {rec, idx} ->
+      %__MODULE__{
+        key: rec[:key],
+        headers: rec[:headers],
+        value: rec[:value],
+        topic: t,
+        partition: p,
+        offset: base_offset + idx
+      }
+    end)
+  end
+
   defp get_size(nil), do: 0
   defp get_size([]), do: 0
   defp get_size(v) when is_binary(v), do: byte_size(v)

@@ -51,7 +51,7 @@ defmodule Klife.GenBatcherTest do
 
       {
         :ok,
-        %__MODULE__.Batch{items: [], global_order: new_batch_count},
+        %Batch{items: [], global_order: new_batch_count},
         %__MODULE__{state | batch_count: new_batch_count}
       }
     end
@@ -64,30 +64,35 @@ defmodule Klife.GenBatcherTest do
 
     @impl true
     def handle_insert_item(
-          %__MODULE__.BatchItem{} = item,
-          %__MODULE__.Batch{} = batch,
+          %BatchItem{} = item,
+          %Batch{} = batch,
           %__MODULE__{} = state
         ) do
       send(state.parent_pid, {:handle_insert_item, item, batch, state})
 
       items_count = state.items_count + 1
-      new_item = %__MODULE__.BatchItem{item | global_order: items_count}
+      new_item = %BatchItem{item | global_order: items_count}
       new_items = batch.items ++ [new_item]
-      new_batch = %__MODULE__.Batch{batch | items: new_items, hash: :erlang.phash2(new_items)}
+      new_batch = %Batch{batch | items: new_items, hash: :erlang.phash2(new_items)}
       new_state = %__MODULE__{state | items_count: items_count}
 
       {:ok, new_item, new_batch, new_state}
     end
 
     @impl true
-    def handle_dispatch(%__MODULE__.Batch{} = batch, %__MODULE__{} = state, ref) do
+    def handle_dispatch(%Batch{} = batch, %__MODULE__{} = state, ref) do
       send(state.parent_pid, {:handle_dispatch, batch, state, ref})
       {:ok, %__MODULE__{state | dispatch_count: state.dispatch_count + 1}}
     end
 
     @impl true
-    def get_size(%__MODULE__.BatchItem{} = item) do
+    def get_size(%BatchItem{} = item) do
       item.size || 0
+    end
+
+    @impl true
+    def fit_on_batch?(%BatchItem{} = _item, %Batch{} = _batch) do
+      true
     end
   end
 

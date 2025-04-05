@@ -136,6 +136,11 @@ defmodule Klife.Producer.Batcher do
   end
 
   @impl true
+  def fit_on_batch?(%Record{} = _rec, %__MODULE__.Batch{} = _batch) do
+    true
+  end
+
+  @impl true
   def handle_dispatch(%__MODULE__.Batch{} = batch, %__MODULE__{} = state, ref) do
     dispatcher_req = %Dispatcher.Request{
       base_time: batch.base_time,
