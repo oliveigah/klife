@@ -41,26 +41,12 @@ defmodule Klife.GenBatcher do
     GenServer.start_link(mod, args, opts)
   end
 
-  def insert_call(batcher_pid, mod, items) when is_list(items) do
-    sizes =
-      Enum.map(items, fn item ->
-        if function_exported?(mod, :get_size, 1),
-          do: apply(mod, :get_size, [item]),
-          else: 0
-      end)
-
-    GenServer.call(batcher_pid, {:insert_on_batch, items, sizes})
+  def insert_call(batcher_pid, items) when is_list(items) do
+    GenServer.call(batcher_pid, {:insert_on_batch, items})
   end
 
-  def insert_cast(batcher_pid, mod, items) when is_list(items) do
-    sizes =
-      Enum.map(items, fn item ->
-        if function_exported?(mod, :get_size, 1),
-          do: apply(mod, :get_size, [item]),
-          else: 0
-      end)
-
-    GenServer.cast(batcher_pid, {:insert_on_batch, items, sizes})
+  def insert_cast(batcher_pid, items) when is_list(items) do
+    GenServer.cast(batcher_pid, {:insert_on_batch, items})
   end
 
   def complete_dispatch(batcher_pid, dispatch_ref) do
@@ -108,11 +94,11 @@ defmodule Klife.GenBatcher do
     end
   end
 
-  def insert_items(%__MODULE__{} = state, items, sizes, _from, mod) do
-    zipped_items = Enum.zip(items, sizes)
-
+  def insert_items(%__MODULE__{} = state, items, _from, mod) do
     {updated_items, new_state} =
-      Enum.map_reduce(zipped_items, state, fn {item, size}, acc_state ->
+      Enum.map_reduce(items, state, fn item, acc_state ->
+        size = mod.get_size(item)
+
         %__MODULE__{
           current_batch: current_batch,
           current_batch_size: current_batch_size,
@@ -135,7 +121,7 @@ defmodule Klife.GenBatcher do
             new_state =
               acc_state
               |> move_batch_to_queue(mod)
-              |> schedule_dispatch_if_earlier(5)
+              |> schedule_dispatch_if_earlier(1)
 
             {:ok, new_item, new_batch, new_user_state} =
               mod.handle_insert_item(item, new_state.current_batch, new_state.user_state)
@@ -155,7 +141,7 @@ defmodule Klife.GenBatcher do
               mod.handle_insert_item(item, current_batch, user_state)
 
             new_state = %__MODULE__{
-              state
+              acc_state
               | current_batch_size: new_size,
                 current_batch: new_batch,
                 user_state: new_user_state,
@@ -166,12 +152,9 @@ defmodule Klife.GenBatcher do
         end
       end)
 
-    now = System.monotonic_time(:millisecond)
-    on_time? = now - new_state.last_batch_sent_at >= new_state.batch_wait_time_ms
-
     new_state =
-      if on_time? and new_state.next_dispatch_msg_ref == nil,
-        do: schedule_dispatch_if_earlier(new_state, 0),
+      if new_state.next_dispatch_msg_ref == nil,
+        do: schedule_dispatch_if_earlier(new_state, 1),
         else: new_state
 
     user_resp = mod.handle_insert_response(updated_items, new_state.user_state)
@@ -214,16 +197,14 @@ defmodule Klife.GenBatcher do
 
         new_state
 
-      is_periodic? ->
-        new_state =
-          new_state
-          |> do_dispatch(pool_idx, mod)
-          |> schedule_dispatch_if_earlier(batch_wait_time_ms)
-
-        new_state
-
       true ->
-        do_dispatch(new_state, pool_idx, mod)
+        new_state = do_dispatch(new_state, pool_idx, mod)
+
+        if is_periodic? do
+          schedule_dispatch_if_earlier(new_state, batch_wait_time_ms)
+        else
+          new_state
+        end
     end
   end
 
@@ -331,16 +312,16 @@ defmodule Klife.GenBatcher do
         Klife.GenBatcher.init(__MODULE__, args)
       end
 
-      def handle_call({:insert_on_batch, items_list, sizes}, from, %Klife.GenBatcher{} = state) do
+      def handle_call({:insert_on_batch, items_list}, from, %Klife.GenBatcher{} = state) do
         {new_state, user_resp} =
-          Klife.GenBatcher.insert_items(state, items_list, sizes, from, __MODULE__)
+          Klife.GenBatcher.insert_items(state, items_list, from, __MODULE__)
 
         {:reply, user_resp, new_state}
       end
 
-      def handle_cast({:insert_on_batch, items_list, sizes}, %Klife.GenBatcher{} = state) do
+      def handle_cast({:insert_on_batch, items_list}, %Klife.GenBatcher{} = state) do
         {new_state, _resp} =
-          Klife.GenBatcher.insert_items(state, items_list, sizes, nil, __MODULE__)
+          Klife.GenBatcher.insert_items(state, items_list, nil, __MODULE__)
 
         {:noreply, new_state}
       end

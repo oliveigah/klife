@@ -57,7 +57,7 @@ defmodule Klife.Producer.Batcher do
       ) do
     client_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenBatcher.insert_call(__MODULE__, records)
+    |> GenBatcher.insert_call(records)
   end
 
   def produce_async(
@@ -69,7 +69,7 @@ defmodule Klife.Producer.Batcher do
       ) do
     client_name
     |> get_process_name(broker_id, producer_name, batcher_id)
-    |> GenBatcher.insert_cast(__MODULE__, records)
+    |> GenBatcher.insert_cast(records)
   end
 
   @impl true
@@ -132,7 +132,7 @@ defmodule Klife.Producer.Batcher do
 
   @impl true
   def get_size(%Record{} = rec) do
-    Record.estimate_size(rec)
+    rec.__estimated_size
   end
 
   @impl true

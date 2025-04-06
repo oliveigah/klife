@@ -146,78 +146,78 @@ if Mix.env() in [:dev] do
             t2 = Task.async(fn -> MyClient.produce(rec2) end)
 
             [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
-          end,
-          "kafka_ex" => fn ->
-            rec0 = Enum.random(records_0)
-            rec1 = Enum.random(records_1)
-            rec2 = Enum.random(records_2)
-
-            t0 =
-              Task.async(fn ->
-                KafkaEx.produce(rec0.topic, rec0.partition, rec0.value,
-                  key: rec0.key,
-                  required_acks: -1
-                )
-              end)
-
-            t1 =
-              Task.async(fn ->
-                KafkaEx.produce(rec1.topic, rec1.partition, rec1.value,
-                  key: rec1.key,
-                  required_acks: -1
-                )
-              end)
-
-            t2 =
-              Task.async(fn ->
-                KafkaEx.produce(rec2.topic, rec2.partition, rec2.value,
-                  key: rec2.key,
-                  required_acks: -1
-                )
-              end)
-
-            [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
-          end,
-          "brod" => fn ->
-            rec0 = Enum.random(records_0)
-            rec1 = Enum.random(records_1)
-            rec2 = Enum.random(records_2)
-
-            t0 =
-              Task.async(fn ->
-                :brod.produce_sync_offset(
-                  :kafka_client,
-                  rec0.topic,
-                  rec0.partition,
-                  rec0.key,
-                  rec0.value
-                )
-              end)
-
-            t1 =
-              Task.async(fn ->
-                :brod.produce_sync_offset(
-                  :kafka_client,
-                  rec1.topic,
-                  rec1.partition,
-                  rec1.key,
-                  rec1.value
-                )
-              end)
-
-            t2 =
-              Task.async(fn ->
-                :brod.produce_sync_offset(
-                  :kafka_client,
-                  rec2.topic,
-                  rec2.partition,
-                  rec2.key,
-                  rec2.value
-                )
-              end)
-
-            [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
           end
+          # "kafka_ex" => fn ->
+          #   rec0 = Enum.random(records_0)
+          #   rec1 = Enum.random(records_1)
+          #   rec2 = Enum.random(records_2)
+
+          #   t0 =
+          #     Task.async(fn ->
+          #       KafkaEx.produce(rec0.topic, rec0.partition, rec0.value,
+          #         key: rec0.key,
+          #         required_acks: -1
+          #       )
+          #     end)
+
+          #   t1 =
+          #     Task.async(fn ->
+          #       KafkaEx.produce(rec1.topic, rec1.partition, rec1.value,
+          #         key: rec1.key,
+          #         required_acks: -1
+          #       )
+          #     end)
+
+          #   t2 =
+          #     Task.async(fn ->
+          #       KafkaEx.produce(rec2.topic, rec2.partition, rec2.value,
+          #         key: rec2.key,
+          #         required_acks: -1
+          #       )
+          #     end)
+
+          #   [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
+          # end,
+          # "brod" => fn ->
+          #   rec0 = Enum.random(records_0)
+          #   rec1 = Enum.random(records_1)
+          #   rec2 = Enum.random(records_2)
+
+          #   t0 =
+          #     Task.async(fn ->
+          #       :brod.produce_sync_offset(
+          #         :kafka_client,
+          #         rec0.topic,
+          #         rec0.partition,
+          #         rec0.key,
+          #         rec0.value
+          #       )
+          #     end)
+
+          #   t1 =
+          #     Task.async(fn ->
+          #       :brod.produce_sync_offset(
+          #         :kafka_client,
+          #         rec1.topic,
+          #         rec1.partition,
+          #         rec1.key,
+          #         rec1.value
+          #       )
+          #     end)
+
+          #   t2 =
+          #     Task.async(fn ->
+          #       :brod.produce_sync_offset(
+          #         :kafka_client,
+          #         rec2.topic,
+          #         rec2.partition,
+          #         rec2.key,
+          #         rec2.value
+          #       )
+          #     end)
+
+          #   [{:ok, _}, {:ok, _}, {:ok, _}] = Task.await_many([t0, t1, t2])
+          # end
         },
         time: 15,
         memory_time: 2,

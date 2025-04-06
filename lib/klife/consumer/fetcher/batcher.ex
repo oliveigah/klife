@@ -44,7 +44,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
       ) do
     client
     |> get_process_name(fetcher_name, broker_id, batcher_id, iso_level)
-    |> GenBatcher.insert_call(__MODULE__, reqs)
+    |> GenBatcher.insert_call(reqs)
   end
 
   def start_link(args) do
