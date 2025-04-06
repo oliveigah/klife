@@ -562,8 +562,11 @@ defmodule Klife.Client do
       |> Map.take([:fetchers])
       |> Map.put(:client_name, module)
 
+    metadata_cache_opts = %{client_name: module}
+
     children = [
       {Klife.Connection.Supervisor, conn_opts},
+      {Klife.MetadataCache, metadata_cache_opts},
       {Klife.Producer.Supervisor, producer_opts},
       {Klife.Consumer.Supervisor, consumer_opts}
     ]

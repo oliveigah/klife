@@ -41,7 +41,7 @@ defmodule Klife.Connection.MessageVersions do
     [
       {M.ApiVersions, %{min: 0, max: 0, required_for: [:connection]}},
       {M.CreateTopics, %{min: 0, max: 2, required_for: []}},
-      {M.Metadata, %{min: 1, max: 1, required_for: [:connection]}},
+      {M.Metadata, %{min: 1, max: 13, required_for: [:connection]}},
       {M.Produce, %{min: 3, max: 9, required_for: [:producer, :txn_producer]}},
       {M.InitProducerId, %{min: 0, max: 0, required_for: [:producer_idempotence]}},
       {M.Fetch, %{min: 4, max: 4, required_for: []}},

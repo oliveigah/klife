@@ -7,7 +7,6 @@ defmodule Klife.Producer.Controller do
 
   alias Klife.PubSub
 
-  alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
   alias Klife.Producer.ProducerSupervisor
 
@@ -15,14 +14,12 @@ defmodule Klife.Producer.Controller do
 
   alias Klife.Producer
 
-  @check_metadata_delay :timer.seconds(30)
+  alias Klife.MetadataCache
 
   defstruct [
     :client_name,
     :producers,
     :topics,
-    :check_metadata_waiting_pids,
-    :check_metadata_timer_ref,
     :txn_pools
   ]
 
@@ -39,168 +36,68 @@ defmodule Klife.Producer.Controller do
       client_name: client_name,
       producers: args.producers,
       txn_pools: args.txn_pools,
-      topics: topics_list,
-      check_metadata_waiting_pids: [],
-      check_metadata_timer_ref: nil
+      topics: topics_list
     }
 
-    :ets.new(topics_partitions_metadata_table(client_name), [
-      :set,
-      :public,
-      :named_table,
-      read_concurrency: true
-    ])
-
-    :ets.new(partitioner_metadata_table(client_name), [
-      :set,
-      :public,
-      :named_table,
-      read_concurrency: true
-    ])
-
-    :ok = PubSub.subscribe({:cluster_change, client_name})
-
-    {:ok, do_init(state)}
-  end
-
-  defp do_init(state) do
-    {:noreply, state} = handle_info(:check_metadata, state)
-    state
-  end
-
-  def handle_info(
-        {{:cluster_change, client_name}, _event_data, _callback_data},
-        %__MODULE__{client_name: client_name} = state
-      ) do
-    Process.cancel_timer(state.check_metadata_timer_ref)
-    new_ref = Process.send_after(self(), :check_metadata, 0)
-
-    {:noreply,
-     %__MODULE__{
-       state
-       | check_metadata_timer_ref: new_ref
-     }}
+    :ok = PubSub.subscribe({:metadata_updated, client_name})
+    :ok = sync_with_metadata(state)
+    {:ok, state}
   end
 
   @impl true
   def handle_info(
-        :check_metadata,
+        {{:metadata_updated, client_name}, _event_data, _callback_data},
         %__MODULE__{client_name: client_name} = state
       ) do
-    case Broker.metadata(client_name) do
-      {:error, _} ->
-        :ok = ConnController.trigger_brokers_verification(client_name)
-        new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
-        {:noreply, %{state | check_metadata_timer_ref: new_ref}}
+    :ok = sync_with_metadata(state)
 
-      {:ok, %{content: resp}} ->
-        :ok = setup_producers(state, resp)
-        :ok = setup_partitioners(state, resp)
-
-        if Enum.any?(resp.topics, &(&1.error_code != 0)) do
-          new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
-          {:noreply, %{state | check_metadata_timer_ref: new_ref}}
-        else
-          state.check_metadata_waiting_pids
-          |> Enum.reverse()
-          |> Enum.each(&GenServer.reply(&1, :ok))
-
-          new_ref = Process.send_after(self(), :check_metadata, @check_metadata_delay)
-
-          {:noreply,
-           %{state | check_metadata_timer_ref: new_ref, check_metadata_waiting_pids: []}}
-        end
-    end
+    {:noreply, state}
   end
 
-  @impl true
-  def handle_call(:trigger_check_metadata, from, state) do
-    case state do
-      %__MODULE__{check_metadata_waiting_pids: []} ->
-        Process.cancel_timer(state.check_metadata_timer_ref)
-        new_ref = Process.send_after(self(), :check_metadata, 0)
+  defp sync_with_metadata(%__MODULE__{} = state) do
+    %__MODULE__{
+      client_name: client_name,
+      topics: topics
+    } = state
 
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_metadata_waiting_pids: [from],
-             check_metadata_timer_ref: new_ref
-         }}
-
-      %__MODULE__{} ->
-        {:noreply,
-         %__MODULE__{
-           state
-           | check_metadata_waiting_pids: [from | state.check_metadata_waiting_pids]
-         }}
-    end
-  end
-
-  # Public Interface
-
-  def trigger_metadata_verification_sync(client_name) do
-    GenServer.call(via_tuple({__MODULE__, client_name}), :trigger_check_metadata)
-  end
-
-  def trigger_metadata_verification_async(client_name) do
-    GenServer.cast(via_tuple({__MODULE__, client_name}), :trigger_check_metadata)
-  end
-
-  def get_topics_partitions_metadata(client_name, topic, partition) do
-    [{_key, broker_id, default_producer, batcher_id}] =
-      client_name
-      |> topics_partitions_metadata_table()
-      |> :ets.lookup({topic, partition})
-
-    %{
-      broker_id: broker_id,
-      producer_name: default_producer,
-      batcher_id: batcher_id
-    }
-  end
-
-  def get_broker_id(client_name, topic, partition) do
-    client_name
-    |> topics_partitions_metadata_table()
-    |> :ets.lookup_element({topic, partition}, 2)
-  end
-
-  def get_default_producer(client_name, topic, partition) do
-    client_name
-    |> topics_partitions_metadata_table()
-    |> :ets.lookup_element({topic, partition}, 3)
-  end
-
-  def get_batcher_id(client_name, topic, partition) do
-    client_name
-    |> topics_partitions_metadata_table()
-    |> :ets.lookup_element({topic, partition}, 4)
-  end
-
-  def update_batcher_id(client_name, topic, partition, new_batcher_id) do
-    client_name
-    |> topics_partitions_metadata_table()
-    |> :ets.update_element({topic, partition}, {4, new_batcher_id})
-  end
-
-  def get_all_topics_partitions_metadata(client_name) do
-    client_name
-    |> topics_partitions_metadata_table()
-    |> :ets.tab2list()
-    |> Enum.map(fn {{topic_name, partition_idx}, leader_id, _default_producer, batcher_id} ->
+    MetadataCache.get_all_metadata(state.client_name)
+    |> Enum.each(fn meta ->
       %{
-        topic_name: topic_name,
-        partition_idx: partition_idx,
-        leader_id: leader_id,
-        batcher_id: batcher_id
-      }
-    end)
-  end
+        key: {topic_name, p_index}
+      } = meta
 
-  def get_partitioner_data(client_name, topic) do
-    client_name
-    |> partitioner_metadata_table()
-    |> :ets.lookup_element(topic, 2)
+      config_topic = Enum.find(topics, %{}, &(&1.name == topic_name))
+
+      true =
+        MetadataCache.update_metadata(
+          state.client_name,
+          topic_name,
+          p_index,
+          :default_producer,
+          config_topic[:default_producer] || client_name.get_default_producer()
+        )
+
+      true =
+        MetadataCache.update_metadata(
+          state.client_name,
+          topic_name,
+          p_index,
+          :default_partitioner,
+          config_topic[:default_partitioner] || client_name.get_default_partitioner()
+        )
+    end)
+
+    :ok =
+      if ConnController.disabled_feature?(client_name, :producer),
+        do: :ok,
+        else: handle_producers(state)
+
+    :ok =
+      if ConnController.disabled_feature?(client_name, :txn_producer),
+        do: :ok,
+        else: handle_txn_producers(state)
+
+    :ok
   end
 
   # Private functions
@@ -277,96 +174,4 @@ defmodule Klife.Producer.Controller do
 
     :ok
   end
-
-  defp setup_producers(%__MODULE__{} = state, resp) do
-    %__MODULE__{
-      client_name: client_name,
-      topics: topics
-    } = state
-
-    table_name = topics_partitions_metadata_table(client_name)
-
-    any_new? =
-      for topic <- resp.topics,
-          partition <- topic.partitions,
-          topic.error_code == 0,
-          reduce: false do
-        acc ->
-          case :ets.lookup(table_name, {topic.name, partition.partition_index}) do
-            [] ->
-              config_topic = Enum.find(topics, %{}, &(&1.name == topic.name))
-
-              :ets.insert(table_name, {
-                {topic.name, partition.partition_index},
-                partition.leader_id,
-                config_topic[:default_producer] || apply(client_name, :get_default_producer, []),
-                # batcher_id will be defined on producer
-                nil
-              })
-
-              true
-
-            [{key, current_broker_id, _default_producer, _batcher_id}] ->
-              if current_broker_id != partition.leader_id do
-                :ets.update_element(
-                  table_name,
-                  key,
-                  {2, partition.leader_id}
-                )
-
-                true
-              else
-                acc
-              end
-          end
-      end
-
-    if any_new? do
-      :ok =
-        if ConnController.disabled_feature?(client_name, :producer),
-          do: :ok,
-          else: handle_producers(state)
-
-      :ok =
-        if ConnController.disabled_feature?(client_name, :txn_producer),
-          do: :ok,
-          else: handle_txn_producers(state)
-    end
-
-    :ok
-  end
-
-  defp setup_partitioners(%__MODULE__{} = state, resp) do
-    %__MODULE__{
-      client_name: client_name,
-      topics: topics
-    } = state
-
-    table_name = partitioner_metadata_table(client_name)
-
-    for topic <- resp.topics, topic.error_code == 0 do
-      config_topic = Enum.find(topics, %{}, &(&1.name == topic.name))
-
-      %{partition_index: max_partition} = Enum.max_by(topic.partitions, & &1.partition_index)
-
-      data = %{
-        max_partition: max_partition,
-        default_partitioner:
-          config_topic[:default_partitioner] || client_name.get_default_partitioner()
-      }
-
-      case :ets.lookup(table_name, topic.name) do
-        [{_key, ^data}] -> :noop
-        _ -> :ets.insert(table_name, {topic.name, data})
-      end
-    end
-
-    :ok
-  end
-
-  defp topics_partitions_metadata_table(client_name),
-    do: :"topics_partitions_metadata.#{client_name}"
-
-  defp partitioner_metadata_table(client_name),
-    do: :"partitioner_metadata.#{client_name}"
 end

@@ -70,11 +70,11 @@ defmodule Klife.Consumer.Fetcher do
     do: via_tuple({__MODULE__, client, fetcher_name})
 
   def fetch(tpo_list, client, opts \\ []) do
-    fetcher = opts[:fetcher] || client.default_fetcher()
-    iso_level = opts[:isolation_level] || :read_committed
+    _fetcher = opts[:fetcher] || client.default_fetcher()
+    _iso_level = opts[:isolation_level] || :read_committed
     max_bytes = opts[:max_bytes] || 100_000
 
-    reqs =
+    _reqs =
       Enum.map(tpo_list, fn {t, p, o} ->
         %Batcher.BatchItem{
           # TODO: Handle topic id conversion

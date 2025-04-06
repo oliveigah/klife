@@ -9,8 +9,9 @@ defmodule Klife do
   alias Klife.Record
   alias Klife.Producer
   alias Klife.TxnProducerPool
-  alias Klife.Producer.Controller, as: PController
   alias Klife.Connection.Controller, as: ConnController
+
+  alias Klife.MetadataCache
 
   @produce_opts [
     producer: [
@@ -135,10 +136,11 @@ defmodule Klife do
   defp maybe_add_partition(%Record{} = record, client, opts) do
     case record do
       %Record{partition: nil, topic: topic} ->
-        %{
-          default_partitioner: default_partitioner_mod,
-          max_partition: max_partition
-        } = PController.get_partitioner_data(client, topic)
+        {:ok,
+         %{
+           default_partitioner: default_partitioner_mod,
+           max_partition: max_partition
+         }} = MetadataCache.get_metadata(client, topic, 0)
 
         partitioner_mod = Keyword.get(opts, :partitioner, default_partitioner_mod)
 

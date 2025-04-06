@@ -64,15 +64,49 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      :persistent_term.put(:known, false)
+      :ets.new(:tuple_table, [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true
+      ])
+
+      :ets.new(:map_table, [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true
+      ])
+
+      Enum.each(1..10000, fn i ->
+        map_item = %{
+          a: :rand.bytes(100),
+          b: :rand.bytes(200),
+          c: :rand.bytes(300),
+          d: :rand.bytes(400),
+          e: :rand.bytes(500)
+        }
+
+        tuple_item = {
+          i,
+          map_item.a,
+          map_item.b,
+          map_item.c,
+          map_item.d,
+          map_item.e
+        }
+
+        true = :ets.insert(:tuple_table, tuple_item)
+        true = :ets.insert(:map_table, {i, map_item})
+      end)
 
       Benchee.run(
         %{
-          "default" => fn ->
-            Enum.each(1..1000, fn _i -> :persistent_term.get(:unkown, false) end)
+          "tuple" => fn ->
+            Enum.each(1..10000, fn i -> :ets.lookup_element(:tuple_table, i, 4) end)
           end,
-          "no default" => fn ->
-            Enum.each(1..1000, fn _i -> :persistent_term.get(:known, false) end)
+          "map" => fn ->
+            Enum.each(1..10000, fn i -> :ets.lookup_element(:map_table, i, 2).b end)
           end
         },
         time: 10,

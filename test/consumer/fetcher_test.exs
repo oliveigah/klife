@@ -3,7 +3,8 @@ defmodule Klife.Consumer.FetcherTest do
 
   alias Klife.Consumer.Fetcher.Batcher
 
-  alias Klife.Producer.Controller, as: PController
+  alias Klife.MetadataCache
+
   alias Klife.Record
 
   test "basic test" do
@@ -18,7 +19,7 @@ defmodule Klife.Consumer.FetcherTest do
       partition: partition
     }
 
-    assert {:ok, %Record{offset: offset1} = resp_rec} = MyClient.produce(record)
+    assert {:ok, %Record{offset: offset1}} = MyClient.produce(record)
 
     record = %Record{
       value: "normal val",
@@ -28,7 +29,7 @@ defmodule Klife.Consumer.FetcherTest do
       partition: partition
     }
 
-    assert {:ok, %Record{offset: offset2} = resp_rec} = MyClient.produce(record)
+    assert {:ok, %Record{offset: _offset2}} = MyClient.produce(record)
 
     record = %Record{
       value: "normal val",
@@ -38,7 +39,7 @@ defmodule Klife.Consumer.FetcherTest do
       partition: partition
     }
 
-    assert {:ok, %Record{offset: offset3} = resp_rec} = MyClient.produce(record)
+    assert {:ok, %Record{offset: offset3}} = MyClient.produce(record)
 
     record = %Record{
       value: "normal val",
@@ -48,9 +49,9 @@ defmodule Klife.Consumer.FetcherTest do
       partition: partition
     }
 
-    assert {:ok, %Record{offset: offset4} = resp_rec} = MyClient.produce(record)
+    assert {:ok, %Record{offset: _offset4}} = MyClient.produce(record)
 
-    req1 = %Batcher.BatchItem{
+    _req1 = %Batcher.BatchItem{
       topic_name: topic,
       partition: partition,
       offset_to_fetch: offset1,
@@ -58,7 +59,7 @@ defmodule Klife.Consumer.FetcherTest do
       __callback: self()
     }
 
-    req2 = %Batcher.BatchItem{
+    _req2 = %Batcher.BatchItem{
       topic_name: topic,
       partition: partition,
       offset_to_fetch: offset3,
@@ -66,7 +67,8 @@ defmodule Klife.Consumer.FetcherTest do
       __callback: self()
     }
 
-    broker = PController.get_broker_id(MyClient, topic, partition)
+    broker =
+      MetadataCache.get_metadata_attribute(MyClient, topic, partition, :leader_id)
 
     MyClient.transaction(fn ->
       record = %Record{
@@ -77,11 +79,11 @@ defmodule Klife.Consumer.FetcherTest do
         partition: partition
       }
 
-      {:ok, %{offset: txn_offset1}} = MyClient.produce(record)
+      {:ok, %{offset: _txn_offset1}} = MyClient.produce(record)
       {:ok, %{offset: txn_offset2}} = MyClient.produce(record)
-      {:ok, %{offset: txn_offset3}} = MyClient.produce(record)
+      {:ok, %{offset: _txn_offset3}} = MyClient.produce(record)
 
-      other_rec =
+      _other_rec =
         Task.async(fn ->
           record = %Record{
             value: "other normal record",
@@ -93,7 +95,6 @@ defmodule Klife.Consumer.FetcherTest do
           rec
         end)
         |> Task.await()
-        |> IO.inspect()
 
       req =
         %Batcher.BatchItem{
@@ -103,14 +104,11 @@ defmodule Klife.Consumer.FetcherTest do
           max_bytes: 1,
           __callback: self()
         }
-        |> IO.inspect()
 
       :ok =
         Batcher.request_data([req], MyClient, :klife_default_fetcher, broker, 0, :read_committed)
 
-      assert_receive {:fetcher_response, {:ok, data}}, 1000
-
-      IO.inspect(data)
+      assert_receive {:fetcher_response, {:ok, _data}}, 1000
     end)
   end
 end

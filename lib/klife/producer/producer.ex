@@ -9,7 +9,6 @@ defmodule Klife.Producer do
   alias Klife.Record
 
   alias Klife.Producer.Batcher
-  alias Klife.Producer.Controller, as: ProducerController
   alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
   alias Klife.Connection.MessageVersions, as: MV
@@ -17,6 +16,8 @@ defmodule Klife.Producer do
   alias Klife.Helpers
 
   alias KlifeProtocol.Messages, as: M
+
+  alias Klife.MetadataCache
 
   @producer_options [
     name: [
@@ -503,16 +504,16 @@ defmodule Klife.Producer do
     records
     |> Enum.group_by(fn r -> {r.topic, r.partition} end)
     |> Enum.map(fn {{t, p}, recs} ->
-      %{
-        broker_id: broker_id,
-        producer_name: default_producer,
-        batcher_id: default_batcher_id
-      } = ProducerController.get_topics_partitions_metadata(client_name, t, p)
+      {:ok,
+       %{
+         leader_id: broker_id,
+         default_producer: default_producer
+       }} = MetadataCache.get_metadata(client_name, t, p)
 
       new_key =
         if opt_producer,
           do: {broker_id, opt_producer, get_batcher_id(client_name, opt_producer, t, p)},
-          else: {broker_id, default_producer, default_batcher_id}
+          else: {broker_id, default_producer, get_batcher_id(client_name, default_producer, t, p)}
 
       {new_key, recs}
     end)
@@ -554,7 +555,7 @@ defmodule Klife.Producer do
     known_brokers = ConnController.get_known_brokers(state.client_name)
     batchers_per_broker = state.batchers_count
     :ok = init_batchers(state, known_brokers, batchers_per_broker)
-    :ok = update_topic_partition_metadata(state, batchers_per_broker)
+    :ok = setup_batcher_ids(state, batchers_per_broker)
 
     :ok
   end
@@ -588,36 +589,32 @@ defmodule Klife.Producer do
     ]
   end
 
-  defp update_topic_partition_metadata(%__MODULE__{} = state, batchers_per_broker) do
+  defp setup_batcher_ids(%__MODULE__{} = state, batchers_per_broker) do
     %__MODULE__{
       client_name: client_name,
       name: producer_name
     } = state
 
     client_name
-    |> ProducerController.get_all_topics_partitions_metadata()
+    |> MetadataCache.get_all_metadata()
     |> Enum.group_by(& &1.leader_id)
     |> Enum.map(fn {_broker_id, topics_list} ->
       topics_list
       |> Enum.with_index()
       |> Enum.map(fn {val, idx} ->
-        dipsatcher_id =
+        batcher_id =
           if batchers_per_broker > 1, do: rem(idx, batchers_per_broker), else: 0
 
-        Map.put(val, :batcher_id, dipsatcher_id)
+        Map.put(val, :batcher_id, batcher_id)
       end)
     end)
     |> List.flatten()
-    |> Enum.each(fn %{topic_name: t_name, partition_idx: p_idx, batcher_id: b_id} ->
+    |> Enum.each(fn %{key: {tname, partition}, batcher_id: b_id} ->
       # Used when a record is produced by a non default producer
       # in this case the proper batcher_id won't be present at
       # main metadata ets table, therefore we need a way to
       # find out it's value.
-      put_batcher_id(client_name, producer_name, t_name, p_idx, b_id)
-
-      if ProducerController.get_default_producer(client_name, t_name, p_idx) == producer_name do
-        ProducerController.update_batcher_id(client_name, t_name, p_idx, b_id)
-      end
+      put_batcher_id(client_name, producer_name, tname, partition, b_id)
     end)
   end
 
@@ -628,7 +625,7 @@ defmodule Klife.Producer do
     )
   end
 
-  defp get_batcher_id(client_name, producer_name, topic, partition) do
+  def get_batcher_id(client_name, producer_name, topic, partition) do
     :persistent_term.get({__MODULE__, client_name, producer_name, topic, partition})
   end
 end

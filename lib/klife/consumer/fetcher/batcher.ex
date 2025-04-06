@@ -4,11 +4,8 @@ defmodule Klife.Consumer.Fetcher.Batcher do
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   alias Klife.GenBatcher
-  alias Klife.Connection.Broker
 
   alias Klife.Consumer.Fetcher.Dispatcher
-
-  alias KlifeProtocol.Messages, as: M
 
   defstruct [
     :broker_id,

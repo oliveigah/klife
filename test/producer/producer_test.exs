@@ -5,8 +5,11 @@ defmodule Klife.ProducerTest do
 
   alias Klife.Record
 
-  alias Klife.Producer.Controller, as: ProdController
   alias Klife.TestUtils
+
+  alias Klife.MetadataCache
+
+  alias Klife.Producer
 
   doctest Klife.TxnProducerPool
 
@@ -246,15 +249,13 @@ defmodule Klife.ProducerTest do
 
     assert :ok = TestUtils.assert_offset(MyClient, record, resp_rec.offset)
 
-    %{broker_id: old_broker_id} =
-      ProdController.get_topics_partitions_metadata(MyClient, topic, 1)
+    old_broker_id = MetadataCache.get_metadata_attribute(MyClient, topic, 1, :leader_id)
 
     {:ok, service_name} = TestUtils.stop_broker(MyClient, old_broker_id)
 
     Process.sleep(50)
 
-    %{broker_id: new_broker_id} =
-      ProdController.get_topics_partitions_metadata(MyClient, topic, 1)
+    new_broker_id = MetadataCache.get_metadata_attribute(MyClient, topic, 1, :leader_id)
 
     assert new_broker_id != old_broker_id
 
@@ -663,11 +664,24 @@ defmodule Klife.ProducerTest do
       "test_no_batch_topic" => [t1_data | _],
       "test_no_batch_topic_2" => [t2_data | _]
     } =
-      ProdController.get_all_topics_partitions_metadata(client_name)
+      MetadataCache.get_all_metadata(client_name)
       |> Enum.filter(fn data ->
         data.topic_name in ["test_no_batch_topic", "test_no_batch_topic_2"]
       end)
-      |> Enum.group_by(fn data -> {data.leader_id, data.batcher_id} end)
+      |> Enum.map(fn data ->
+        batcher_id =
+          Producer.get_batcher_id(
+            client_name,
+            data.default_producer,
+            data.topic_name,
+            data.partition_idx
+          )
+
+        Map.put(data, :batcher_id, batcher_id)
+      end)
+      |> Enum.group_by(fn data ->
+        {data.leader_id, data.batcher_id}
+      end)
       |> Enum.take(1)
       |> List.first()
       |> elem(1)

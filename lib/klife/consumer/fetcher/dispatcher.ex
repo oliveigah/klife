@@ -73,7 +73,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         %__MODULE__{} = state
       ) do
     {:ok, %{content: %{responses: resp_list}}} =
-      msg_mod.deserialize_response(binary_resp, msg_version) |> IO.inspect()
+      msg_mod.deserialize_response(binary_resp, msg_version)
 
     result =
       for %{topic: t, partitions: p_list} <- resp_list,
@@ -171,7 +171,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       end
 
     parsed_data =
-      Enum.group_by(batch.data, fn {{t, _p}, _v} -> t end, fn {{_t, p}, v} -> v end)
+      Enum.group_by(batch.data, fn {{t, _p}, _v} -> t end, fn {{_t, _p}, v} -> v end)
 
     %{
       replica_id: -1,

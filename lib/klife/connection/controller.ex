@@ -133,6 +133,7 @@ defmodule Klife.Connection.Controller do
   end
 
   @impl true
+
   def handle_info(:init_bootstrap_conn, %__MODULE__{} = state) do
     conn =
       connect_bootstrap_server(

@@ -23,9 +23,10 @@ defmodule Klife.Testing do
   [Mox](https://github.com/dashbitco/mox).
   """
 
-  alias Klife.Producer.Controller, as: PController
   alias Klife.Connection.Broker, as: Broker
   alias KlifeProtocol.Messages, as: M
+
+  alias Klife.MetadataCache
 
   # TODO: Rethink all_produced when consumer system is functional
   @doc """
@@ -54,7 +55,7 @@ defmodule Klife.Testing do
   def all_produced(client, topic, search_opts) do
     metas =
       client
-      |> PController.get_all_topics_partitions_metadata()
+      |> MetadataCache.get_all_metadata()
       |> Enum.filter(fn meta -> meta.topic_name == topic end)
 
     metas
@@ -70,7 +71,7 @@ defmodule Klife.Testing do
   all te current latests offsets and stores it to only search after them.
   """
   def setup(client) do
-    metas = PController.get_all_topics_partitions_metadata(client)
+    metas = MetadataCache.get_all_metadata(client)
 
     :ok = warmup_topics(metas, client)
 
@@ -90,11 +91,13 @@ defmodule Klife.Testing do
   defp warmup_topics(metas, client) do
     recs =
       Enum.map(metas, fn meta ->
-        if String.starts_with?(meta.topic_name, "__") do
+        {tname, _pindex} = meta.key
+
+        if String.starts_with?(tname, "__") do
           nil
         else
           %Klife.Record{
-            topic: meta.topic_name,
+            topic: tname,
             value: "klife_warmup_txn",
             partition: meta.partition_idx
           }

@@ -27,7 +27,11 @@ defmodule Klife.TestUtils do
   end
 
   defp get_service_name(client_name, broker_id) do
-    content = %{include_client_authorized_operations: true, topics: []}
+    content = %{
+      include_topic_authorized_operations: true,
+      topics: [],
+      allow_auto_topic_creation: false
+    }
 
     {:ok, resp} = Broker.send_message(M.Metadata, client_name, :any, content)
 
@@ -171,7 +175,7 @@ defmodule Klife.TestUtils do
       ]
     }
 
-    broker = Klife.Producer.Controller.get_broker_id(client_name, topic, partition)
+    broker = Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id)
 
     {:ok, %{content: content}} =
       Klife.Connection.Broker.send_message(
@@ -210,7 +214,7 @@ defmodule Klife.TestUtils do
       ]
     }
 
-    broker = Klife.Producer.Controller.get_broker_id(client_name, topic, partition)
+    broker = Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id)
 
     {:ok, %{content: content}} =
       Klife.Connection.Broker.send_message(
@@ -226,7 +230,7 @@ defmodule Klife.TestUtils do
   end
 
   def get_latest_offset(client, topic, partition, base_ts) do
-    broker = Klife.Producer.Controller.get_broker_id(client, topic, partition)
+    broker = Klife.MetadataCache.get_metadata_attribute(client, topic, partition, :leader_id)
 
     content = %{
       replica_id: -1,
@@ -319,7 +323,7 @@ defmodule Klife.TestUtils do
       ]
     }
 
-    broker = Klife.Producer.Controller.get_broker_id(client_name, topic, partition)
+    broker = Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id)
 
     {:ok, %{content: content}} =
       Klife.Connection.Broker.send_message(
