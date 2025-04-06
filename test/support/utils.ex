@@ -351,4 +351,21 @@ defmodule Klife.TestUtils do
         nil
     end
   end
+
+  def assert_records(response_record, expected_record) do
+    fields_to_compare = [
+      :key,
+      :topic,
+      :partition,
+      :offset,
+      :value,
+      :headers
+    ]
+
+    Enum.each(fields_to_compare, fn field ->
+      resp_val = Map.fetch!(response_record, field)
+      exp_val = Map.fetch!(expected_record, field)
+      assert {field, resp_val} == {field, exp_val}
+    end)
+  end
 end

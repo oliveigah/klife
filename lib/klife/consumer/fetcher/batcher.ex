@@ -126,8 +126,8 @@ defmodule Klife.Consumer.Fetcher.Batcher do
   end
 
   @impl true
-  def handle_insert_response(_items, %__MODULE__{} = _state) do
-    :ok
+  def handle_insert_response(_items, %__MODULE__{} = state) do
+    {:ok, state.fetcher_config.request_timeout_ms}
   end
 
   @impl true

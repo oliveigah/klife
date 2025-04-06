@@ -25,7 +25,7 @@ defmodule Klife.Record do
     :offset,
     :error_code,
     :value,
-    :headers,
+    {:headers, []},
     :__batch_index,
     :__estimated_size,
     :__callback

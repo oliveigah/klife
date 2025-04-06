@@ -6,6 +6,8 @@ defmodule Klife.Consumer.Fetcher do
   alias Klife.Connection.Controller, as: ConnController
   alias Klife.Consumer.Fetcher.Batcher
 
+  alias Klife.MetadataCache
+
   @fetcher_opts [
     name: [
       type: {:or, [:atom, :string]},
@@ -70,24 +72,69 @@ defmodule Klife.Consumer.Fetcher do
     do: via_tuple({__MODULE__, client, fetcher_name})
 
   def fetch(tpo_list, client, opts \\ []) do
-    _fetcher = opts[:fetcher] || client.default_fetcher()
-    _iso_level = opts[:isolation_level] || :read_committed
+    fetcher = opts[:fetcher] || client.get_default_fetcher()
+    iso_level = opts[:isolation_level] || :read_committed
     max_bytes = opts[:max_bytes] || 100_000
 
-    _reqs =
+    timeout =
       Enum.map(tpo_list, fn {t, p, o} ->
-        %Batcher.BatchItem{
-          # TODO: Handle topic id conversion
-          topic_id: t,
-          topic_name: t,
-          partition: p,
-          offset_to_fetch: o,
-          __callback: self(),
-          max_bytes: max_bytes
-        }
+        {:ok,
+         %{
+           topic_id: t_id,
+           leader_id: broker
+         }} = MetadataCache.get_metadata(client, t, p)
+
+        batcher_id = get_batcher_id(client, fetcher, t, p)
+
+        {{broker, batcher_id},
+         %Batcher.BatchItem{
+           topic_id: t_id,
+           topic_name: t,
+           partition: p,
+           offset_to_fetch: o,
+           __callback: self(),
+           max_bytes: max_bytes
+         }}
+      end)
+      |> Enum.group_by(fn {key, _item} -> key end, fn {_, val} -> val end)
+      |> Enum.reduce(0, fn {{broker, batcher_id}, items}, acc ->
+        {:ok, timeout} =
+          Batcher.request_data(items, client, fetcher, broker, batcher_id, iso_level)
+
+        timeout
       end)
 
-    # Batcher.request_data(reqs, client, fetcher, )
+    wait_fetch_response(timeout, length(tpo_list))
+  end
+
+  defp wait_fetch_response(timeout_ms, max_resps) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_fetch_response(deadline, max_resps, 0, %{})
+  end
+
+  defp do_wait_fetch_response(_deadline, max_resps, max_resps, resp_acc), do: resp_acc
+
+  defp do_wait_fetch_response(deadline, max_resps, counter, resp_acc) do
+    now = System.monotonic_time(:millisecond)
+
+    receive do
+      {:klife_fetch_response, {t, p, o}, resp} ->
+        new_resp_acc = Map.put(resp_acc, {t, p, o}, resp)
+        new_counter = counter + 1
+        do_wait_fetch_response(deadline, max_resps, new_counter, new_resp_acc)
+    after
+      # This should never happen, because the Dispacher already
+      # tracks requests timeouts and send it as response
+      deadline - now ->
+        raise "Unexpected timeout while waiting for fetch response"
+    end
+  end
+
+  def group_by_batcher(meta_and_batch_items, client_name, fetcher) do
+    meta_and_batch_items
+    |> Enum.group_by(fn {meta, %Batcher.BatchItem{} = item} ->
+      nil
+    end)
   end
 
   @impl true
@@ -108,7 +155,11 @@ defmodule Klife.Consumer.Fetcher do
 
   def handle_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.client_name)
+    :ok = init_batchers(state, known_brokers)
+    :ok = setup_batcher_ids(state)
+  end
 
+  defp init_batchers(%__MODULE__{} = state, known_brokers) do
     for broker_id <- known_brokers,
         batcher_id <- 0..(state.batchers_count - 1),
         iso_level <- [:read_committed, :read_uncommitted] do
@@ -128,6 +179,42 @@ defmodule Klife.Consumer.Fetcher do
     end
 
     :ok
+  end
+
+  defp setup_batcher_ids(%__MODULE__{} = state) do
+    %__MODULE__{
+      client_name: client_name,
+      name: fetcher_name
+    } = state
+
+    client_name
+    |> MetadataCache.get_all_metadata()
+    |> Enum.group_by(& &1.leader_id)
+    |> Enum.map(fn {_broker_id, topics_list} ->
+      topics_list
+      |> Enum.with_index()
+      |> Enum.map(fn {val, idx} ->
+        batcher_id =
+          if state.batchers_count > 1, do: rem(idx, state.batchers_count), else: 0
+
+        Map.put(val, :batcher_id, batcher_id)
+      end)
+    end)
+    |> List.flatten()
+    |> Enum.each(fn %{topic_name: t_name, partition_idx: partition, batcher_id: b_id} ->
+      put_batcher_id(client_name, fetcher_name, t_name, partition, b_id)
+    end)
+  end
+
+  defp put_batcher_id(client_name, fetcher_name, topic, partition, batcher_id) do
+    :persistent_term.put(
+      {__MODULE__, client_name, fetcher_name, topic, partition},
+      batcher_id
+    )
+  end
+
+  def get_batcher_id(client_name, fetcher_name, topic, partition) do
+    :persistent_term.get({__MODULE__, client_name, fetcher_name, topic, partition})
   end
 
   defp build_batcher_config(%__MODULE__{} = state) do

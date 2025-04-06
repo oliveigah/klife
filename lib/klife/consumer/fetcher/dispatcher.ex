@@ -106,9 +106,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       %Batcher.Batch{} = batch ->
         resp =
           batch.data
-          |> Enum.map(fn {{t, p}, _item} ->
-            {{t, p}, {:error, :timeout}}
-          end)
+          |> Enum.map(fn {{t, p}, _item} -> {{t, p}, {:error, :timeout}} end)
           |> Map.new()
 
         {:noreply, complete_batch(state, batch, resp)}
@@ -118,8 +116,17 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
   defp complete_batch(%__MODULE__{} = state, %Batcher.Batch{} = batch, resp_map) do
     Enum.each(batch.data, fn {{t, p}, %Batcher.BatchItem{} = item} ->
       case Map.get(resp_map, {t, p}) do
-        nil -> send(item.__callback, {:fetcher_response, {:error, :unkown_error}})
-        resp -> send(item.__callback, {:fetcher_response, resp})
+        nil ->
+          send(
+            item.__callback,
+            {:klife_fetch_response, {t, p, item.offset_to_fetch}, {:error, :unkown_error}}
+          )
+
+        resp ->
+          send(
+            item.__callback,
+            {:klife_fetch_response, {t, p, item.offset_to_fetch}, resp}
+          )
       end
     end)
 

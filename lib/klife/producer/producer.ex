@@ -610,10 +610,6 @@ defmodule Klife.Producer do
     end)
     |> List.flatten()
     |> Enum.each(fn %{key: {tname, partition}, batcher_id: b_id} ->
-      # Used when a record is produced by a non default producer
-      # in this case the proper batcher_id won't be present at
-      # main metadata ets table, therefore we need a way to
-      # find out it's value.
       put_batcher_id(client_name, producer_name, tname, partition, b_id)
     end)
   end
