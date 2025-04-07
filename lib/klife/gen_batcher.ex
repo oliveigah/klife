@@ -154,7 +154,7 @@ defmodule Klife.GenBatcher do
 
     new_state =
       if new_state.next_dispatch_msg_ref == nil,
-        do: schedule_dispatch_if_earlier(new_state, 1),
+        do: schedule_dispatch_if_earlier(new_state, 0),
         else: new_state
 
     user_resp = mod.handle_insert_response(updated_items, new_state.user_state)
@@ -181,7 +181,7 @@ defmodule Klife.GenBatcher do
 
     cond do
       not in_flight_available? ->
-        schedule_dispatch_if_earlier(new_state, 10)
+        schedule_dispatch_if_earlier(new_state, 1)
 
       has_batch_on_queue? ->
         new_state =
