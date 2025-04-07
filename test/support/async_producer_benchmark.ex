@@ -2,8 +2,6 @@ if Mix.env() in [:dev] do
   defmodule Klife.TestUtils.AsyncProducerBenchmark do
     require Logger
 
-    alias Klife.Producer.Controller, as: PController
-
     @number_of_records 5_000_000
 
     def run(clients, parallel) do
@@ -122,7 +120,7 @@ if Mix.env() in [:dev] do
     defp get_total_offsets(topics), do: get_offset_by_topic(topics) |> Map.values() |> Enum.sum()
 
     defp get_offset_by_topic(topics) do
-      metas = PController.get_all_topics_partitions_metadata(MyClient)
+      metas = Klife.MetadataCache.get_all_metadata(MyClient)
 
       metas
       |> Enum.group_by(fn m -> m.leader_id end)

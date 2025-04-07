@@ -3,8 +3,6 @@ defmodule Klife.Consumer.FetcherTest do
 
   alias Klife.Consumer.Fetcher
 
-  alias Klife.MetadataCache
-
   alias Klife.Record
 
   alias Klife.TestUtils

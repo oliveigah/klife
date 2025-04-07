@@ -59,6 +59,10 @@ config :klife, MyClient,
       client_id: "my_custom_client_id",
       linger_ms: 1_500,
       compression_type: :snappy
+    ],
+    [
+      name: :async_test_producer,
+      batch_size_bytes: 5000
     ]
   ],
   topics: [
@@ -138,7 +142,19 @@ config :klife, MyClient,
     ],
     [name: "my_topic_1"],
     [name: "my_topic_2"],
-    [name: "my_topic_3"]
+    [name: "my_topic_3"],
+    [
+      name: "test_async_topic_0",
+      default_producer: :async_test_producer
+    ],
+    [
+      name: "test_async_topic_1",
+      default_producer: :async_test_producer
+    ],
+    [
+      name: "test_async_topic_2",
+      default_producer: :async_test_producer
+    ]
   ]
 
 # consumers: [

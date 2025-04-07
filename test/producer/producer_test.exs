@@ -657,6 +657,40 @@ defmodule Klife.ProducerTest do
     assert length(record_batch) == 1
   end
 
+  test "produce message async no batching - no cb" do
+    tasks =
+      Enum.map(1..3, fn _ ->
+        Task.async(fn ->
+          recs =
+            Enum.map(1..10, fn _i ->
+              %Record{
+                value: :rand.bytes(2000),
+                key: :rand.bytes(10),
+                headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+                topic:
+                  Enum.random(["test_async_topic_0", "test_async_topic_1", "test_async_topic_2"]),
+                partition: Enum.random(0..4)
+              }
+            end)
+
+          Enum.each(recs, fn rec ->
+            assert :ok = MyClient.produce_async(rec)
+          end)
+
+          recs
+        end)
+      end)
+
+    results = Task.await_many(tasks)
+
+    Process.sleep(1000)
+
+    for recs <- results,
+        rec <- recs do
+      assert [_rec] = Klife.Testing.all_produced(MyClient, rec.topic, value: rec.value)
+    end
+  end
+
   test "producer epoch bump" do
     client_name = MyClient
 

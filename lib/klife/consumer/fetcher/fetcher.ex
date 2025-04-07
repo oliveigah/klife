@@ -97,7 +97,7 @@ defmodule Klife.Consumer.Fetcher do
          }}
       end)
       |> Enum.group_by(fn {key, _item} -> key end, fn {_, val} -> val end)
-      |> Enum.reduce(0, fn {{broker, batcher_id}, items}, acc ->
+      |> Enum.reduce(0, fn {{broker, batcher_id}, items}, _acc ->
         {:ok, timeout} =
           Batcher.request_data(items, client, fetcher, broker, batcher_id, iso_level)
 
@@ -128,13 +128,6 @@ defmodule Klife.Consumer.Fetcher do
       deadline - now ->
         raise "Unexpected timeout while waiting for fetch response"
     end
-  end
-
-  def group_by_batcher(meta_and_batch_items, client_name, fetcher) do
-    meta_and_batch_items
-    |> Enum.group_by(fn {meta, %Batcher.BatchItem{} = item} ->
-      nil
-    end)
   end
 
   @impl true
@@ -221,7 +214,7 @@ defmodule Klife.Consumer.Fetcher do
     [
       {:batch_wait_time_ms, state.linger_ms},
       {:max_in_flight, state.max_in_flight_requests},
-      {:batch_max_size, state.max_bytes_per_request}
+      {:max_batch_size, state.max_bytes_per_request}
     ]
   end
 end

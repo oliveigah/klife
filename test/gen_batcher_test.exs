@@ -25,7 +25,7 @@ defmodule Klife.GenBatcherTest do
     end
 
     def insert_values(pid, items) do
-      Klife.GenBatcher.insert_call(pid, __MODULE__, items)
+      Klife.GenBatcher.insert_call(pid, items)
     end
 
     @impl true

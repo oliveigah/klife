@@ -584,8 +584,7 @@ defmodule Klife.Producer do
     [
       {:batch_wait_time_ms, state.linger_ms},
       {:max_in_flight, state.max_in_flight_requests},
-      {:batch_max_size, state.batch_size_bytes},
-      {:batch_max_count, :infinity}
+      {:max_batch_size, state.batch_size_bytes}
     ]
   end
 
