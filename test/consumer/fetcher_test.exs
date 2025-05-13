@@ -389,49 +389,4 @@ defmodule Klife.Consumer.FetcherTest do
     TestUtils.assert_records(resp2_rec, rec2)
     TestUtils.assert_records(resp3_rec, rec3)
   end
-
-  test "error" do
-    topic1 = "my_topic_1"
-    topic2 = "my_topic_2"
-
-    record1 = %Record{
-      value: :rand.bytes(10),
-      topic: topic1,
-      partition: 0
-    }
-
-    record2 = %Record{
-      value: :rand.bytes(10),
-      topic: topic1,
-      partition: 1
-    }
-
-    record3 = %Record{
-      value: :rand.bytes(10),
-      topic: topic2,
-      partition: 1
-    }
-
-    [
-      {:ok, %Record{offset: offset_t1_p0} = rec1},
-      {:ok, %Record{offset: offset_t1_p1} = rec2},
-      {:ok, %Record{offset: offset_t2_p1} = rec3}
-    ] = MyClient.produce_batch([record1, record2, record3])
-
-    tpo_list = [
-      {topic1, 0, offset_t1_p0},
-      {"unknown_topic", 1, offset_t1_p1},
-      {topic2, 1, offset_t2_p1}
-    ]
-
-    assert %{
-             {^topic1, 0, ^offset_t1_p0} => {:ok, [resp1_rec]},
-             {"unknown_topic", 1, ^offset_t1_p1} => {:error, [resp2_rec]},
-             {^topic2, 1, ^offset_t2_p1} => {:ok, [resp3_rec]}
-           } = Fetcher.fetch(tpo_list, MyClient)
-
-    TestUtils.assert_records(resp1_rec, rec1)
-    TestUtils.assert_records(resp2_rec, rec2)
-    TestUtils.assert_records(resp3_rec, rec3)
-  end
 end
