@@ -75,18 +75,22 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
     {:ok, %{content: %{responses: resp_list}}} =
       msg_mod.deserialize_response(binary_resp, msg_version)
 
+    req_data = state.requests[req_ref].data
+
     result =
       for %{topic: t, partitions: p_list} <- resp_list,
           %{error_code: ec, partition_index: p, records: rec_batch_list} <- p_list,
           into: %{} do
         key = {t, p}
 
+        %Batcher.BatchItem{offset_to_fetch: requested_base_offset} = req_data[key]
+
         case ec do
           0 ->
             val =
-              Enum.flat_map(rec_batch_list, fn rec_batch ->
-                Record.parse_from_protocol(t, p, rec_batch)
-              end)
+              rec_batch_list
+              |> Enum.flat_map(fn rec_batch -> Record.parse_from_protocol(t, p, rec_batch) end)
+              |> Enum.reject(fn %Record{} = r -> r.offset < requested_base_offset end)
 
             {key, {:ok, val}}
 

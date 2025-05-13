@@ -137,7 +137,7 @@ defmodule Klife.Consumer.Fetcher do
     state =
       Map.merge(
         %__MODULE__{
-          client_id: "klife_fetcher.{args_map.client_name}.{args_map.name}"
+          client_id: "klife_fetcher.#{args_map.client_name}.#{args_map.name}"
         },
         args_map
       )
