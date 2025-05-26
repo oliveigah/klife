@@ -32,6 +32,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def init(args_map) do
+    IO.inspect("INITING CONSUMER FOR #{args_map.topic_id} #{args_map.partition_idx}")
     cg_conf = %ConsumerGroup{client_name: client_name} = args_map.consumer_group_config
     topic_name = MetadataCache.get_topic_name_by_id(client_name, args_map.topic_id)
 
@@ -55,7 +56,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     {:ok, state}
   end
 
-  def revoke_assignment(cg_mod, topic_id, partition) do
+  def revoke_assignment_async(cg_mod, topic_id, partition) do
     cg_mod
     |> get_process_name(topic_id, partition)
     |> GenServer.cast(:assignment_revoked)
@@ -73,6 +74,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     new_state =
       if polling_allowed? do
         IO.inspect("Pooling from topic #{state.topic_name} partition #{state.partition_idx}...")
+
+        if System.get_env("TEST_TIMEOUT") == "true" do
+          Process.sleep(:timer.seconds(60))
+        end
+
         state
       else
         IO.inspect(

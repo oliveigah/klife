@@ -67,6 +67,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.from_struct()
       |> Map.merge(base_validated_args)
       |> Map.put(:mod, cg_mod)
+      |> Map.put(:member_id, UUID.uuid4())
 
     GenServer.start_link(cg_mod, validated_args, name: get_process_name(cg_mod))
   end
@@ -81,6 +82,8 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def init(mod, args_map) do
+    Process.flag(:trap_exit, true)
+
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
 
     :ets.new(get_acked_topic_partitions_table(mod), [
@@ -102,7 +105,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         instance_id: args_map.instance_id,
         rebalance_timeout_ms: args_map.rebalance_timeout_ms,
         client_name: mod.klife_client(),
-        member_id: UUID.uuid4(),
+        member_id: args_map.member_id,
         epoch: 0,
         heartbeat_interval_ms: 1000,
         assigned_topic_partitions: [],
@@ -208,12 +211,13 @@ defmodule Klife.Consumer.ConsumerGroup do
         %__MODULE__{state | heartbeat_interval_ms: 5}
 
       {:ok, %{content: %{error_code: 0} = resp}} ->
-        new_state = %__MODULE__{
-          state
-          | assigned_topic_partitions: resp.assignment.topic_partitions,
-            heartbeat_interval_ms: resp.heartbeat_interval_ms,
-            epoch: resp.member_epoch
-        }
+        new_state =
+          %__MODULE__{
+            state
+            | assigned_topic_partitions: get_in(resp, [:assignment, :topic_partitions]) || [],
+              heartbeat_interval_ms: resp.heartbeat_interval_ms,
+              epoch: resp.member_epoch
+          }
 
         Enum.each(tp_list, fn {t_id, p} ->
           true = ack_topic_partition(new_state.mod, t_id, p)
@@ -222,13 +226,30 @@ defmodule Klife.Consumer.ConsumerGroup do
         new_state
 
       {:ok, %{content: %{error_code: ec, error_message: em}}} ->
-        # TODO: How to react to specific errors?
         Logger.error(
-          "Heartbeat error for client #{state.client_name} on consumer group #{state.group_name}. Error Code: #{ec} Error Message: #{em}"
+          "Heartbeat error on consumer group #{state.group_name} for module #{state.mod}. Error Code: #{ec} Error Message: #{em}"
         )
 
-        # Ensure the coordinator still the same
-        get_coordinator!(state)
+        coordinator_error? = ec in [14, 15, 16]
+        fence_error? = ec in [25, 110]
+        static_membership_error? = ec in [111]
+
+        cond do
+          coordinator_error? ->
+            get_coordinator!(state)
+
+          fence_error? ->
+            # The easiest thing to do is restart the consumer group, because it guarantees
+            # that all consumers will be forcefully stopped
+            raise "Fence error on heartbeat. Error Code: #{ec} Error Message: #{em}"
+
+          # This should happen only when the previous instance is leaving the group
+          static_membership_error? ->
+            state
+
+          true ->
+            raise "Unrecoverable error on heartbeat. Error Code: #{ec} Error Message: #{em}"
+        end
     end
   end
 
@@ -264,10 +285,14 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     Enum.each(to_stop, fn {topic_id, partition} ->
       true = unack_topic_partition(state.mod, topic_id, partition)
-      :ok = Consumer.revoke_assignment(state.mod, topic_id, partition)
+      :ok = Consumer.revoke_assignment_async(state.mod, topic_id, partition)
     end)
 
-    state
+    if MapSet.size(to_stop) != 0 or MapSet.size(to_start) != 0 do
+      %__MODULE__{state | heartbeat_interval_ms: 5}
+    else
+      state
+    end
   end
 
   def handle_consumer_up(
@@ -293,6 +318,15 @@ defmodule Klife.Consumer.ConsumerGroup do
         new_cmap = Map.delete(cmap, monitor_ref)
         {:noreply, %__MODULE__{state | consumers_monitor_map: new_cmap}}
     end
+  end
+
+  def handle_terminate(%__MODULE__{} = state, _reason) do
+    # TODO: implement static membership based on the termination reason (epoch -2)
+    leaving_epoch = -1
+
+    exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
+
+    do_heartbeat(exit_state) |> IO.inspect(label: "EXITED WITH STATE: ")
   end
 
   defmacro __using__(opts) do
@@ -328,6 +362,10 @@ defmodule Klife.Consumer.ConsumerGroup do
 
       def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
         Klife.Consumer.ConsumerGroup.handle_consumer_down(state, ref, reason)
+      end
+
+      def terminate(reason, state) do
+        Klife.Consumer.ConsumerGroup.handle_terminate(state, reason)
       end
     end
   end

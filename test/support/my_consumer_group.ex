@@ -1,3 +1,3 @@
-defmodule Klife.MyConsumerGroup do
+defmodule MyConsumerGroup do
   use Klife.Consumer.ConsumerGroup, client: MyClient
 end
