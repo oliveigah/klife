@@ -568,7 +568,15 @@ defmodule Klife.Client do
       {Klife.Connection.Supervisor, conn_opts},
       {Klife.MetadataCache, metadata_cache_opts},
       {Klife.Producer.Supervisor, producer_opts},
-      {Klife.Consumer.Supervisor, consumer_opts}
+      {Klife.Consumer.Supervisor, consumer_opts},
+      {Klife.MyConsumerGroup,
+       [
+         topics: [
+           [name: "my_consumer_topic"],
+           [name: "my_consumer_topic_2"]
+         ],
+         group_name: "consumer_group_example_1"
+       ]}
     ]
 
     :persistent_term.put(default_txn_pool_key, parsed_opts[:default_txn_pool])

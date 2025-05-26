@@ -74,6 +74,7 @@ defmodule Klife.MetadataCache do
               topic.error_code == 0,
               reduce: false do
             acc ->
+              set_topic_name_for_id(client_name, topic.topic_id, topic.name)
               key = {topic.name, partition.partition_index}
 
               case :ets.lookup(table_name, key) do
@@ -115,26 +116,34 @@ defmodule Klife.MetadataCache do
     :ok
   end
 
+  def get_topic_name_by_id(client_name, topic_id) do
+    :persistent_term.get({__MODULE__, client_name, topic_id})
+  end
+
+  defp set_topic_name_for_id(client_name, topic_id, topic_name) do
+    :persistent_term.put({__MODULE__, client_name, topic_id}, topic_name)
+  end
+
   defp upsert_metadata(client_name, topic_data, partition_data) do
     max_partition =
       topic_data.partitions
       |> Enum.map(fn p_data -> p_data.partition_index end)
       |> Enum.max()
 
-    to_insert =
+    to_insert_topic_name_key =
       %{
         key: {topic_data.name, partition_data.partition_index},
         topic_name: topic_data.name,
         partition_idx: partition_data.partition_index,
         leader_id: partition_data.leader_id,
-        topic_id: topic_data[:topic_id],
+        topic_id: topic_data.topic_id,
         max_partition: max_partition,
         # default producer/partitioner values will be defined on producer
         default_producer: nil,
         default_partitioner: nil
       }
 
-    true = insert_on_metadata_table(client_name, to_insert)
+    true = insert_on_metadata_table(client_name, to_insert_topic_name_key)
 
     :ok
   end

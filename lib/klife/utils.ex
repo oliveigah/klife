@@ -88,6 +88,20 @@ defmodule Klife.Utils do
         replication_factor: 3,
         assignments: [],
         configs: []
+      },
+      %{
+        name: "my_consumer_topic",
+        num_partitions: 4,
+        replication_factor: 3,
+        assignments: [],
+        configs: []
+      },
+      %{
+        name: "my_consumer_topic_2",
+        num_partitions: 2,
+        replication_factor: 3,
+        assignments: [],
+        configs: []
       }
     ]
 

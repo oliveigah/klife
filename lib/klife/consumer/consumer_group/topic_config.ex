@@ -11,12 +11,19 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc:
         "The maximum amount of bytes to fetch in a single request. Must be lower than fetcher config `max_bytes_per_request`"
     ],
+    poll_interval_ms: [
+      type: :non_neg_integer,
+      default: 1000,
+      doc: "Time in milliseconds that the consumer will try to poll data from the broker"
+    ],
     fetcher_name: [
       type: {:or, [:atom, :string]},
       doc:
         "Fetcher name to be used by the consumers of this topic. Overrides the one defined on the consumer group."
     ]
   ]
+
+  defstruct Keyword.keys(@opts)
 
   def get_opts, do: @opts
 end

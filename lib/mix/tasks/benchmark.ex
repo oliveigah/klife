@@ -63,49 +63,28 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      :ets.new(:tuple_table, [
-        :set,
-        :public,
-        :named_table,
-        read_concurrency: true
-      ])
+      ms = MapSet.new()
 
       :ets.new(:map_table, [
         :set,
         :public,
-        :named_table,
-        read_concurrency: true
+        :named_table
       ])
 
-      Enum.each(1..10000, fn i ->
-        map_item = %{
-          a: :rand.bytes(100),
-          b: :rand.bytes(200),
-          c: :rand.bytes(300),
-          d: :rand.bytes(400),
-          e: :rand.bytes(500)
-        }
-
-        tuple_item = {
-          i,
-          map_item.a,
-          map_item.b,
-          map_item.c,
-          map_item.d,
-          map_item.e
-        }
-
-        true = :ets.insert(:tuple_table, tuple_item)
-        true = :ets.insert(:map_table, {i, map_item})
-      end)
+      big_map =
+        Enum.map(1..5000, fn i ->
+          :ets.insert(:map_table, {i, :rand.bytes(100)})
+          {i, :rand.bytes(100)}
+        end)
+        |> Map.new()
 
       Benchee.run(
         %{
-          "tuple" => fn ->
-            Enum.each(1..10000, fn i -> :ets.lookup_element(:tuple_table, i, 4) end)
+          "values" => fn ->
+            Map.values(big_map)
           end,
-          "map" => fn ->
-            Enum.each(1..10000, fn i -> :ets.lookup_element(:map_table, i, 2).b end)
+          "tab2list" => fn ->
+            :ets.tab2list(:map_table)
           end
         },
         time: 10,
