@@ -63,7 +63,7 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      ms = MapSet.new()
+      _ms = MapSet.new()
 
       :ets.new(:map_table, [
         :set,

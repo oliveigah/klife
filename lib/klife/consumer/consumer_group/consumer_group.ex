@@ -16,11 +16,15 @@ defmodule Klife.Consumer.ConsumerGroup do
   alias Klife.PubSub
 
   @consumer_group_opts [
+    client: [
+      type: :atom,
+      required: true,
+      doc: "The name of the klife client to be used by the consumer group"
+    ],
     topics: [
       type: {:list, {:keyword_list, TopicConfig.get_opts()}},
       required: true,
-      doc:
-        "The maximum time to wait for additional record requests from consumers before sending a batch to the broker."
+      doc: "List of topic configurations that will be handled by the consumer group"
     ],
     group_name: [
       type: :string,
@@ -35,11 +39,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       type: :non_neg_integer,
       default: 30_000,
       doc:
-        "The maximum time in milliseconds that the coordinator will wait on the member to revoke its partitions"
+        "The maximum time in milliseconds that the kafka broker coordinator will wait on the member to revoke it's partitions"
     ],
     fetcher_name: [
       type: {:or, [:atom, :string]},
-      doc: "Fetcher name to be used by the consumers of the group."
+      doc:
+        "Fetcher name to be used by the consumers of the group. Defaults to client's default fetcher"
     ]
   ]
 
@@ -55,6 +60,97 @@ defmodule Klife.Consumer.ConsumerGroup do
                 :consumer_supervisor,
                 :consumers_monitor_map
               ]
+
+  defmacro __using__(opts) do
+    if !Keyword.has_key?(opts, :client) do
+      raise ArgumentError, """
+      client option is required when using Klife.Consumer.ConsumerGroup.
+
+      use Klife.Consumer.ConsumerGroup, client: MyKlifeClient
+      """
+    end
+
+    quote bind_quoted: [opts: opts] do
+      use GenServer
+
+      @klife_opts opts
+      @before_compile Klife.Consumer.ConsumerGroup
+
+      @behaviour Klife.Behaviours.ConsumerGroup
+
+      def klife_client(), do: unquote(opts[:client])
+
+      def start_link(args) do
+        cg_opts = unquote(opts)
+        input_map_args = Map.new(args)
+        cg_opts_map_args = Map.new(cg_opts)
+        final_map_args = Map.merge(cg_opts_map_args, input_map_args)
+        final_args = Map.to_list(final_map_args)
+
+        Klife.Consumer.ConsumerGroup.start_link(__MODULE__, final_args)
+      end
+
+      def init(args), do: Klife.Consumer.ConsumerGroup.init(__MODULE__, args)
+
+      def handle_info(:heartbeat, state) do
+        Klife.Consumer.ConsumerGroup.handle_heartbeat(state)
+      end
+
+      def handle_cast({:consumer_up, {topic_id, partition, consumer_pid}}, state) do
+        Klife.Consumer.ConsumerGroup.handle_consumer_up(
+          state,
+          topic_id,
+          partition,
+          consumer_pid
+        )
+      end
+
+      def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+        Klife.Consumer.ConsumerGroup.handle_consumer_down(state, ref, reason)
+      end
+
+      def terminate(reason, state) do
+        Klife.Consumer.ConsumerGroup.handle_terminate(state, reason)
+      end
+    end
+  end
+
+  defmacro __before_compile__(env) do
+    opts = Module.get_attribute(env.module, :klife_opts)
+    topics_data = Keyword.get(opts, :topics)
+
+    any_batch_config? =
+      Enum.any?(topics_data, fn td -> match?({:batch, _size}, td[:handler_strategy]) end)
+
+    any_unit_config? =
+      Enum.all?(topics_data, fn td -> td[:handler_strategy] in [:unit, nil] end)
+
+    unit_callback_defined? = Module.defines?(env.module, {:handle_record, 3})
+    batch_callback_defined? = Module.defines?(env.module, {:handle_record_batch, 3})
+
+    cond do
+      not unit_callback_defined? and not batch_callback_defined? ->
+        raise CompileError,
+          description: """
+          You must implement at least one of: `handle_record/3` or `handle_record_batch/3`
+          """
+
+      any_batch_config? and not batch_callback_defined? ->
+        raise CompileError,
+          description: """
+          You have topics defined with `batch` handler strategy but your module do not implement `handle_record_batch/3`
+          """
+
+      any_unit_config? and not unit_callback_defined? ->
+        raise CompileError,
+          description: """
+          You have topics defined with `unit` handler strategy but your module do not implement `handle_record/3`
+          """
+
+      true ->
+        :ok
+    end
+  end
 
   def start_link(cg_mod, args) do
     base_validated_args =
@@ -83,7 +179,6 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   def init(mod, args_map) do
     Process.flag(:trap_exit, true)
-
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
 
     :ets.new(get_acked_topic_partitions_table(mod), [
@@ -99,7 +194,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         mod: mod,
         topics:
           args_map.topics
-          |> Enum.map(fn tc -> {tc.name, tc} end)
+          |> Enum.map(fn tc -> {tc.name, TopicConfig.from_map(tc)} end)
           |> Map.new(),
         group_name: args_map.group_name,
         instance_id: args_map.instance_id,
@@ -110,7 +205,8 @@ defmodule Klife.Consumer.ConsumerGroup do
         heartbeat_interval_ms: 1000,
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
-        consumers_monitor_map: %{}
+        consumers_monitor_map: %{},
+        fetcher_name: args_map[:fetcher_name] || mod.klife_client().get_default_fetcher()
       }
       |> get_coordinator!()
 
@@ -321,52 +417,11 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def handle_terminate(%__MODULE__{} = state, _reason) do
-    # TODO: implement static membership based on the termination reason (epoch -2)
-    leaving_epoch = -1
+    # TODO: Maybe we should also use the termination reason to deefine leaving epoch
+    leaving_epoch = if state.instance_id != nil, do: -2, else: -1
 
     exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
 
-    do_heartbeat(exit_state) |> IO.inspect(label: "EXITED WITH STATE: ")
-  end
-
-  defmacro __using__(opts) do
-    if !Keyword.has_key?(opts, :client) do
-      raise ArgumentError, """
-      client option is required when using Klife.Consumer.ConsumerGroup.
-
-      use Klife.Consumer.ConsumerGroup, client: MyKlifeClient
-      """
-    end
-
-    quote bind_quoted: [opts: opts] do
-      use GenServer
-
-      def klife_client(), do: unquote(opts[:client])
-
-      def start_link(args), do: Klife.Consumer.ConsumerGroup.start_link(__MODULE__, args)
-
-      def init(args), do: Klife.Consumer.ConsumerGroup.init(__MODULE__, args)
-
-      def handle_info(:heartbeat, state) do
-        Klife.Consumer.ConsumerGroup.handle_heartbeat(state)
-      end
-
-      def handle_cast({:consumer_up, {topic_id, partition, consumer_pid}}, state) do
-        Klife.Consumer.ConsumerGroup.handle_consumer_up(
-          state,
-          topic_id,
-          partition,
-          consumer_pid
-        )
-      end
-
-      def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-        Klife.Consumer.ConsumerGroup.handle_consumer_down(state, ref, reason)
-      end
-
-      def terminate(reason, state) do
-        Klife.Consumer.ConsumerGroup.handle_terminate(state, reason)
-      end
-    end
+    do_heartbeat(exit_state)
   end
 end

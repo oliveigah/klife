@@ -25,6 +25,7 @@ defmodule Klife.Record do
     :offset,
     :error_code,
     :value,
+    :consumer_attempts,
     {:headers, []},
     :__batch_index,
     :__estimated_size,
@@ -38,6 +39,7 @@ defmodule Klife.Record do
           topic: String.t(),
           partition: non_neg_integer(),
           offset: non_neg_integer(),
+          consumer_attempts: nil | non_neg_integer(),
           error_code: integer()
         }
 

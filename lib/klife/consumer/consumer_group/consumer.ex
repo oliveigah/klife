@@ -7,6 +7,10 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   alias Klife.Consumer.ConsumerGroup
 
+  alias Klife.Consumer.ConsumerGroup.TopicConfig
+
+  alias Klife.Record
+
   defstruct [
     :consumer_group_config,
     :topic_config,
@@ -35,13 +39,15 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     IO.inspect("INITING CONSUMER FOR #{args_map.topic_id} #{args_map.partition_idx}")
     cg_conf = %ConsumerGroup{client_name: client_name} = args_map.consumer_group_config
     topic_name = MetadataCache.get_topic_name_by_id(client_name, args_map.topic_id)
+    topic_conf = %TopicConfig{} = cg_conf.topics[topic_name]
+    filtered_cg_conf = Map.put(cg_conf, :topics, nil)
 
     state = %__MODULE__{
-      consumer_group_config: cg_conf,
+      consumer_group_config: %ConsumerGroup{} = filtered_cg_conf,
       topic_id: args_map.topic_id,
       partition_idx: args_map.partition_idx,
       topic_name: topic_name,
-      topic_config: cg_conf.topics[topic_name]
+      topic_config: topic_conf
     }
 
     :ok =
@@ -64,19 +70,26 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def handle_info(:poll_records, %__MODULE__{} = state) do
+    cg_mod = state.consumer_group_config.mod
+    %TopicConfig{} = tc = state.topic_config
+
     polling_allowed? =
       ConsumerGroup.polling_allowed?(
-        state.consumer_group_config.mod,
+        cg_mod,
         state.topic_id,
         state.partition_idx
       )
 
     new_state =
       if polling_allowed? do
-        IO.inspect("Pooling from topic #{state.topic_name} partition #{state.partition_idx}...")
+        case tc do
+          %TopicConfig{handler_strategy: :unit} ->
+            mock_record = %Record{offset: 0}
+            cg_mod.handle_record(state.topic_name, state.partition_idx, mock_record)
 
-        if System.get_env("TEST_TIMEOUT") == "true" do
-          Process.sleep(:timer.seconds(60))
+          %TopicConfig{handler_strategy: {:batch, size}} ->
+            mock_list = Enum.map(1..size, fn i -> %Record{offset: i} end)
+            cg_mod.handle_record_batch(state.topic_name, state.partition_idx, mock_list)
         end
 
         state
@@ -88,7 +101,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         state
       end
 
-    Process.send_after(self(), :poll_records, state.topic_config.poll_interval_ms)
+    Process.send_after(self(), :poll_records, state.topic_config.fetch_interval_ms)
     {:noreply, new_state}
   end
 

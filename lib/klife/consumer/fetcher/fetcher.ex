@@ -71,30 +71,22 @@ defmodule Klife.Consumer.Fetcher do
   defp get_process_name(client, fetcher_name),
     do: via_tuple({__MODULE__, client, fetcher_name})
 
-  def fetch(tpo_list, client, opts \\ []) do
+  def fetch(tpo_or_list, client, opts \\ [])
+
+  def fetch({_t, _p, _o} = key, client, opts) do
+    [key]
+    |> fetch(client, opts)
+    |> Map.fetch!(key)
+  end
+
+  def fetch(tpo_list, client, opts) when is_list(tpo_list) do
     fetcher = opts[:fetcher] || client.get_default_fetcher()
     iso_level = opts[:isolation_level] || :read_committed
     max_bytes = opts[:max_bytes] || 100_000
 
     timeout =
       Enum.map(tpo_list, fn {t, p, o} ->
-        {:ok,
-         %{
-           topic_id: t_id,
-           leader_id: broker
-         }} = MetadataCache.get_metadata(client, t, p)
-
-        batcher_id = get_batcher_id(client, fetcher, t, p)
-
-        {{broker, batcher_id},
-         %Batcher.BatchItem{
-           topic_id: t_id,
-           topic_name: t,
-           partition: p,
-           offset_to_fetch: o,
-           __callback: self(),
-           max_bytes: max_bytes
-         }}
+        tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
       end)
       |> Enum.group_by(fn {key, _item} -> key end, fn {_, val} -> val end)
       |> Enum.reduce(0, fn {{broker, batcher_id}, items}, _acc ->
@@ -105,6 +97,36 @@ defmodule Klife.Consumer.Fetcher do
       end)
 
     wait_fetch_response(timeout, length(tpo_list))
+  end
+
+  def async_fetch({t, p, o}, client, opts \\ []) do
+    fetcher = opts[:fetcher] || client.get_default_fetcher()
+    iso_level = opts[:isolation_level] || :read_committed
+    max_bytes = opts[:max_bytes] || 100_000
+
+    {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
+    {:ok, timeout} = Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
+    {:ok, timeout}
+  end
+
+  defp tpo_to_batch_item(t, p, o, client, max_bytes, fetcher) do
+    {:ok,
+     %{
+       topic_id: t_id,
+       leader_id: broker
+     }} = MetadataCache.get_metadata(client, t, p)
+
+    batcher_id = get_batcher_id(client, fetcher, t, p)
+
+    {{broker, batcher_id},
+     %Batcher.BatchItem{
+       topic_id: t_id,
+       topic_name: t,
+       partition: p,
+       offset_to_fetch: o,
+       __callback: self(),
+       max_bytes: max_bytes
+     }}
   end
 
   defp wait_fetch_response(timeout_ms, max_resps) do
