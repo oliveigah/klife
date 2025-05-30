@@ -4,6 +4,11 @@ defmodule Klife.Consumer.ConsumerGroupTest do
   test "basic test" do
     defmodule MyConsumerGroup do
       use Klife.Consumer.ConsumerGroup, client: MyClient
+
+      @impl true
+      def handle_record(_topic, _partition, _record) do
+        :ok
+      end
     end
 
     consumer_opts = [
