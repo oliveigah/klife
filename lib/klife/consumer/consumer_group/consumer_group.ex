@@ -164,19 +164,18 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def start_link(cg_mod, args) do
-    base_validated_args =
-      args
-      |> NimbleOptions.validate!(@consumer_group_opts)
-      |> Helpers.keyword_list_to_map()
+    base_validated_args = NimbleOptions.validate!(args, @consumer_group_opts)
+
+    :ok = check_module_config(cg_mod, base_validated_args)
+
+    map_args = Helpers.keyword_list_to_map(base_validated_args)
 
     validated_args =
       %__MODULE__{}
       |> Map.from_struct()
-      |> Map.merge(base_validated_args)
+      |> Map.merge(map_args)
       |> Map.put(:mod, cg_mod)
       |> Map.put(:member_id, UUID.uuid4())
-
-    :ok = check_module_config(cg_mod, base_validated_args)
 
     GenServer.start_link(cg_mod, validated_args, name: get_process_name(cg_mod))
   end
