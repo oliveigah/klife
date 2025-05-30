@@ -37,8 +37,20 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     handler_strategy: [
       type: {:or, [{:in, [:unit]}, {:tuple, [{:in, [:batch]}, :pos_integer]}]},
       default: :unit,
-      doc:
-        "Define which callback will be used for handling records. `handle_record/3` when `:unit` or `handle_record_batch/3` when `{:batch, non_neg_integer}`. For the batch strategy the second item on the tuple is the maximum number of records that will be delivered to the handler each processing cycle"
+      doc: """
+      Defines which callback will be used for handling records. `handle_record/3` when `:unit` or `handle_record_batch/3` when `{:batch, non_neg_integer}`.
+
+      For the batch strategy the second item on the tuple is the maximum number of records that will be delivered to the handler each processing cycle
+      """
+    ],
+    handler_max_pending_commits: [
+      type: :non_neg_integer,
+      default: 0,
+      doc: """
+      Defines the maximum number of uncommitted processing cycles allowed before pausing the processing of new records.
+
+      If set to 0, each cycle will wait for the previous commit to be acknowledged by the server before continuing.
+      """
     ]
   ]
 

@@ -117,7 +117,11 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   defmacro __before_compile__(env) do
     opts = Module.get_attribute(env.module, :klife_opts)
-    topics_data = Keyword.get(opts, :topics)
+    :ok = Klife.Consumer.ConsumerGroup.check_module_config(env.module, opts, :before_compile)
+  end
+
+  def check_module_config(mod, opts, check_time \\ :runtime) do
+    topics_data = Keyword.get(opts, :topics, [])
 
     any_batch_config? =
       Enum.any?(topics_data, fn td -> match?({:batch, _size}, td[:handler_strategy]) end)
@@ -125,8 +129,15 @@ defmodule Klife.Consumer.ConsumerGroup do
     any_unit_config? =
       Enum.all?(topics_data, fn td -> td[:handler_strategy] in [:unit, nil] end)
 
-    unit_callback_defined? = Module.defines?(env.module, {:handle_record, 3})
-    batch_callback_defined? = Module.defines?(env.module, {:handle_record_batch, 3})
+    unit_callback_defined? =
+      if check_time == :before_compile,
+        do: Module.defines?(mod, {:handle_record, 3}),
+        else: function_exported?(mod, :handle_record, 3)
+
+    batch_callback_defined? =
+      if check_time == :before_compile,
+        do: Module.defines?(mod, {:handle_record_batch, 3}),
+        else: function_exported?(mod, :handle_record_batch, 3)
 
     cond do
       not unit_callback_defined? and not batch_callback_defined? ->
@@ -164,6 +175,8 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.merge(base_validated_args)
       |> Map.put(:mod, cg_mod)
       |> Map.put(:member_id, UUID.uuid4())
+
+    :ok = check_module_config(cg_mod, base_validated_args)
 
     GenServer.start_link(cg_mod, validated_args, name: get_process_name(cg_mod))
   end
