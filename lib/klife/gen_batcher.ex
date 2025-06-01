@@ -304,7 +304,7 @@ defmodule Klife.GenBatcher do
   # Macro
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
-      use GenServer
+      use GenServer, opts[:gen_server_opts] || []
 
       @behaviour Klife.GenBatcher
 

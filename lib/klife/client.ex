@@ -85,6 +85,13 @@ defmodule Klife.Client do
       required: false,
       doc: "`:producer` disable producer feature. `:txn_producer` disables transactions.",
       default: []
+    ],
+    enable_unkown_topics: [
+      type: :boolean,
+      required: false,
+      default: true,
+      doc:
+        "Define if the client will be able to work with non configured topics. When `true` the client will collect metadata for all known topics of the cluster, this may have performance impacts on large clusters. When set to `false` the client will be able to work with only topics defined on the `topics` options."
     ]
   ]
 
@@ -562,7 +569,10 @@ defmodule Klife.Client do
       |> Map.take([:fetchers])
       |> Map.put(:client_name, module)
 
-    metadata_cache_opts = %{client_name: module}
+    metadata_cache_opts =
+      parsed_opts
+      |> Map.take([:topics, :enable_unkown_topics])
+      |> Map.put(:client_name, module)
 
     children = [
       {Klife.Connection.Supervisor, conn_opts},

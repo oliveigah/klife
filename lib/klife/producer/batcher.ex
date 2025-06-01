@@ -1,7 +1,7 @@
 defmodule Klife.Producer.Batcher do
   @moduledoc false
 
-  use Klife.GenBatcher
+  use Klife.GenBatcher, gen_server_opts: [restart: :transient]
 
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
@@ -13,6 +13,8 @@ defmodule Klife.Producer.Batcher do
   alias Klife.Producer.Dispatcher
 
   alias Klife.GenBatcher
+
+  alias Klife.PubSub
 
   defstruct [
     :producer_config,
@@ -77,6 +79,8 @@ defmodule Klife.Producer.Batcher do
     broker_id = Keyword.fetch!(args, :broker_id)
     batcher_id = Keyword.fetch!(args, :id)
     producer_config = Keyword.fetch!(args, :producer_config)
+
+    :ok = PubSub.subscribe({:cluster_change, producer_config.client_name})
 
     state = %__MODULE__{
       base_sequences: %{},
@@ -210,6 +214,28 @@ defmodule Klife.Producer.Batcher do
     new_bs = Map.delete(state.base_sequences, key)
     new_state = %{state | producer_epochs: new_pe, base_sequences: new_bs}
     {:noreply, %{batcher_state | user_state: new_state}}
+  end
+
+  def handle_info(
+        {{:cluster_change, client_name}, event_data, _callback_data},
+        %GenBatcher{
+          user_state: %__MODULE__{producer_config: %{client_name: client_name}} = state
+        } = batcher_state
+      ) do
+    case event_data do
+      %{removed_brokers: []} ->
+        {:noreply, batcher_state}
+
+      %{removed_brokers: removed_list} ->
+        ids_list = Enum.map(removed_list, fn {removed_broker_id, _host} -> removed_broker_id end)
+
+        if state.broker_id in ids_list do
+          {:stop, {:shutdown, {:cluster_change, {:removed_broker, state.broker_id}}},
+           batcher_state}
+        else
+          {:noreply, batcher_state}
+        end
+    end
   end
 
   ## PRIVATE FUNCTIONS

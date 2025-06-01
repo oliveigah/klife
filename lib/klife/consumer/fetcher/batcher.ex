@@ -7,6 +7,8 @@ defmodule Klife.Consumer.Fetcher.Batcher do
 
   alias Klife.Consumer.Fetcher.Dispatcher
 
+  alias Klife.PubSub
+
   defstruct [
     :broker_id,
     :batcher_id,
@@ -70,6 +72,8 @@ defmodule Klife.Consumer.Fetcher.Batcher do
     batcher_id = Keyword.fetch!(init_arg, :batcher_id)
     fetcher_config = Keyword.fetch!(init_arg, :fetcher_config)
     iso_level = Keyword.fetch!(init_arg, :iso_level)
+
+    :ok = PubSub.subscribe({:cluster_change, fetcher_config.client_name})
 
     state = %__MODULE__{
       broker_id: broker_id,
@@ -145,5 +149,28 @@ defmodule Klife.Consumer.Fetcher.Batcher do
     to_dispatch = %Batch{batch | dispatch_ref: ref}
     :ok = Dispatcher.dispatch(state.dispatcher_pid, to_dispatch)
     {:ok, state}
+  end
+
+  @impl true
+  def handle_info(
+        {{:cluster_change, client_name}, event_data, _callback_data},
+        %GenBatcher{
+          user_state: %__MODULE__{fetcher_config: %{client_name: client_name}} = state
+        } = batcher_state
+      ) do
+    case event_data do
+      %{removed_brokers: []} ->
+        {:noreply, batcher_state}
+
+      %{removed_brokers: removed_list} ->
+        ids_list = Enum.map(removed_list, fn {removed_broker_id, _host} -> removed_broker_id end)
+
+        if state.broker_id in ids_list do
+          {:stop, {:shutdown, {:cluster_change, {:removed_broker, state.broker_id}}},
+           batcher_state}
+        else
+          {:noreply, batcher_state}
+        end
+    end
   end
 end

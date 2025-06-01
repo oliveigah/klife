@@ -19,6 +19,8 @@ defmodule Klife.Producer do
 
   alias Klife.MetadataCache
 
+  alias Klife.PubSub
+
   @producer_options [
     name: [
       type: {:or, [:atom, :string]},
@@ -227,7 +229,8 @@ defmodule Klife.Producer do
                 :coordinator_id,
                 :client_name,
                 :txn_id,
-                :txn_timeout_ms
+                :txn_timeout_ms,
+                :batcher_supervisor
               ]
 
   @doc false
@@ -248,6 +251,7 @@ defmodule Klife.Producer do
   @doc false
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
+    {:ok, batcher_sup_pid} = DynamicSupervisor.start_link([])
 
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.client_name}.#{args_map.name}",
@@ -255,13 +259,21 @@ defmodule Klife.Producer do
       # This is the only args that may not exist because
       # it is filtered out on non txn producers
       # in order to prevent confusion on the configuration
-      txn_timeout_ms: Map.get(args_map, :txn_timeout_ms, 0)
+      txn_timeout_ms: Map.get(args_map, :txn_timeout_ms, 0),
+      batcher_supervisor: batcher_sup_pid
     }
 
     state =
       base
       |> Map.merge(args_map)
       |> set_producer_id()
+
+    :ok = PubSub.subscribe({:metadata_updated, args_map.client_name})
+    # Although tecnicaly we could just listen to metadata changes
+    # cluster changes happens faster than metadata ones and in
+    # order to be able to react faster we must also subscribe to
+    # cluster change events.
+    :ok = PubSub.subscribe({:cluster_change, args_map.client_name})
 
     :ok = handle_batchers(state)
 
@@ -289,8 +301,21 @@ defmodule Klife.Producer do
     |> List.first()
   end
 
-  @doc false
-  def handle_info(:handle_change, %__MODULE__{} = state) do
+  def handle_info(
+        {{:metadata_updated, client_name}, _event_data, _callback_data},
+        %__MODULE__{client_name: client_name} = state
+      ) do
+    handle_cluster_or_metadata_changes(state)
+  end
+
+  def handle_info(
+        {{:cluster_change, client_name}, _event_data, _callback_data},
+        %__MODULE__{client_name: client_name} = state
+      ) do
+    handle_cluster_or_metadata_changes(state)
+  end
+
+  defp handle_cluster_or_metadata_changes(state) do
     if maybe_find_coordinator(state) != state.coordinator_id do
       # If the coordinator has changed the easiest thing to do is
       # to restart everything through the supervisor.
@@ -298,7 +323,7 @@ defmodule Klife.Producer do
       # its previous coordinator is not available anymore
       # non transactional producers always have `:any` as
       # coordinator and therefore will not stop
-      {:stop, :handle_change, state}
+      {:stop, {:shutdown, {:coordinator_change, state.coordinator_id}}, state}
     else
       :ok = handle_batchers(state)
       {:noreply, state}
@@ -563,17 +588,26 @@ defmodule Klife.Producer do
   defp init_batchers(state, known_brokers, batchers_per_broker) do
     for broker_id <- known_brokers,
         batcher_id <- 0..(batchers_per_broker - 1) do
-      result =
-        Batcher.start_link([
-          {:broker_id, broker_id},
-          {:id, batcher_id},
-          {:producer_config, state},
-          {:batcher_config, build_batcher_config(state)}
-        ])
+      args = [
+        {:broker_id, broker_id},
+        {:id, batcher_id},
+        {:producer_config, state},
+        {:batcher_config, build_batcher_config(state)}
+      ]
 
-      case result do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+      spec = %{
+        id: {__MODULE__, Batcher, state.client_name, state.name, broker_id, batcher_id},
+        start: {Batcher, :start_link, [args]},
+        restart: :transient,
+        type: :worker
+      }
+
+      case DynamicSupervisor.start_child(state.batcher_supervisor, spec) do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
       end
     end
 
@@ -609,6 +643,8 @@ defmodule Klife.Producer do
     end)
     |> List.flatten()
     |> Enum.each(fn %{key: {tname, partition}, batcher_id: b_id} ->
+      # TODO: Change this from persistent term to the same metadata ets already used
+      # on the hot path
       put_batcher_id(client_name, producer_name, tname, partition, b_id)
     end)
   end

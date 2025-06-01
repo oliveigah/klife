@@ -12,7 +12,9 @@ defmodule Klife.MetadataCache do
 
   defstruct [
     :client_name,
-    :next_check_ref
+    :next_check_ref,
+    :topics,
+    :enable_unkown_topics
   ]
 
   @check_interval_ms :timer.seconds(30)
@@ -27,7 +29,11 @@ defmodule Klife.MetadataCache do
 
   @impl true
   def init(args) do
-    state = %__MODULE__{client_name: args.client_name}
+    state = %__MODULE__{
+      client_name: args.client_name,
+      topics: Enum.map(args.topics, fn t -> {t.name, t} end) |> Map.new(),
+      enable_unkown_topics: args.enable_unkown_topics
+    }
 
     :ets.new(metadata_table(state.client_name), [
       :set,
@@ -37,6 +43,8 @@ defmodule Klife.MetadataCache do
     ])
 
     :ok = do_check_metadata(state)
+
+    :ok = PubSub.subscribe({:cluster_change, args.client_name})
 
     new_ref = Process.send_after(self(), :check_metadata, @check_interval_ms)
 
@@ -57,9 +65,17 @@ defmodule Klife.MetadataCache do
     end
   end
 
-  defp do_check_metadata(%__MODULE__{client_name: client_name} = _state) do
+  def handle_info(
+        {{:cluster_change, client_name}, _event_data, _callback_data},
+        %__MODULE__{client_name: client_name} = state
+      ) do
+    :ok = do_check_metadata(state)
+    {:noreply, state}
+  end
+
+  defp do_check_metadata(%__MODULE__{client_name: client_name} = state) do
     content = %{
-      topics: nil,
+      topics: if(state.enable_unkown_topics, do: nil, else: Map.keys(state.topics)),
       allow_auto_topic_creation: false,
       include_topic_authorized_operations: false
     }
@@ -79,7 +95,7 @@ defmodule Klife.MetadataCache do
 
               case :ets.lookup(table_name, key) do
                 [] ->
-                  :ok = upsert_metadata(client_name, topic, partition)
+                  :ok = upsert_metadata(state, topic, partition)
                   true
 
                 [tuple_data] ->
@@ -97,7 +113,7 @@ defmodule Klife.MetadataCache do
                   ]
 
                   if Enum.any?(new_data?) do
-                    :ok = upsert_metadata(client_name, topic, partition)
+                    :ok = upsert_metadata(state, topic, partition)
                     true
                   else
                     acc
@@ -124,11 +140,14 @@ defmodule Klife.MetadataCache do
     :persistent_term.put({__MODULE__, client_name, topic_id}, topic_name)
   end
 
-  defp upsert_metadata(client_name, topic_data, partition_data) do
+  defp upsert_metadata(%__MODULE__{} = state, topic_data, partition_data) do
     max_partition =
       topic_data.partitions
       |> Enum.map(fn p_data -> p_data.partition_index end)
       |> Enum.max()
+
+    topic_conf = state.topics[topic_data.name]
+    client = state.client_name
 
     to_insert_topic_name_key =
       %{
@@ -138,12 +157,11 @@ defmodule Klife.MetadataCache do
         leader_id: partition_data.leader_id,
         topic_id: topic_data.topic_id,
         max_partition: max_partition,
-        # default producer/partitioner values will be defined on producer
-        default_producer: nil,
-        default_partitioner: nil
+        default_producer: topic_conf[:default_producer] || client.get_default_producer(),
+        default_partitioner: topic_conf[:default_partitioner] || client.get_default_partitioner()
       }
 
-    true = insert_on_metadata_table(client_name, to_insert_topic_name_key)
+    true = insert_on_metadata_table(client, to_insert_topic_name_key)
 
     :ok
   end

@@ -63,28 +63,16 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      _ms = MapSet.new()
-
-      :ets.new(:map_table, [
-        :set,
-        :public,
-        :named_table
-      ])
-
-      big_map =
-        Enum.map(1..5000, fn i ->
-          :ets.insert(:map_table, {i, :rand.bytes(100)})
-          {i, :rand.bytes(100)}
-        end)
-        |> Map.new()
+      Enum.each(1..100_000_000, fn i ->
+        :persistent_term.put({__MODULE__, i}, i)
+      end)
 
       Benchee.run(
         %{
-          "values" => fn ->
-            Map.values(big_map)
-          end,
-          "tab2list" => fn ->
-            :ets.tab2list(:map_table)
+          "change" => fn ->
+            Enum.each(1..1000, fn i ->
+              :persistent_term.put({__MODULE__, i}, i * Enum.random(1..1000))
+            end)
           end
         },
         time: 10,

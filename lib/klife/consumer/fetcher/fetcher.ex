@@ -8,6 +8,8 @@ defmodule Klife.Consumer.Fetcher do
 
   alias Klife.MetadataCache
 
+  alias Klife.PubSub
+
   @fetcher_opts [
     name: [
       type: {:or, [:atom, :string]},
@@ -56,7 +58,7 @@ defmodule Klife.Consumer.Fetcher do
     ]
   ]
 
-  defstruct Keyword.keys(@fetcher_opts) ++ [:client_name]
+  defstruct Keyword.keys(@fetcher_opts) ++ [:client_name, :batcher_supervisor]
 
   def get_opts, do: @fetcher_opts
 
@@ -156,16 +158,46 @@ defmodule Klife.Consumer.Fetcher do
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
 
+    {:ok, batcher_sup_pid} = DynamicSupervisor.start_link([])
+
     state =
       Map.merge(
         %__MODULE__{
-          client_id: "klife_fetcher.#{args_map.client_name}.#{args_map.name}"
+          client_id: "klife_fetcher.#{args_map.client_name}.#{args_map.name}",
+          batcher_supervisor: batcher_sup_pid
         },
         args_map
       )
 
+    :ok = PubSub.subscribe({:metadata_updated, args_map.client_name})
+    # Although tecnicaly we could just listen to metadata changes
+    # cluster changes happens faster than metadata ones and in
+    # order to be able to react faster we must also subscribe to
+    # cluster change events.
+    :ok = PubSub.subscribe({:cluster_change, args_map.client_name})
+
     :ok = handle_batchers(state)
     {:ok, state}
+  end
+
+  @impl true
+  def handle_info(
+        {{:metadata_updated, client_name}, _event_data, _callback_data},
+        %__MODULE__{client_name: client_name} = state
+      ) do
+    handle_cluster_or_metadata_changes(state)
+  end
+
+  def handle_info(
+        {{:cluster_change, client_name}, _event_data, _callback_data},
+        %__MODULE__{client_name: client_name} = state
+      ) do
+    handle_cluster_or_metadata_changes(state)
+  end
+
+  defp handle_cluster_or_metadata_changes(state) do
+    :ok = handle_batchers(state)
+    {:noreply, state}
   end
 
   def handle_batchers(%__MODULE__{} = state) do
@@ -178,16 +210,22 @@ defmodule Klife.Consumer.Fetcher do
     for broker_id <- known_brokers,
         batcher_id <- 0..(state.batchers_count - 1),
         iso_level <- [:read_committed, :read_uncommitted] do
-      result =
-        Batcher.start_link([
-          {:broker_id, broker_id},
-          {:batcher_id, batcher_id},
-          {:fetcher_config, state},
-          {:batcher_config, build_batcher_config(state)},
-          {:iso_level, iso_level}
-        ])
+      args = [
+        {:broker_id, broker_id},
+        {:batcher_id, batcher_id},
+        {:fetcher_config, state},
+        {:batcher_config, build_batcher_config(state)},
+        {:iso_level, iso_level}
+      ]
 
-      case result do
+      spec = %{
+        id: {__MODULE__, Batcher, state.client_name, state.name, broker_id, batcher_id},
+        start: {Batcher, :start_link, [args]},
+        restart: :transient,
+        type: :worker
+      }
+
+      case DynamicSupervisor.start_child(state.batcher_supervisor, spec) do
         {:ok, _pid} -> :ok
         {:error, {:already_started, _pid}} -> :ok
       end
