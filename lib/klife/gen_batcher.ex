@@ -308,10 +308,12 @@ defmodule Klife.GenBatcher do
 
       @behaviour Klife.GenBatcher
 
+      @impl true
       def init(args) do
         Klife.GenBatcher.init(__MODULE__, args)
       end
 
+      @impl true
       def handle_call({:insert_on_batch, items_list}, from, %Klife.GenBatcher{} = state) do
         {new_state, user_resp} =
           Klife.GenBatcher.insert_items(state, items_list, from, __MODULE__)
@@ -319,6 +321,7 @@ defmodule Klife.GenBatcher do
         {:reply, user_resp, new_state}
       end
 
+      @impl true
       def handle_cast({:insert_on_batch, items_list}, %Klife.GenBatcher{} = state) do
         {new_state, _resp} =
           Klife.GenBatcher.insert_items(state, items_list, nil, __MODULE__)
@@ -326,6 +329,7 @@ defmodule Klife.GenBatcher do
         {:noreply, new_state}
       end
 
+      @impl true
       def handle_info(:maybe_dispatch, %Klife.GenBatcher{} = state) do
         new_state = Klife.GenBatcher.maybe_dispatch(state, __MODULE__)
         {:noreply, new_state}
