@@ -1,7 +1,7 @@
 defmodule Klife.Producer.Batcher do
   @moduledoc false
 
-  use Klife.GenBatcher, gen_server_opts: [restart: :transient]
+  use Klife.GenBatcher
 
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
