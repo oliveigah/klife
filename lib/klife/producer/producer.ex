@@ -628,35 +628,39 @@ defmodule Klife.Producer do
       name: producer_name
     } = state
 
-    client_name
-    |> MetadataCache.get_all_metadata()
-    |> Enum.group_by(& &1.leader_id)
-    |> Enum.map(fn {_broker_id, topics_list} ->
-      topics_list
-      |> Enum.with_index()
-      |> Enum.map(fn {val, idx} ->
-        batcher_id =
-          if batchers_per_broker > 1, do: rem(idx, batchers_per_broker), else: 0
+    batchers_map =
+      client_name
+      |> MetadataCache.get_all_metadata()
+      |> Enum.group_by(& &1.leader_id)
+      |> Enum.map(fn {_broker_id, topics_list} ->
+        topics_list
+        |> Enum.with_index()
+        |> Enum.map(fn {val, idx} ->
+          batcher_id =
+            if batchers_per_broker > 1, do: rem(idx, batchers_per_broker), else: 0
 
-        Map.put(val, :batcher_id, batcher_id)
+          Map.put(val, :batcher_id, batcher_id)
+        end)
       end)
-    end)
-    |> List.flatten()
-    |> Enum.each(fn %{key: {tname, partition}, batcher_id: b_id} ->
-      # TODO: Change this from persistent term to the same metadata ets already used
-      # on the hot path
-      put_batcher_id(client_name, producer_name, tname, partition, b_id)
-    end)
+      |> List.flatten()
+      |> Enum.map(fn %{key: {tname, partition}, batcher_id: b_id} ->
+        {{tname, partition}, b_id}
+      end)
+      |> Map.new()
+
+    save_batcher_id_map(client_name, producer_name, batchers_map)
   end
 
-  defp put_batcher_id(client_name, producer_name, topic, partition, batcher_id) do
+  defp save_batcher_id_map(client_name, producer_name, batcher_map) do
     :persistent_term.put(
-      {__MODULE__, client_name, producer_name, topic, partition},
-      batcher_id
+      {__MODULE__, client_name, producer_name},
+      batcher_map
     )
   end
 
   def get_batcher_id(client_name, producer_name, topic, partition) do
-    :persistent_term.get({__MODULE__, client_name, producer_name, topic, partition})
+    {__MODULE__, client_name, producer_name}
+    |> :persistent_term.get()
+    |> Map.fetch!({topic, partition})
   end
 end
