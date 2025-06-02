@@ -5,8 +5,8 @@ opts = [strategy: :one_for_one, name: Test.Supervisor]
 {:ok, _} =
   Supervisor.start_link(
     [
-      MyClient
-      # MyConsumerGroup
+      MyClient,
+      MyConsumerGroup
     ],
     opts
   )

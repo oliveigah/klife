@@ -186,6 +186,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
     %{
       replica_id: -1,
+      # TODO: Add max_wait_ms and min_bytes as config fetcher
       max_wait_ms: 0,
       min_bytes: 1,
       max_bytes: state.fetcher_config.max_bytes_per_request,

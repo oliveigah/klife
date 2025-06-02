@@ -73,7 +73,8 @@ defmodule Klife.Connection.Controller do
     :check_cluster_waiting_pids,
     :ssl,
     :socket_opts,
-    :sasl_opts
+    :sasl_opts,
+    :broker_supervisor
   ]
 
   def get_opts(), do: @connection_opts
@@ -92,6 +93,8 @@ defmodule Klife.Connection.Controller do
       |> Keyword.take([:connect_opts, :socket_opts])
       |> Enum.map(fn {k, opt} -> {k, opt[:default] || []} end)
       |> Map.new()
+
+    {:ok, broker_sup_pid} = DynamicSupervisor.start_link([])
 
     bootstrap_servers = args.bootstrap_servers
     connect_opts = Keyword.merge(connect_defaults, args.connect_opts)
@@ -118,7 +121,8 @@ defmodule Klife.Connection.Controller do
       bootstrap_conn: nil,
       check_cluster_timer_ref: nil,
       check_cluster_waiting_pids: [],
-      sasl_opts: sasl_opts
+      sasl_opts: sasl_opts,
+      broker_supervisor: broker_sup_pid
     }
 
     new_state = do_init(state)
@@ -374,11 +378,13 @@ defmodule Klife.Connection.Controller do
         ssl: state.ssl
       ]
 
-      DynamicSupervisor.start_child(
-        via_tuple({BrokerSupervisor, state.client_name}),
-        {Broker, broker_opts}
-      )
-      |> case do
+      spec = %{
+        id: {Broker, broker_id, state.client_name},
+        start: {Broker, :start_link, [broker_opts]},
+        type: :worker
+      }
+
+      case DynamicSupervisor.start_child(state.broker_supervisor, spec) do
         {:ok, _} -> :ok
         {:error, {:already_started, _}} -> :ok
       end

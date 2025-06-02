@@ -19,28 +19,18 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     fetch_interval_ms: [
       type: :non_neg_integer,
       default: 1000,
-      doc:
-        "Time in milliseconds that the consumer will try to fetch new data from the broker after it runs out of records to process"
-    ],
-    fetch_threshold_count: [
-      type: :non_neg_integer,
-      default: 1,
-      doc:
-        "Lower bound of pending processing records before the consumer issue a new fetch request."
+      doc: """
+      Time in milliseconds that the consumer will try to fetch new data from the broker after it runs out of records to process.
+
+      The consumer always tries to optimize fetch requests wait times by issuing requests before it's internal queue is empty. Therefore
+      this option is only used for the wait time after a fetch request returns empty.
+      """
     ],
     handler_cooldown_ms: [
       type: :non_neg_integer,
       default: 0,
-      doc:
-        "Time in milliseconds that the consumer will wait before handling new records. Can be overrided by the handler return"
-    ],
-    handler_strategy: [
-      type: {:or, [{:in, [:unit]}, {:tuple, [{:in, [:batch]}, :pos_integer]}]},
-      default: :unit,
       doc: """
-      Defines which callback will be used for handling records. `handle_record/3` when `:unit` or `handle_record_batch/3` when `{:batch, non_neg_integer}`.
-
-      For the batch strategy the second item on the tuple is the maximum number of records that will be delivered to the handler each processing cycle
+      Time in milliseconds that the consumer will wait before handling new records. Can be overrided by the handler return value.
       """
     ],
     handler_max_pending_commits: [
@@ -49,8 +39,14 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc: """
       Defines the maximum number of uncommitted processing cycles allowed before pausing the processing of new records.
 
-      If set to 0, each cycle will wait for the previous commit to be acknowledged by the server before continuing.
+      If set to 0, a new processing cycle will start only after the previous one is fully commited on the broker.
       """
+    ],
+    handler_max_batch_size: [
+      type: :pos_integer,
+      default: 10,
+      doc:
+        "The maximum amount of records that will be delivered to the handler in each processing cycle."
     ]
   ]
 

@@ -6,8 +6,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       use Klife.Consumer.ConsumerGroup, client: MyClient
 
       @impl true
-      def handle_record(_topic, _partition, _record) do
-        :ok
+      def handle_record_batch(_topic, _partition, _records) do
+        {:commit, :all}
       end
     end
 
@@ -16,7 +16,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "benchmark_topic_0"],
         [name: "benchmark_topic_1"]
       ],
-      group_name: "share_group_example_1"
+      group_name: "consumer_group_example_1"
     ]
 
     start_supervised!({MyConsumerGroup, consumer_opts})

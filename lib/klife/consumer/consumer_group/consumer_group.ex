@@ -73,9 +73,6 @@ defmodule Klife.Consumer.ConsumerGroup do
     quote bind_quoted: [opts: opts] do
       use GenServer
 
-      @klife_opts opts
-      @before_compile Klife.Consumer.ConsumerGroup
-
       @behaviour Klife.Behaviours.ConsumerGroup
 
       def klife_client(), do: unquote(opts[:client])
@@ -115,58 +112,8 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
-  defmacro __before_compile__(env) do
-    opts = Module.get_attribute(env.module, :klife_opts)
-    :ok = Klife.Consumer.ConsumerGroup.check_module_config(env.module, opts, :before_compile)
-  end
-
-  def check_module_config(mod, opts, check_time \\ :runtime) do
-    topics_data = Keyword.get(opts, :topics, [])
-
-    any_batch_config? =
-      Enum.any?(topics_data, fn td -> match?({:batch, _size}, td[:handler_strategy]) end)
-
-    any_unit_config? =
-      Enum.all?(topics_data, fn td -> td[:handler_strategy] in [:unit, nil] end)
-
-    unit_callback_defined? =
-      if check_time == :before_compile,
-        do: Module.defines?(mod, {:handle_record, 3}),
-        else: function_exported?(mod, :handle_record, 3)
-
-    batch_callback_defined? =
-      if check_time == :before_compile,
-        do: Module.defines?(mod, {:handle_record_batch, 3}),
-        else: function_exported?(mod, :handle_record_batch, 3)
-
-    cond do
-      not unit_callback_defined? and not batch_callback_defined? ->
-        raise CompileError,
-          description: """
-          You must implement at least one of: `handle_record/3` or `handle_record_batch/3`
-          """
-
-      any_batch_config? and not batch_callback_defined? ->
-        raise CompileError,
-          description: """
-          You have topics defined with `batch` handler strategy but your module do not implement `handle_record_batch/3`
-          """
-
-      any_unit_config? and not unit_callback_defined? ->
-        raise CompileError,
-          description: """
-          You have topics defined with `unit` handler strategy but your module do not implement `handle_record/3`
-          """
-
-      true ->
-        :ok
-    end
-  end
-
   def start_link(cg_mod, args) do
     base_validated_args = NimbleOptions.validate!(args, @consumer_group_opts)
-
-    :ok = check_module_config(cg_mod, base_validated_args)
 
     map_args = Helpers.keyword_list_to_map(base_validated_args)
 

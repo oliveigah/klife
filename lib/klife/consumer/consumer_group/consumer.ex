@@ -82,15 +82,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     new_state =
       if polling_allowed? do
-        case tc do
-          %TopicConfig{handler_strategy: :unit} ->
-            mock_record = %Record{offset: 0}
-            cg_mod.handle_record(state.topic_name, state.partition_idx, mock_record)
-
-          %TopicConfig{handler_strategy: {:batch, size}} ->
-            mock_list = Enum.map(1..size, fn i -> %Record{offset: i} end)
-            cg_mod.handle_record_batch(state.topic_name, state.partition_idx, mock_list)
-        end
+        mock_list = Enum.map(1..tc.handler_max_batch_size, fn i -> %Record{offset: i} end)
+        cg_mod.handle_record_batch(state.topic_name, state.partition_idx, mock_list)
 
         state
       else

@@ -91,7 +91,7 @@ defmodule Klife.Client do
       required: false,
       default: true,
       doc:
-        "Define if the client will be able to work with non configured topics. When `true` the client will collect metadata for all known topics of the cluster, this may have performance impacts on large clusters. When set to `false` the client will be able to work with only topics defined on the `topics` options."
+        "Define if the client will be able to work with non configured topics. When `true` the client will collect metadata for all known topics of the cluster, this may have performance impacts on large clusters. When set to `false` the client will collect metadata only for topics defined on the `topics` options."
     ]
   ]
 
@@ -575,7 +575,7 @@ defmodule Klife.Client do
       |> Map.put(:client_name, module)
 
     children = [
-      {Klife.Connection.Supervisor, conn_opts},
+      {Klife.Connection.Controller, conn_opts},
       {Klife.MetadataCache, metadata_cache_opts},
       {Klife.Producer.Supervisor, producer_opts},
       {Klife.Consumer.Supervisor, consumer_opts}

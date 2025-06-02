@@ -4,16 +4,10 @@ defmodule MyConsumerGroup do
     group_name: "consumer_group_test_1",
     topics: [
       [name: "my_consumer_topic"],
-      [name: "my_consumer_topic_2", handler_strategy: {:batch, 10}]
+      [name: "my_consumer_topic_2", handler_max_batch_size: 10]
     ]
 
   alias Klife.Record
-
-  @impl true
-  def handle_record(topic, partition, %Record{} = rec) do
-    IO.inspect("Handling offset #{rec.offset} from topic #{topic} partition #{partition}")
-    :ok
-  end
 
   @impl true
   def handle_record_batch(topic, partition, record_lists) do
@@ -24,6 +18,6 @@ defmodule MyConsumerGroup do
       "Handling from offset #{first_offset} to offset #{last_offset} from topic #{topic} partition #{partition}"
     )
 
-    :ok
+    {:commit, :all}
   end
 end
