@@ -71,7 +71,7 @@ defmodule Klife.TestUtils do
 
           if broker_id in brokers_list,
             do: {:ok, service_name},
-            else: {:error, :invalid_event}
+            else: {:error, :invalid_event, event_data}
       after
         40_000 ->
           {:error, :timeout}

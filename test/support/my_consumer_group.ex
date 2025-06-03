@@ -4,7 +4,7 @@ defmodule MyConsumerGroup do
     group_name: "consumer_group_test_1",
     topics: [
       [name: "my_consumer_topic"],
-      [name: "my_consumer_topic_2", handler_max_batch_size: 10]
+      [name: "my_consumer_topic_2"]
     ]
 
   alias Klife.Record

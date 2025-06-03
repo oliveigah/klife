@@ -1,5 +1,7 @@
 import Config
 
+# TODO: Test without kafka
+
 config :klife, MyClient,
   connection: [
     # SSL FALSE

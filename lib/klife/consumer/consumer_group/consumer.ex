@@ -11,48 +11,53 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   alias Klife.Record
 
+  alias Klife.Consumer.Committer
+
   defstruct [
-    :consumer_group_config,
+    :cg_mod,
     :topic_config,
     :topic_id,
     :partition_idx,
-    :topic_name
+    :topic_name,
+    :committer_id,
+    :client_name
   ]
 
   def start_link(args) do
-    consumer_group_config = Keyword.fetch!(args, :consumer_group_config)
-    cg_mod = consumer_group_config.mod
+    cg_mod = Keyword.fetch!(args, :consumer_group_mod)
+    client_name = Keyword.fetch!(args, :client_name)
     topic_id = Keyword.fetch!(args, :topic_id)
     partition_idx = Keyword.fetch!(args, :partition_idx)
 
     GenServer.start_link(__MODULE__, Map.new(args),
-      name: get_process_name(cg_mod, topic_id, partition_idx)
+      name: get_process_name(client_name, cg_mod, topic_id, partition_idx)
     )
   end
 
-  def get_process_name(cg_mod, topic_id, partition_idx) do
-    via_tuple({__MODULE__, cg_mod, topic_id, partition_idx})
+  def get_process_name(client_name, cg_mod, topic_id, partition_idx) do
+    via_tuple({__MODULE__, client_name, cg_mod, topic_id, partition_idx})
   end
 
   @impl true
   def init(args_map) do
     IO.inspect("INITING CONSUMER FOR #{args_map.topic_id} #{args_map.partition_idx}")
-    cg_conf = %ConsumerGroup{client_name: client_name} = args_map.consumer_group_config
+    client_name = args_map.client_name
     topic_name = MetadataCache.get_topic_name_by_id(client_name, args_map.topic_id)
-    topic_conf = %TopicConfig{} = cg_conf.topics[topic_name]
-    filtered_cg_conf = Map.put(cg_conf, :topics, nil)
 
-    state = %__MODULE__{
-      consumer_group_config: %ConsumerGroup{} = filtered_cg_conf,
-      topic_id: args_map.topic_id,
-      partition_idx: args_map.partition_idx,
-      topic_name: topic_name,
-      topic_config: topic_conf
-    }
+    state =
+      %__MODULE__{
+        topic_id: args_map.topic_id,
+        partition_idx: args_map.partition_idx,
+        topic_name: topic_name,
+        topic_config: args_map.topic_config,
+        committer_id: args_map.committer_id,
+        client_name: client_name,
+        cg_mod: args_map.consumer_group_mod
+      }
 
     :ok =
       ConsumerGroup.send_consumer_up(
-        state.consumer_group_config.mod,
+        state.cg_mod,
         state.topic_id,
         state.partition_idx
       )
@@ -62,19 +67,20 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     {:ok, state}
   end
 
-  def revoke_assignment_async(cg_mod, topic_id, partition) do
-    cg_mod
-    |> get_process_name(topic_id, partition)
+  def revoke_assignment_async(client_name, cg_mod, topic_id, partition) do
+    client_name
+    |> get_process_name(cg_mod, topic_id, partition)
     |> GenServer.cast(:assignment_revoked)
   end
 
   @impl true
   def handle_info(:poll_records, %__MODULE__{} = state) do
-    cg_mod = state.consumer_group_config.mod
+    cg_mod = state.cg_mod
     %TopicConfig{} = tc = state.topic_config
 
     polling_allowed? =
       ConsumerGroup.polling_allowed?(
+        state.client_name,
         cg_mod,
         state.topic_id,
         state.partition_idx
@@ -84,6 +90,15 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       if polling_allowed? do
         mock_list = Enum.map(1..tc.handler_max_batch_size, fn i -> %Record{offset: i} end)
         cg_mod.handle_record_batch(state.topic_name, state.partition_idx, mock_list)
+
+        commit_data = %Committer.BatchItem{
+          callback_pid: self(),
+          offset_to_commit: 10,
+          partition: state.partition_idx,
+          topic_name: state.topic_name
+        }
+
+        :ok = Committer.commit(commit_data, state.client_name, state.cg_mod, state.committer_id)
 
         state
       else

@@ -13,7 +13,6 @@ defmodule Klife.Connection.Controller do
 
   alias Klife.Connection
   alias Klife.Connection.Broker
-  alias Klife.Connection.BrokerSupervisor
   alias Klife.Connection.MessageVersions
 
   # Since the biggest signed int32 is 2,147,483,647
@@ -81,6 +80,13 @@ defmodule Klife.Connection.Controller do
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: via_tuple({__MODULE__, opts[:client_name]}))
+  end
+
+  def child_spec(arg) do
+    %{
+      id: {__MODULE__, arg[:client_name]},
+      start: {__MODULE__, :start_link, [arg]}
+    }
   end
 
   @impl true
@@ -397,7 +403,7 @@ defmodule Klife.Connection.Controller do
 
         [{pid, _}] ->
           DynamicSupervisor.terminate_child(
-            via_tuple({BrokerSupervisor, state.client_name}),
+            state.broker_supervisor,
             pid
           )
       end

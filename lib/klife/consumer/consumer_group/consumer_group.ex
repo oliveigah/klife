@@ -15,6 +15,10 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   alias Klife.PubSub
 
+  alias Klife.Consumer.Committer
+
+  alias Klife.MetadataCache
+
   @consumer_group_opts [
     client: [
       type: :atom,
@@ -45,6 +49,11 @@ defmodule Klife.Consumer.ConsumerGroup do
       type: {:or, [:atom, :string]},
       doc:
         "Fetcher name to be used by the consumers of the group. Defaults to client's default fetcher"
+    ],
+    committers_count: [
+      type: :pos_integer,
+      default: 1,
+      doc: "How many committer processes will be started for the consumer group"
     ]
   ]
 
@@ -58,7 +67,8 @@ defmodule Klife.Consumer.ConsumerGroup do
                 :heartbeat_interval_ms,
                 :assigned_topic_partitions,
                 :consumer_supervisor,
-                :consumers_monitor_map
+                :consumers_monitor_map,
+                :committers_distribution
               ]
 
   defmacro __using__(opts) do
@@ -124,15 +134,17 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.put(:mod, cg_mod)
       |> Map.put(:member_id, UUID.uuid4())
 
-    GenServer.start_link(cg_mod, validated_args, name: get_process_name(cg_mod))
+    GenServer.start_link(cg_mod, validated_args,
+      name: get_process_name(cg_mod.klife_client(), cg_mod)
+    )
   end
 
-  defp get_process_name(cg_mod) do
-    via_tuple({__MODULE__, cg_mod})
+  defp get_process_name(client_name, cg_mod) do
+    via_tuple({__MODULE__, client_name, cg_mod})
   end
 
   def send_consumer_up(cg_mod, topic_id, partition) do
-    cg = get_process_name(cg_mod)
+    cg = get_process_name(cg_mod.klife_client(), cg_mod)
     GenServer.cast(cg, {:consumer_up, {topic_id, partition, self()}})
   end
 
@@ -140,7 +152,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     Process.flag(:trap_exit, true)
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
 
-    :ets.new(get_acked_topic_partitions_table(mod), [
+    :ets.new(get_acked_topic_partitions_table(mod.klife_client(), mod), [
       :set,
       :public,
       :named_table
@@ -165,7 +177,9 @@ defmodule Klife.Consumer.ConsumerGroup do
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
         consumers_monitor_map: %{},
-        fetcher_name: args_map[:fetcher_name] || mod.klife_client().get_default_fetcher()
+        fetcher_name: args_map[:fetcher_name] || mod.klife_client().get_default_fetcher(),
+        committers_count: args_map.committers_count,
+        committers_distribution: %{}
       }
       |> get_coordinator!()
 
@@ -174,17 +188,18 @@ defmodule Klife.Consumer.ConsumerGroup do
     {:ok, init_state}
   end
 
-  defp get_acked_topic_partitions_table(cg_mod), do: :"acked_topic_partitions.#{cg_mod}"
+  defp get_acked_topic_partitions_table(client_name, cg_mod),
+    do: :"acked_topic_partitions.#{client_name}.#{cg_mod}"
 
-  defp ack_topic_partition(cg_mod, topic_id, partition_idx) do
-    cg_mod
-    |> get_acked_topic_partitions_table()
+  defp ack_topic_partition(client_name, cg_mod, topic_id, partition_idx) do
+    client_name
+    |> get_acked_topic_partitions_table(cg_mod)
     |> :ets.insert({{topic_id, partition_idx}})
   end
 
-  defp unack_topic_partition(cg_mod, topic_id, partition_idx) do
-    cg_mod
-    |> get_acked_topic_partitions_table()
+  defp unack_topic_partition(client_name, cg_mod, topic_id, partition_idx) do
+    client_name
+    |> get_acked_topic_partitions_table(cg_mod)
     |> :ets.delete({{topic_id, partition_idx}})
   end
 
@@ -214,20 +229,17 @@ defmodule Klife.Consumer.ConsumerGroup do
     Helpers.with_timeout!(fun, :timer.seconds(30))
   end
 
-  def polling_allowed?(cg_mod, topic_id, partition) do
-    cg_mod
-    |> get_acked_topic_partitions_table()
-    |> :ets.lookup({topic_id, partition})
-    |> case do
-      [] -> false
-      [_] -> true
-    end
+  def polling_allowed?(client_name, cg_mod, topic_id, partition) do
+    client_name
+    |> get_acked_topic_partitions_table(cg_mod)
+    |> :ets.member({topic_id, partition})
   end
 
   def handle_heartbeat(%__MODULE__{} = state) do
     new_state =
       state
       |> do_heartbeat()
+      |> maybe_start_committer()
       |> handle_assignment()
 
     Process.send_after(self(), :heartbeat, new_state.heartbeat_interval_ms)
@@ -275,7 +287,7 @@ defmodule Klife.Consumer.ConsumerGroup do
           }
 
         Enum.each(tp_list, fn {t_id, p} ->
-          true = ack_topic_partition(new_state.mod, t_id, p)
+          true = ack_topic_partition(new_state.client_name, new_state.mod, t_id, p)
         end)
 
         new_state
@@ -308,6 +320,38 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
+  defp maybe_start_committer(%__MODULE__{} = state)
+       when map_size(state.committers_distribution) == 0 do
+    new_dist =
+      1..state.committers_count
+      |> Enum.map(fn committer_id ->
+        committer_args = [
+          broker_id: state.coordinator_id,
+          batcher_id: committer_id,
+          member_id: state.member_id,
+          client_name: state.client_name,
+          consumer_group_mod: state.mod,
+          batcher_config: [
+            # TODO: Make config
+            {:batch_wait_time_ms, 5},
+            {:max_in_flight, 5}
+          ]
+        ]
+
+        {:ok, _pid} =
+          DynamicSupervisor.start_child(state.consumer_supervisor, {Committer, committer_args})
+
+        {committer_id, MapSet.new()}
+      end)
+      |> Map.new()
+
+    %__MODULE__{state | committers_distribution: new_dist}
+  end
+
+  defp maybe_start_committer(%__MODULE__{} = state) do
+    state
+  end
+
   defp handle_assignment(%__MODULE__{consumers_monitor_map: cm_map} = state) do
     assignment_keys =
       for %{partitions: p_data, topic_id: t_id} <- state.assigned_topic_partitions,
@@ -325,28 +369,20 @@ defmodule Klife.Consumer.ConsumerGroup do
     to_stop = MapSet.difference(current_mapset, assigment_mapset)
     to_start = MapSet.difference(assigment_mapset, current_mapset)
 
-    Enum.each(to_start, fn {topic_id, partition} ->
-      consumer_args = [
-        consumer_group_config: state,
-        topic_id: topic_id,
-        partition_idx: partition
-      ]
+    new_state =
+      Enum.reduce(to_stop, state, fn {topic_id, partition}, acc_state ->
+        stop_consumer(acc_state, topic_id, partition)
+      end)
 
-      case DynamicSupervisor.start_child(state.consumer_supervisor, {Consumer, consumer_args}) do
-        {:ok, pid} -> {:ok, pid}
-        {:error, {:already_started, pid}} -> {:ok, pid}
-      end
-    end)
-
-    Enum.each(to_stop, fn {topic_id, partition} ->
-      true = unack_topic_partition(state.mod, topic_id, partition)
-      :ok = Consumer.revoke_assignment_async(state.mod, topic_id, partition)
-    end)
+    new_state =
+      Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
+        start_consumer(acc_state, topic_id, partition)
+      end)
 
     if MapSet.size(to_stop) != 0 or MapSet.size(to_start) != 0 do
-      %__MODULE__{state | heartbeat_interval_ms: 5}
+      %__MODULE__{new_state | heartbeat_interval_ms: 5}
     else
-      state
+      new_state
     end
   end
 
@@ -382,5 +418,59 @@ defmodule Klife.Consumer.ConsumerGroup do
     exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
 
     do_heartbeat(exit_state)
+  end
+
+  defp stop_consumer(%__MODULE__{} = state, topic_id, partition) do
+    true = unack_topic_partition(state.client_name, state.mod, topic_id, partition)
+    :ok = Consumer.revoke_assignment_async(state.client_name, state.mod, topic_id, partition)
+
+    committer_id =
+      find_committer_id_by_topic_partition(state.committers_distribution, topic_id, partition)
+
+    new_dist =
+      Map.update!(state.committers_distribution, committer_id, fn curr_ms ->
+        MapSet.delete(curr_ms, {topic_id, partition})
+      end)
+
+    %__MODULE__{state | committers_distribution: new_dist}
+  end
+
+  defp start_consumer(%__MODULE__{} = state, topic_id, partition) do
+    committer_id = get_next_committer_id(state.committers_distribution)
+    topic_name = MetadataCache.get_topic_name_by_id(state.client_name, topic_id)
+
+    consumer_args = [
+      consumer_group_mod: state.mod,
+      topic_id: topic_id,
+      partition_idx: partition,
+      committer_id: committer_id,
+      topic_config: state.topics[topic_name],
+      client_name: state.client_name
+    ]
+
+    case DynamicSupervisor.start_child(state.consumer_supervisor, {Consumer, consumer_args}) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+    end
+
+    new_dist =
+      Map.update!(state.committers_distribution, committer_id, fn curr_ms ->
+        MapSet.put(curr_ms, {topic_id, partition})
+      end)
+
+    %__MODULE__{state | committers_distribution: new_dist}
+  end
+
+  defp get_next_committer_id(committer_distribution_map) do
+    committer_distribution_map
+    |> Enum.sort_by(fn {_committer_id, tp_ms} -> MapSet.size(tp_ms) end)
+    |> List.first()
+    |> elem(0)
+  end
+
+  defp find_committer_id_by_topic_partition(committer_distribution_map, topic, partition) do
+    committer_distribution_map
+    |> Enum.find(fn {_committer_id, tp_ms} -> MapSet.member?(tp_ms, {topic, partition}) end)
+    |> elem(0)
   end
 end

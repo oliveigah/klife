@@ -47,7 +47,7 @@ defmodule Klife.Connection.SystemTest do
       ]
       |> Map.new()
 
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
     brokers_list = Utils.get_brokers(client_name)
     assert length(brokers_list) == 3
@@ -74,7 +74,7 @@ defmodule Klife.Connection.SystemTest do
       ]
       |> Map.new()
 
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
     brokers_list = Utils.get_brokers(client_name)
     assert length(brokers_list) == 3
@@ -107,7 +107,7 @@ defmodule Klife.Connection.SystemTest do
       ]
       |> Map.new()
 
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input})
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
     brokers_list = Utils.get_brokers(client_name)
     assert length(brokers_list) == 3
@@ -160,9 +160,9 @@ defmodule Klife.Connection.SystemTest do
       ]
       |> Map.new()
 
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_1})
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_2})
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Supervisor, input_3})
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input_1})
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input_2})
+    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input_3})
 
     brokers_list_1 = Utils.get_brokers(client_name_1)
     brokers_list_2 = Utils.get_brokers(client_name_2)

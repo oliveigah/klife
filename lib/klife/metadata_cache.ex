@@ -84,19 +84,20 @@ defmodule Klife.MetadataCache do
       {:ok, %{content: resp}} ->
         table_name = metadata_table(client_name)
 
-        any_new? =
+        {tp_ids, any_new?} =
           for topic <- resp.topics,
               partition <- topic.partitions,
               topic.error_code == 0,
-              reduce: false do
-            acc ->
-              set_topic_name_for_id(client_name, topic.topic_id, topic.name)
+              reduce: {[], false} do
+            {acc_tp_ids, acc_any_new} ->
+              new_acc_tp_ids = [{topic.topic_id, topic.name} | acc_tp_ids]
+
               key = {topic.name, partition.partition_index}
 
               case :ets.lookup(table_name, key) do
                 [] ->
                   :ok = upsert_metadata(state, topic, partition)
-                  true
+                  {new_acc_tp_ids, true}
 
                 [tuple_data] ->
                   data = metadata_tuple_to_map(tuple_data)
@@ -114,12 +115,14 @@ defmodule Klife.MetadataCache do
 
                   if Enum.any?(new_data?) do
                     :ok = upsert_metadata(state, topic, partition)
-                    true
+                    {new_acc_tp_ids, true}
                   else
-                    acc
+                    {new_acc_tp_ids, acc_any_new}
                   end
               end
           end
+
+        :ok = set_topic_name_for_id(client_name, Map.new(tp_ids))
 
         if any_new? do
           :ok = PubSub.publish({:metadata_updated, client_name}, %{})
@@ -133,11 +136,13 @@ defmodule Klife.MetadataCache do
   end
 
   def get_topic_name_by_id(client_name, topic_id) do
-    :persistent_term.get({__MODULE__, client_name, topic_id})
+    {__MODULE__, :topic_id_name_map, client_name}
+    |> :persistent_term.get()
+    |> Map.fetch!(topic_id)
   end
 
-  defp set_topic_name_for_id(client_name, topic_id, topic_name) do
-    :persistent_term.put({__MODULE__, client_name, topic_id}, topic_name)
+  defp set_topic_name_for_id(client_name, data) do
+    :persistent_term.put({__MODULE__, :topic_id_name_map, client_name}, data)
   end
 
   defp upsert_metadata(%__MODULE__{} = state, topic_data, partition_data) do
