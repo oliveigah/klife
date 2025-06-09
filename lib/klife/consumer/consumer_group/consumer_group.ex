@@ -46,7 +46,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         "The maximum time in milliseconds that the kafka broker coordinator will wait on the member to revoke it's partitions"
     ],
     fetcher_name: [
-      type: {:or, [:atom, :string]},
+      type: :atom,
       doc:
         "Fetcher name to be used by the consumers of the group. Defaults to client's default fetcher"
     ],

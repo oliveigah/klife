@@ -18,6 +18,6 @@ defmodule MyConsumerGroup do
       "Handling from offset #{first_offset} to offset #{last_offset} from topic #{topic} partition #{partition}"
     )
 
-    {:commit, :all}
+    :commit
   end
 end

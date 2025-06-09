@@ -16,14 +16,21 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc:
         "The maximum amount of bytes to fetch in a single request. Must be lower than fetcher config `max_bytes_per_request`"
     ],
+    max_buffer_bytes: [
+      type: :non_neg_integer,
+      doc:
+        "The maximum amount of bytes the consumer can keep on its internal queue buffer. Defaults to `2 * fetch_max_bytes`"
+    ],
     fetch_interval_ms: [
       type: :non_neg_integer,
       default: 5000,
       doc: """
-      Time in milliseconds that the consumer will try to fetch new data from the broker after it runs out of records to process.
+      Time in milliseconds that the consumer will wait before trying to fetch new data from the broker after it runs out of records to process.
 
       The consumer always tries to optimize fetch requests wait times by issuing requests before it's internal queue is empty. Therefore
       this option is only used for the wait time after a fetch request returns empty.
+
+      TODO: Add exponential backoff description
       """
     ],
     handler_cooldown_ms: [
@@ -56,6 +63,11 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
 
   def from_map(map) do
     to_merge = Map.take(map, Keyword.keys(@opts))
-    Map.merge(%__MODULE__{}, to_merge)
+
+    base_tc = Map.merge(%__MODULE__{}, to_merge)
+
+    Map.update!(base_tc, :max_buffer_bytes, fn v ->
+      if v == nil, do: base_tc.fetch_max_bytes * 2, else: v
+    end)
   end
 end
