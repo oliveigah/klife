@@ -368,4 +368,14 @@ defmodule Klife.TestUtils do
       assert {field, resp_val} == {field, exp_val}
     end)
   end
+
+  def put_test_pid(key, pid) do
+    true = :ets.insert(:test_pids, {key, pid})
+    :ok
+  end
+
+  def get_test_pid(key) do
+    [{^key, pid}] = :ets.lookup(:test_pids, key)
+    pid
+  end
 end

@@ -21,3 +21,5 @@ defmodule MyConsumerGroup do
     :commit
   end
 end
+
+# MyClient.produce_batch  Enum.map(1..50, fn i -> %Klife.Record{topic: "my_consumer_topic", partition: 0, value: "#{i}"} end)

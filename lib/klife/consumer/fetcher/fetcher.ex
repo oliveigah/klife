@@ -101,7 +101,7 @@ defmodule Klife.Consumer.Fetcher do
     wait_fetch_response(timeout, length(tpo_list))
   end
 
-  def async_fetch({t, p, o}, client, opts \\ []) do
+  def fetch_async({t, p, o}, client, opts \\ []) do
     fetcher = opts[:fetcher] || client.get_default_fetcher()
     iso_level = opts[:isolation_level] || :read_committed
     max_bytes = opts[:max_bytes] || 100_000

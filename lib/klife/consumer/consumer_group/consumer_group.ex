@@ -54,6 +54,16 @@ defmodule Klife.Consumer.ConsumerGroup do
       type: :pos_integer,
       default: 1,
       doc: "How many committer processes will be started for the consumer group"
+    ],
+    isolation_level: [
+      type: {:in, [:read_committed, :read_uncommitted]},
+      default: :read_committed,
+      doc:
+        "Define if the consumers of the consumer group will receive uncommitted transactional records"
+    ],
+    context: [
+      type: :any,
+      doc: "Any metadata that must be available "
     ]
   ]
 
@@ -116,6 +126,10 @@ defmodule Klife.Consumer.ConsumerGroup do
         Klife.Consumer.ConsumerGroup.handle_consumer_down(state, ref, reason)
       end
 
+      def handle_info({:EXIT, _from, reason}, state) do
+        exit(reason)
+      end
+
       def terminate(reason, state) do
         Klife.Consumer.ConsumerGroup.handle_terminate(state, reason)
       end
@@ -135,17 +149,16 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.put(:member_id, UUID.uuid4())
 
     GenServer.start_link(cg_mod, validated_args,
-      name: get_process_name(cg_mod.klife_client(), cg_mod)
+      name: get_process_name(cg_mod.klife_client(), cg_mod, validated_args.group_name)
     )
   end
 
-  defp get_process_name(client_name, cg_mod) do
-    via_tuple({__MODULE__, client_name, cg_mod})
+  defp get_process_name(client_name, cg_mod, group_name) do
+    via_tuple({__MODULE__, client_name, cg_mod, group_name})
   end
 
-  def send_consumer_up(cg_mod, topic_id, partition) do
-    cg = get_process_name(cg_mod.klife_client(), cg_mod)
-    GenServer.cast(cg, {:consumer_up, {topic_id, partition, self()}})
+  def send_consumer_up(cg_pid, topic_id, partition) do
+    GenServer.cast(cg_pid, {:consumer_up, {topic_id, partition, self()}})
   end
 
   def init(mod, args_map) do
@@ -163,10 +176,6 @@ defmodule Klife.Consumer.ConsumerGroup do
     init_state =
       %__MODULE__{
         mod: mod,
-        topics:
-          args_map.topics
-          |> Enum.map(fn tc -> {tc.name, TopicConfig.from_map(tc)} end)
-          |> Map.new(),
         group_name: args_map.group_name,
         instance_id: args_map.instance_id,
         rebalance_timeout_ms: args_map.rebalance_timeout_ms,
@@ -182,6 +191,14 @@ defmodule Klife.Consumer.ConsumerGroup do
         committers_distribution: %{}
       }
       |> get_coordinator!()
+
+    init_state = %__MODULE__{
+      init_state
+      | topics:
+          args_map.topics
+          |> Enum.map(fn tc -> {tc.name, TopicConfig.from_map(tc, init_state)} end)
+          |> Map.new()
+    }
 
     send(self(), :heartbeat)
 
@@ -229,7 +246,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     Helpers.with_timeout!(fun, :timer.seconds(30))
   end
 
-  def polling_allowed?(client_name, cg_mod, topic_id, partition) do
+  def processing_allowed?(client_name, cg_mod, topic_id, partition) do
     client_name
     |> get_acked_topic_partitions_table(cg_mod)
     |> :ets.member({topic_id, partition})
@@ -333,13 +350,12 @@ defmodule Klife.Consumer.ConsumerGroup do
           consumer_group_mod: state.mod,
           batcher_config: [
             # TODO: Make config
-            {:batch_wait_time_ms, 5},
+            {:batch_wait_time_ms, 0},
             {:max_in_flight, 5}
           ]
         ]
 
-        {:ok, _pid} =
-          DynamicSupervisor.start_child(state.consumer_supervisor, {Committer, committer_args})
+        {:ok, _pid} = Committer.start_link(committer_args)
 
         {committer_id, MapSet.new()}
       end)
@@ -412,8 +428,15 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def handle_terminate(%__MODULE__{} = state, _reason) do
-    # TODO: Maybe we should also use the termination reason to deefine leaving epoch
+    # TODO: Maybe we should also use the termination reason to define leaving epoch
     leaving_epoch = if state.instance_id != nil, do: -2, else: -1
+
+    # make timeout a config
+    state.consumers_monitor_map
+    |> Task.async_stream(fn {_k, {tid, p}} ->
+      :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p)
+    end)
+    |> Enum.to_list()
 
     exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
 
@@ -445,10 +468,22 @@ defmodule Klife.Consumer.ConsumerGroup do
       partition_idx: partition,
       committer_id: committer_id,
       topic_config: state.topics[topic_name],
-      client_name: state.client_name
+      client_name: state.client_name,
+      consumer_group_name: state.group_name,
+      consumer_group_member_id: state.member_id,
+      consumer_group_epoch: state.epoch,
+      consumer_group_coordinator_id: state.coordinator_id,
+      consumer_group_pid: self()
     ]
 
-    case DynamicSupervisor.start_child(state.consumer_supervisor, {Consumer, consumer_args}) do
+    spec = %{
+      id: {topic_id, partition},
+      start: {Consumer, :start_link, [consumer_args]},
+      restart: :transient,
+      type: :worker
+    }
+
+    case DynamicSupervisor.start_child(state.consumer_supervisor, spec) do
       {:ok, pid} -> {:ok, pid}
       {:error, {:already_started, pid}} -> {:ok, pid}
     end

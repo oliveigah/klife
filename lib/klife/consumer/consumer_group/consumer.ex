@@ -13,6 +13,14 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   alias Klife.Consumer.Committer
 
+  alias Klife.Connection.Broker
+
+  alias KlifeProtocol.Messages, as: M
+
+  alias Klife.Consumer.Fetcher
+
+  require Logger
+
   defstruct [
     :cg_mod,
     :topic_config,
@@ -20,7 +28,18 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :partition_idx,
     :topic_name,
     :committer_id,
-    :client_name
+    :client_name,
+    :cg_name,
+    :cg_member_id,
+    :cg_member_epoch,
+    :cg_coordinator_id,
+    :cg_pid,
+    :latest_committed_offset,
+    :records_queue,
+    :records_queue_size,
+    :unconfirmed_commits_count,
+    :empty_fetch_results_count,
+    :next_fetch_ref
   ]
 
   def start_link(args) do
@@ -40,7 +59,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def init(args_map) do
-    IO.inspect("INITING CONSUMER FOR #{args_map.topic_id} #{args_map.partition_idx}")
+    # IO.inspect("INITING CONSUMER FOR #{args_map.topic_id} #{args_map.partition_idx}")
     client_name = args_map.client_name
     topic_name = MetadataCache.get_topic_name_by_id(client_name, args_map.topic_id)
 
@@ -52,19 +71,122 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         topic_config: args_map.topic_config,
         committer_id: args_map.committer_id,
         client_name: client_name,
-        cg_mod: args_map.consumer_group_mod
+        cg_mod: args_map.consumer_group_mod,
+        cg_name: args_map.consumer_group_name,
+        cg_member_id: args_map.consumer_group_member_id,
+        cg_member_epoch: args_map.consumer_group_epoch,
+        cg_coordinator_id: args_map.consumer_group_coordinator_id,
+        unconfirmed_commits_count: 0,
+        empty_fetch_results_count: 0,
+        next_fetch_ref: nil,
+        records_queue: :queue.new(),
+        records_queue_size: 0,
+        cg_pid: args_map.consumer_group_pid
       }
+
+    state = get_latest_committed_offset(state)
 
     :ok =
       ConsumerGroup.send_consumer_up(
-        state.cg_mod,
+        state.cg_pid,
         state.topic_id,
         state.partition_idx
       )
 
     send(self(), :poll_records)
 
+    if function_exported?(state.cg_mod, :handle_consumer_start, 2) do
+      :ok = state.cg_mod.handle_consumer_start(state.topic_name, state.partition_idx)
+    end
+
     {:ok, state}
+  end
+
+  defp get_latest_committed_offset(%__MODULE__{} = state) do
+    content = %{
+      groups: [
+        %{
+          group_id: state.cg_name,
+          member_id: state.cg_member_id,
+          member_epoch: state.cg_member_epoch,
+          topics: [
+            %{name: state.topic_name, partition_indexes: [state.partition_idx]}
+          ]
+        }
+      ],
+      require_stable: true
+    }
+
+    %TopicConfig{} = tc = state.topic_config
+
+    case Broker.send_message(M.OffsetFetch, state.client_name, state.cg_coordinator_id, content) do
+      {:ok,
+       %{
+         content: %{
+           groups: [%{error_code: 0, topics: [%{partitions: [%{committed_offset: -1}]}]}]
+         }
+       }} ->
+        latest_offset =
+          get_start_offset(
+            state.client_name,
+            state.topic_name,
+            state.partition_idx,
+            tc.offset_reset_policy
+          )
+
+        %__MODULE__{state | latest_committed_offset: latest_offset - 1}
+
+      {:ok,
+       %{
+         content: %{
+           groups: [%{error_code: 0, topics: [%{partitions: [%{committed_offset: co}]}]}]
+         }
+       }} ->
+        %__MODULE__{latest_committed_offset: co}
+
+      {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
+        Logger.error(
+          "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.OffsetFetch)} call"
+        )
+
+        raise "Unexpected"
+    end
+  end
+
+  defp get_start_offset(client, topic, partition, latest_or_earliest) do
+    broker = Klife.MetadataCache.get_metadata_attribute(client, topic, partition, :leader_id)
+
+    content = %{
+      replica_id: -1,
+      isolation_level: 1,
+      topics: [
+        %{
+          name: topic,
+          partitions: [
+            %{
+              partition_index: partition,
+              timestamp: if(latest_or_earliest == :earliest, do: -2, else: -1)
+            }
+          ]
+        }
+      ]
+    }
+
+    case Broker.send_message(M.ListOffsets, client, broker, content) do
+      {:ok, %{content: %{topics: [%{partitions: [%{error_code: 0, offset: offset}]}]}}} ->
+        offset
+
+      {:ok, %{content: %{topics: [%{partitions: [%{error_code: ec}]}]}}} ->
+        Logger.error(
+          "Error code #{ec} returned from broker for client #{inspect(client)} on #{inspect(M.ListOffsets)} call"
+        )
+    end
+  end
+
+  def revoke_assignment(client_name, cg_mod, topic_id, partition) do
+    client_name
+    |> get_process_name(cg_mod, topic_id, partition)
+    |> GenServer.call(:assignment_revoked)
   end
 
   def revoke_assignment_async(client_name, cg_mod, topic_id, partition) do
@@ -75,46 +197,212 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def handle_info(:poll_records, %__MODULE__{} = state) do
-    cg_mod = state.cg_mod
-    %TopicConfig{} = tc = state.topic_config
-
-    polling_allowed? =
-      ConsumerGroup.polling_allowed?(
-        state.client_name,
-        cg_mod,
-        state.topic_id,
-        state.partition_idx
-      )
-
-    new_state =
-      if polling_allowed? do
-        mock_list = Enum.map(1..tc.handler_max_batch_size, fn i -> %Record{offset: i} end)
-        cg_mod.handle_record_batch(state.topic_name, state.partition_idx, mock_list)
-
-        commit_data = %Committer.BatchItem{
-          callback_pid: self(),
-          offset_to_commit: 10,
-          partition: state.partition_idx,
-          topic_name: state.topic_name
-        }
-
-        :ok = Committer.commit(commit_data, state.client_name, state.cg_mod, state.committer_id)
-
-        state
-      else
-        IO.inspect(
-          "Skip polling from topic #{state.topic_name} partition #{state.partition_idx} because it is not acked..."
-        )
-
-        state
+    offset_to_fetch =
+      case :queue.out_r(state.records_queue) do
+        {{:value, %Record{offset: offset}}, _queue} -> offset + 1
+        {:empty, _queue} -> state.latest_committed_offset + 1
       end
 
-    Process.send_after(self(), :poll_records, state.topic_config.fetch_interval_ms)
+    %TopicConfig{} = topic_config = state.topic_config
+
+    opts = [
+      fetcher: topic_config.fetcher_name,
+      isolation_level: topic_config.isolation_level,
+      max_bytes: topic_config.fetch_max_bytes
+    ]
+
+    {:ok, _} =
+      Fetcher.fetch_async(
+        {state.topic_name, state.partition_idx, offset_to_fetch},
+        state.client_name,
+        opts
+      )
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:klife_fetch_response, {_t, _p, _o}, {:ok, []}}, %__MODULE__{} = state) do
+    backoff_ratio = min((state.empty_fetch_results_count + 1) / 100, 1)
+    next_fetch_wait_time = ceil(backoff_ratio * state.topic_config.fetch_interval_ms)
+    ref = Process.send_after(self(), :poll_records, next_fetch_wait_time)
+
+    # IO.inspect("empty resp from offset #{o} for #{state.topic_name} #{state.partition_idx}")
+
+    new_state = %__MODULE__{
+      state
+      | empty_fetch_results_count: state.empty_fetch_results_count + 1,
+        next_fetch_ref: ref
+    }
+
     {:noreply, new_state}
   end
 
   @impl true
-  def handle_cast(:assignment_revoked, %__MODULE__{} = state) do
-    {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}
+  def handle_info({:klife_fetch_response, {_t, _p, _o}, {:ok, recs}}, %__MODULE__{} = state) do
+    new_queue =
+      Enum.reduce(recs, state.records_queue, fn rec, acc_queue -> :queue.in(rec, acc_queue) end)
+
+    new_state = %__MODULE__{
+      state
+      | records_queue: new_queue,
+        records_queue_size: state.records_queue_size + length(recs),
+        next_fetch_ref: nil
+    }
+
+    send(self(), :handle_records)
+
+    {:noreply, new_state}
   end
+
+  @impl true
+  def handle_info({:klife_fetch_response, {_t, _p, _o}, {:error, reason}}, %__MODULE__{} = state) do
+    Logger.error("Unexpected fetch error on consumer: #{reason}")
+    Process.send_after(self(), :poll_records, 5000)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:handle_records, %__MODULE__{} = state) do
+    %__MODULE__{
+      cg_mod: cg_mod,
+      client_name: client_name,
+      topic_id: topic_id,
+      topic_name: topic_name,
+      partition_idx: partition_idx,
+      records_queue: rec_queue,
+      records_queue_size: records_queue_size,
+      topic_config: %TopicConfig{
+        handler_max_batch_size: max_batch_size,
+        handler_max_commits_in_flight: max_unconfirmed_commits
+      },
+      unconfirmed_commits_count: unconfirmed_commits_count
+    } = state
+
+    processing_allowed? =
+      ConsumerGroup.processing_allowed?(client_name, cg_mod, topic_id, partition_idx)
+
+    has_records_to_process? = records_queue_size > 0
+
+    cond do
+      not processing_allowed? ->
+        # IO.inspect(
+        #   "Skip polling from topic #{topic_name} partition #{partition_idx} because it is not acked..."
+        # )
+
+        {:noreply, state}
+
+      not has_records_to_process? ->
+        # IO.inspect("No records for topic #{topic_name} partition #{partition_idx} ...")
+
+        {:noreply, state}
+
+      unconfirmed_commits_count > max_unconfirmed_commits ->
+        # IO.inspect("Waiting for commits for topic #{topic_name} partition #{partition_idx} ...")
+
+        {:noreply, state}
+
+      true ->
+        max_recs = min(max_batch_size, records_queue_size)
+
+        {recs, new_queue} =
+          Enum.reduce(1..max_recs, {[], rec_queue}, fn _i, {acc_recs, acc_queue} ->
+            {{:value, rec}, new_queue} = :queue.out(acc_queue)
+            {[rec | acc_recs], new_queue}
+          end)
+
+        recs = Enum.reverse(recs)
+
+        {parsed_user_result, opts} =
+          case cg_mod.handle_record_batch(topic_name, partition_idx, recs) do
+            [_, _] = result -> {result, []}
+            {[_, _] = result, opts} -> {result, opts}
+            {action, opts} -> {Enum.map(recs, fn rec -> {action, rec} end), opts}
+            action -> {Enum.map(recs, fn rec -> {action, rec} end), []}
+          end
+
+        # TODO: Validate result list inconsistencies
+
+        groupped_recs =
+          Enum.group_by(
+            parsed_user_result,
+            fn {action, _rec} -> user_action_to_commit_group(action) end
+          )
+
+        to_commit_recs = groupped_recs[:commit] || []
+        to_retry_recs = groupped_recs[:retry] || []
+
+        new_queue =
+          to_retry_recs
+          |> Enum.reverse()
+          |> Enum.reduce(new_queue, fn {_action, rec}, acc_queue ->
+            new_rec = Map.update(rec, :consumer_attempts, 1, fn att -> att + 1 end)
+            :queue.in_r(new_rec, acc_queue)
+          end)
+
+        # TODO: Add async commit call here
+
+        new_queue_size = records_queue_size - length(to_commit_recs)
+
+        ref =
+          if new_queue_size <= 2 * max_batch_size and state.next_fetch_ref == nil do
+            Process.send_after(self(), :poll_records, 0)
+          else
+            state.next_fetch_ref
+          end
+
+        new_state =
+          %__MODULE__{
+            state
+            | records_queue: new_queue,
+              records_queue_size: new_queue_size,
+              # unconfirmed_commits_count: unconfirmed_commits_count + 1,
+              latest_committed_offset: elem(List.last(to_commit_recs), 1).offset,
+              next_fetch_ref: ref
+          }
+
+        :ok = Process.send(self(), :handle_records, [])
+
+        {:noreply, new_state}
+    end
+  end
+
+  @impl true
+  def handle_info({:assignment_revoked, waiting_pid}, %__MODULE__{} = state) do
+    do_handle_revoke(state, waiting_pid)
+  end
+
+  @impl true
+  def handle_call(:assignment_revoked, from, %__MODULE__{} = state) do
+    do_handle_revoke(state, from)
+  end
+
+  @impl true
+  def handle_cast(:assignment_revoked, %__MODULE__{} = state) do
+    do_handle_revoke(state, nil)
+  end
+
+  defp do_handle_revoke(%__MODULE__{} = state, waiting_pid) do
+    if state.unconfirmed_commits_count == 0 do
+      if waiting_pid, do: GenServer.reply(waiting_pid, :ok)
+
+      {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}
+    else
+      Process.send_after(self(), {:assignment_revoked, waiting_pid}, 50)
+      {:noreply, state}
+    end
+  end
+
+  @impl true
+  def terminate(reason, %__MODULE__{} = state) do
+    if function_exported?(state.cg_mod, :handle_consumer_stop, 3) do
+      :ok = state.cg_mod.handle_consumer_stop(state.topic_name, state.partition_idx, reason)
+    end
+  end
+
+  def user_action_to_commit_group(:retry), do: :retry
+  def user_action_to_commit_group(:commit), do: :commit
+  def user_action_to_commit_group({:commit, _str}), do: :commit
+  def user_action_to_commit_group({:skip, _str}), do: :commit
+  def user_action_to_commit_group({:move_to, _str}), do: :commit
 end

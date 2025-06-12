@@ -10,6 +10,16 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc:
         "Fetcher name to be used by the consumers of this topic. Overrides the one defined on the consumer group."
     ],
+    isolation_level: [
+      type: {:in, [:read_committed, :read_uncommitted]},
+      doc: "May override the isolation level defined on the consumer group"
+    ],
+    offset_reset_policy: [
+      type: {:in, [:latest, :earliest, :error]},
+      default: :latest,
+      doc:
+        "Define from which offset the consumer will start processing records when no previous committed offset is found."
+    ],
     fetch_max_bytes: [
       type: :non_neg_integer,
       default: 500_000,
@@ -40,13 +50,13 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       Time in milliseconds that the consumer will wait before handling new records. Can be overrided for one cycle by the handler return value.
       """
     ],
-    handler_max_pending_commits: [
+    handler_max_commits_in_flight: [
       type: :non_neg_integer,
       default: 0,
       doc: """
-      Defines the maximum number of uncommitted processing cycles allowed before pausing the processing of new records.
+      Controls how many records can be committed but still waiting for confirmation before the consumer stops processing new records.
 
-      If set to 0, a new processing cycle will start only after the previous one is fully commited on the broker.
+      When this limit is reached, processing pauses until confirmations are received. Set to 0 to process records one batch at a time - each batch must be fully confirmed before starting the next.
       """
     ],
     handler_max_batch_size: [
@@ -61,13 +71,17 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
 
   def get_opts, do: @opts
 
-  def from_map(map) do
+  def from_map(map, cg_data) do
     to_merge = Map.take(map, Keyword.keys(@opts))
 
     base_tc = Map.merge(%__MODULE__{}, to_merge)
 
-    Map.update!(base_tc, :max_buffer_bytes, fn v ->
+    base_tc
+    |> Map.update!(:max_buffer_bytes, fn v ->
       if v == nil, do: base_tc.fetch_max_bytes * 2, else: v
+    end)
+    |> Map.update!(:fetcher_name, fn v ->
+      if v == nil, do: cg_data.fetcher_name, else: v
     end)
   end
 end
