@@ -36,7 +36,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       def handle_record_batch(topic, partition, records) do
         parent = TestUtils.get_test_pid(@pid_key)
 
-        Enum.each(records, fn r ->
+        Enum.each(records, fn %Record{} = r ->
           send(parent, {__MODULE__, :processed, topic, partition, r})
         end)
 

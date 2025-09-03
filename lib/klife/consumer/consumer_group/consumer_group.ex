@@ -60,10 +60,6 @@ defmodule Klife.Consumer.ConsumerGroup do
       default: :read_committed,
       doc:
         "Define if the consumers of the consumer group will receive uncommitted transactional records"
-    ],
-    context: [
-      type: :any,
-      doc: "Any metadata that must be available "
     ]
   ]
 
@@ -130,6 +126,10 @@ defmodule Klife.Consumer.ConsumerGroup do
         exit(reason)
       end
 
+      def handle_call(:member_epoch, _from, state) do
+        Klife.Consumer.ConsumerGroup.handle_member_epoch(state)
+      end
+
       def terminate(reason, state) do
         Klife.Consumer.ConsumerGroup.handle_terminate(state, reason)
       end
@@ -159,6 +159,10 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   def send_consumer_up(cg_pid, topic_id, partition) do
     GenServer.cast(cg_pid, {:consumer_up, {topic_id, partition, self()}})
+  end
+
+  def get_member_epoch(cg_pid) do
+    GenServer.call(cg_pid, :member_epoch)
   end
 
   def init(mod, args_map) do
@@ -252,6 +256,10 @@ defmodule Klife.Consumer.ConsumerGroup do
     |> :ets.member({topic_id, partition})
   end
 
+  def handle_member_epoch(%__MODULE__{} = state) do
+    {:reply, state.epoch, state}
+  end
+
   def handle_heartbeat(%__MODULE__{} = state) do
     new_state =
       state
@@ -320,11 +328,17 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         cond do
           coordinator_error? ->
-            get_coordinator!(state)
+            if state.coordinator_id != nil do
+              # The easiest thing to do is restart the consumer group, because it guarantees
+              # that all consumers/committers will be forcefully stopped
+              raise "Coordinator error on heartbeat. Error Code: #{ec} Error Message: #{em}"
+            else
+              get_coordinator!(state)
+            end
 
           fence_error? ->
             # The easiest thing to do is restart the consumer group, because it guarantees
-            # that all consumers will be forcefully stopped
+            # that all consumers/committers will be forcefully stopped
             raise "Fence error on heartbeat. Error Code: #{ec} Error Message: #{em}"
 
           # This should happen only when the previous instance is leaving the group
@@ -339,15 +353,20 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   defp maybe_start_committer(%__MODULE__{} = state)
        when map_size(state.committers_distribution) == 0 do
+    # TODO: Handle coordinator changes on committer
     new_dist =
       1..state.committers_count
       |> Enum.map(fn committer_id ->
         committer_args = [
+          group_id: state.group_name,
           broker_id: state.coordinator_id,
           batcher_id: committer_id,
           member_id: state.member_id,
+          member_epoch: state.epoch,
           client_name: state.client_name,
           consumer_group_mod: state.mod,
+          group_intance_id: state.instance_id,
+          cg_pid: self(),
           batcher_config: [
             # TODO: Make config
             {:batch_wait_time_ms, 0},

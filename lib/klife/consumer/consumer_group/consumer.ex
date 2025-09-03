@@ -35,11 +35,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :cg_coordinator_id,
     :cg_pid,
     :latest_committed_offset,
+    :latest_processed_offset,
     :records_queue,
     :records_queue_size,
     :unconfirmed_commits_count,
     :empty_fetch_results_count,
-    :next_fetch_ref
+    :next_fetch_ref,
+    :leader_epoch
   ]
 
   def start_link(args) do
@@ -59,7 +61,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def init(args_map) do
-    # IO.inspect("INITING CONSUMER FOR #{args_map.topic_id} #{args_map.partition_idx}")
     client_name = args_map.client_name
     topic_name = MetadataCache.get_topic_name_by_id(client_name, args_map.topic_id)
 
@@ -81,7 +82,14 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         next_fetch_ref: nil,
         records_queue: :queue.new(),
         records_queue_size: 0,
-        cg_pid: args_map.consumer_group_pid
+        cg_pid: args_map.consumer_group_pid,
+        leader_epoch:
+          Klife.MetadataCache.get_metadata_attribute(
+            client_name,
+            topic_name,
+            args_map.partition_idx,
+            :leader_epoch
+          )
       }
 
     state = get_latest_committed_offset(state)
@@ -134,7 +142,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             tc.offset_reset_policy
           )
 
-        %__MODULE__{state | latest_committed_offset: latest_offset - 1}
+        %__MODULE__{
+          state
+          | latest_committed_offset: latest_offset - 1,
+            latest_processed_offset: latest_offset - 1
+        }
 
       {:ok,
        %{
@@ -142,7 +154,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
            groups: [%{error_code: 0, topics: [%{partitions: [%{committed_offset: co}]}]}]
          }
        }} ->
-        %__MODULE__{latest_committed_offset: co}
+        %__MODULE__{state | latest_committed_offset: co, latest_processed_offset: co}
 
       {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
         Logger.error(
@@ -200,7 +212,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     offset_to_fetch =
       case :queue.out_r(state.records_queue) do
         {{:value, %Record{offset: offset}}, _queue} -> offset + 1
-        {:empty, _queue} -> state.latest_committed_offset + 1
+        {:empty, _queue} -> state.latest_processed_offset + 1
       end
 
     %TopicConfig{} = topic_config = state.topic_config
@@ -226,8 +238,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     backoff_ratio = min((state.empty_fetch_results_count + 1) / 100, 1)
     next_fetch_wait_time = ceil(backoff_ratio * state.topic_config.fetch_interval_ms)
     ref = Process.send_after(self(), :poll_records, next_fetch_wait_time)
-
-    # IO.inspect("empty resp from offset #{o} for #{state.topic_name} #{state.partition_idx}")
 
     new_state = %__MODULE__{
       state
@@ -263,6 +273,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
+  def handle_info({:offset_committed, committed_offset}, %__MODULE__{} = state) do
+    send(self(), :handle_records)
+    {:noreply, %__MODULE__{state | latest_committed_offset: committed_offset}}
+  end
+
+  @impl true
   def handle_info(:handle_records, %__MODULE__{} = state) do
     %__MODULE__{
       cg_mod: cg_mod,
@@ -276,30 +292,32 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         handler_max_batch_size: max_batch_size,
         handler_max_commits_in_flight: max_unconfirmed_commits
       },
-      unconfirmed_commits_count: unconfirmed_commits_count
+      latest_committed_offset: latest_committed_offset,
+      latest_processed_offset: latest_processed_offset
     } = state
 
     processing_allowed? =
       ConsumerGroup.processing_allowed?(client_name, cg_mod, topic_id, partition_idx)
 
     has_records_to_process? = records_queue_size > 0
+    commit_lag = latest_processed_offset - latest_committed_offset
 
     cond do
       not processing_allowed? ->
-        # IO.inspect(
-        #   "Skip polling from topic #{topic_name} partition #{partition_idx} because it is not acked..."
-        # )
-
+        Process.send_after(self(), :handle_records, 1000)
         {:noreply, state}
 
       not has_records_to_process? ->
-        # IO.inspect("No records for topic #{topic_name} partition #{partition_idx} ...")
+        ref =
+          if state.next_fetch_ref == nil do
+            Process.send_after(self(), :poll_records, 0)
+          else
+            state.next_fetch_ref
+          end
 
-        {:noreply, state}
+        {:noreply, %{state | next_fetch_ref: ref}}
 
-      unconfirmed_commits_count > max_unconfirmed_commits ->
-        # IO.inspect("Waiting for commits for topic #{topic_name} partition #{partition_idx} ...")
-
+      commit_lag > max_unconfirmed_commits ->
         {:noreply, state}
 
       true ->
@@ -315,8 +333,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         {parsed_user_result, opts} =
           case cg_mod.handle_record_batch(topic_name, partition_idx, recs) do
-            [_, _] = result -> {result, []}
-            {[_, _] = result, opts} -> {result, opts}
+            [_ | _] = result -> {result, []}
+            {[_ | _] = result, opts} -> {result, opts}
             {action, opts} -> {Enum.map(recs, fn rec -> {action, rec} end), opts}
             action -> {Enum.map(recs, fn rec -> {action, rec} end), []}
           end
@@ -340,7 +358,24 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             :queue.in_r(new_rec, acc_queue)
           end)
 
-        # TODO: Add async commit call here
+        latest_processed_offset =
+          case List.last(to_commit_recs) do
+            {:commit, %Record{} = rec} ->
+              commit_data = %Committer.BatchItem{
+                callback_pid: self(),
+                leader_epoch: state.leader_epoch,
+                offset_to_commit: rec.offset,
+                partition: state.partition_idx,
+                topic_name: state.topic_name
+              }
+
+              Committer.commit(commit_data, state.client_name, state.cg_mod, state.committer_id)
+
+              rec.offset
+
+            _ ->
+              state.latest_processed_offset
+          end
 
         new_queue_size = records_queue_size - length(to_commit_recs)
 
@@ -356,12 +391,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             state
             | records_queue: new_queue,
               records_queue_size: new_queue_size,
-              # unconfirmed_commits_count: unconfirmed_commits_count + 1,
-              latest_committed_offset: elem(List.last(to_commit_recs), 1).offset,
+              latest_processed_offset: latest_processed_offset,
               next_fetch_ref: ref
           }
 
-        :ok = Process.send(self(), :handle_records, [])
+        next_handle_delay = Keyword.get(opts, :handler_cooldown_ms, 0)
+        Process.send_after(self(), :handle_records, next_handle_delay)
 
         {:noreply, new_state}
     end
@@ -383,7 +418,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   defp do_handle_revoke(%__MODULE__{} = state, waiting_pid) do
-    if state.unconfirmed_commits_count == 0 do
+    if state.latest_committed_offset == state.latest_processed_offset do
       if waiting_pid, do: GenServer.reply(waiting_pid, :ok)
 
       {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}

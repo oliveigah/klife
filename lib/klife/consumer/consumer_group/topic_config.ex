@@ -39,8 +39,6 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
 
       The consumer always tries to optimize fetch requests wait times by issuing requests before it's internal queue is empty. Therefore
       this option is only used for the wait time after a fetch request returns empty.
-
-      TODO: Add exponential backoff description
       """
     ],
     handler_cooldown_ms: [
@@ -56,7 +54,9 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc: """
       Controls how many records can be committed but still waiting for confirmation before the consumer stops processing new records.
 
-      When this limit is reached, processing pauses until confirmations are received. Set to 0 to process records one batch at a time - each batch must be fully confirmed before starting the next.
+      When this limit is reached, processing pauses until confirmations are received.
+
+      Set it to 0 to process records one batch at a time so each batch must be fully committed before starting the next.
       """
     ],
     handler_max_batch_size: [

@@ -160,6 +160,7 @@ defmodule Klife.MetadataCache do
         topic_name: topic_data.name,
         partition_idx: partition_data.partition_index,
         leader_id: partition_data.leader_id,
+        leader_epoch: partition_data.leader_epoch,
         topic_id: topic_data.topic_id,
         max_partition: max_partition,
         default_producer: topic_conf[:default_producer] || client.get_default_producer(),
@@ -176,10 +177,11 @@ defmodule Klife.MetadataCache do
     topic_name: 1,
     partition_idx: 2,
     leader_id: 3,
-    topic_id: 4,
-    max_partition: 5,
-    default_producer: 6,
-    default_partitioner: 7
+    leader_epoch: 4,
+    topic_id: 5,
+    max_partition: 6,
+    default_producer: 7,
+    default_partitioner: 8
   }
 
   defp metadata_table(client_name),
