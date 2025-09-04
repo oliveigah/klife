@@ -378,4 +378,26 @@ defmodule Klife.TestUtils do
     [{^key, pid}] = :ets.lookup(:test_pids, key)
     pid
   end
+
+  def init_counter(key) do
+    :persistent_term.put(key, :atomics.new(1, []))
+  end
+
+  def add_counter(key) do
+    key
+    |> :persistent_term.get()
+    |> :atomics.add(1, 1)
+  end
+
+  def get_counter(key) do
+    key
+    |> :persistent_term.get()
+    |> :atomics.get(1)
+  end
+
+  def add_get_counter(key) do
+    key
+    |> :persistent_term.get()
+    |> :atomics.add_get(1, 1)
+  end
 end

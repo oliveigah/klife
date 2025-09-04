@@ -48,15 +48,15 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       Time in milliseconds that the consumer will wait before handling new records. Can be overrided for one cycle by the handler return value.
       """
     ],
-    handler_max_commits_in_flight: [
+    handler_max_commit_lag: [
       type: :non_neg_integer,
       default: 0,
       doc: """
-      Controls how many records can be committed but still waiting for confirmation before the consumer stops processing new records.
+      Controls how many records can be waiting for commit confirmation before the consumer stops processing new records.
 
       When this limit is reached, processing pauses until confirmations are received.
 
-      Set it to 0 to process records one batch at a time so each batch must be fully committed before starting the next.
+      Set it to 0 to process records one batch at a time so each processing cycle must be fully committed before starting the next.
       """
     ],
     handler_max_batch_size: [

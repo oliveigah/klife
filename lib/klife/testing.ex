@@ -53,6 +53,19 @@ defmodule Klife.Testing do
     do: raise("all_produced/3 must have at least one of the following opts value, key or headers")
 
   def all_produced(client, topic, search_opts) do
+    case do_all_produced(client, topic, search_opts) do
+      # Still do not know why, but sometimes read immediatly after write is failling, investigate later.
+      # Until then, sleep a bit and retry
+      [] ->
+        Process.sleep(10)
+        do_all_produced(client, topic, search_opts)
+
+      resp ->
+        resp
+    end
+  end
+
+  defp do_all_produced(client, topic, search_opts) do
     metas =
       client
       |> MetadataCache.get_all_metadata()

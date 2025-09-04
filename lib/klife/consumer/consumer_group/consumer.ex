@@ -290,7 +290,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       records_queue_size: records_queue_size,
       topic_config: %TopicConfig{
         handler_max_batch_size: max_batch_size,
-        handler_max_commits_in_flight: max_unconfirmed_commits
+        handler_max_commit_lag: max_commit_lag
       },
       latest_committed_offset: latest_committed_offset,
       latest_processed_offset: latest_processed_offset
@@ -300,11 +300,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       ConsumerGroup.processing_allowed?(client_name, cg_mod, topic_id, partition_idx)
 
     has_records_to_process? = records_queue_size > 0
-    commit_lag = latest_processed_offset - latest_committed_offset
+    curr_commit_lag = latest_processed_offset - latest_committed_offset
 
     cond do
       not processing_allowed? ->
-        Process.send_after(self(), :handle_records, 1000)
+        Process.send_after(self(), :handle_records, 500)
         {:noreply, state}
 
       not has_records_to_process? ->
@@ -317,7 +317,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         {:noreply, %{state | next_fetch_ref: ref}}
 
-      commit_lag > max_unconfirmed_commits ->
+      curr_commit_lag > max_commit_lag ->
         {:noreply, state}
 
       true ->
@@ -339,6 +339,33 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             action -> {Enum.map(recs, fn rec -> {action, rec} end), []}
           end
 
+        to_move =
+          Enum.filter(parsed_user_result, fn {action, _rec} ->
+            match?({:move_to, _topic}, action)
+          end)
+          |> Enum.map(fn {{:move_to, topic_to_move}, rec} ->
+            rec
+            |> Map.put(:topic, topic_to_move)
+            |> Map.put(:partition, nil)
+          end)
+
+        if to_move != [] do
+          produce_resp = state.client_name.produce_batch(to_move)
+
+          Enum.zip(to_move, produce_resp)
+          |> Enum.each(fn {original_rec, {status, produced_rec}} ->
+            case status do
+              :ok ->
+                :noop
+
+              :error ->
+                Logger.error("""
+                Failed to move record offset #{original_rec.offset} from topic #{original_rec.topic} partition #{original_rec.partition} to topic #{produced_rec.topic} partition #{produced_rec.partition}. Record will be skipped! Error code: #{produced_rec.error_code}
+                """)
+            end
+          end)
+        end
+
         # TODO: Validate result list inconsistencies
 
         groupped_recs =
@@ -348,6 +375,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
           )
 
         to_commit_recs = groupped_recs[:commit] || []
+
         to_retry_recs = groupped_recs[:retry] || []
 
         new_queue =
@@ -360,7 +388,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         latest_processed_offset =
           case List.last(to_commit_recs) do
-            {:commit, %Record{} = rec} ->
+            {_, %Record{} = rec} ->
               commit_data = %Committer.BatchItem{
                 callback_pid: self(),
                 leader_epoch: state.leader_epoch,
@@ -373,7 +401,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
               rec.offset
 
-            _ ->
+            nil ->
               state.latest_processed_offset
           end
 
@@ -437,6 +465,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   def user_action_to_commit_group(:retry), do: :retry
   def user_action_to_commit_group(:commit), do: :commit
+  def user_action_to_commit_group(:skip), do: :commit
   def user_action_to_commit_group({:commit, _str}), do: :commit
   def user_action_to_commit_group({:skip, _str}), do: :commit
   def user_action_to_commit_group({:move_to, _str}), do: :commit

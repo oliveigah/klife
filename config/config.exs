@@ -156,6 +156,9 @@ config :klife, MyClient,
     [
       name: "test_async_topic_2",
       default_producer: :async_test_producer
+    ],
+    [
+      name: "my_move_to_topic"
     ]
   ]
 
