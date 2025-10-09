@@ -438,6 +438,7 @@ defmodule Klife.Consumer.ConsumerGroup do
   def handle_consumer_down(%__MODULE__{consumers_monitor_map: cmap} = state, monitor_ref, reason) do
     case Map.get(cmap, monitor_ref) do
       nil ->
+        Logger.error("Unexpected consumer down message received!")
         {:stop, reason, state}
 
       {_topic_id, _partition} ->
@@ -450,7 +451,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     # TODO: Maybe we should also use the termination reason to define leaving epoch
     leaving_epoch = if state.instance_id != nil, do: -2, else: -1
 
-    # make timeout a config
+    # TODO: make timeout a config
     state.consumers_monitor_map
     |> Task.async_stream(fn {_k, {tid, p}} ->
       :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p)

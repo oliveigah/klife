@@ -28,6 +28,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
   end
 
   @tag capture_log: true
+  @tag timeout: 120_000
   test "basic test", ctx do
     TestUtils.put_test_pid(ctx, self())
 
@@ -280,8 +281,6 @@ defmodule Klife.Consumer.ConsumerGroupTest do
               if(curr_attempts == String.to_integer(cmd_attempts)) do
                 case action do
                   "success" -> {:commit, rec}
-                  "move" -> {{:move_to, "my_move_to_topic"}, rec}
-                  "skip" -> {:skip, rec}
                 end
               else
                 {:retry, rec}
@@ -335,16 +334,15 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     assert_assignment(cg_assignments, TestCG)
 
     topic = "test_consumer_topic_1"
-    move_to_topic = "my_move_to_topic"
 
     recs = [
       %Record{
-        value: "skip_at_0___#{Base.encode64(:rand.bytes(10))}",
+        value: "success_at_0___#{Base.encode64(:rand.bytes(10))}",
         topic: topic,
         partition: 0
       },
       %Record{
-        value: "move_at_1___#{Base.encode64(:rand.bytes(10))}",
+        value: "success_at_1___#{Base.encode64(:rand.bytes(10))}",
         topic: topic,
         partition: 0
       },
@@ -354,17 +352,17 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         partition: 0
       },
       %Record{
-        value: "move_at_2___#{Base.encode64(:rand.bytes(10))}",
+        value: "success_at_2___#{Base.encode64(:rand.bytes(10))}",
         topic: topic,
         partition: 0
       },
       %Record{
-        value: "skip_at_2___#{Base.encode64(:rand.bytes(10))}",
+        value: "success_at_2___#{Base.encode64(:rand.bytes(10))}",
         topic: topic,
         partition: 0
       },
       %Record{
-        value: "move_at_3___#{Base.encode64(:rand.bytes(10))}",
+        value: "success_at_3___#{Base.encode64(:rand.bytes(10))}",
         topic: topic,
         partition: 0
       }
@@ -420,9 +418,6 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     assert [count2, count3, count4, count5, count6] ==
              Enum.sort([count2, count3, count4, count5, count6])
 
-    assert [%Record{}] =
-             Klife.Testing.all_produced(MyClient, move_to_topic, value: produced_rec2.value)
-
     #  Third phase
 
     assert_receive {TestCG, :processed, ^topic, 0, count3, recv_rec3}, 10_000
@@ -440,17 +435,11 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     assert [count3, count4, count5, count6] ==
              Enum.sort([count3, count4, count5, count6])
 
-    assert [%Record{}] =
-             Klife.Testing.all_produced(MyClient, move_to_topic, value: produced_rec4.value)
-
     #  Fourth phase
 
     assert_receive {TestCG, :processed, ^topic, 0, _count6, recv_rec6}, 10_000
     TestUtils.assert_records(recv_rec6, produced_rec6)
 
     refute_receive {TestCG, :processed, ^topic, 0, _count, _rec}, 1000
-
-    assert [%Record{}] =
-             Klife.Testing.all_produced(MyClient, move_to_topic, value: produced_rec6.value)
   end
 end

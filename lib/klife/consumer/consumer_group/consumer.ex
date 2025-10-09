@@ -318,7 +318,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     cond do
       not processing_allowed? ->
-        Process.send_after(self(), :handle_records, 1000)
+        Process.send_after(self(), :handle_records, 500)
         {:noreply, state}
 
       not has_records_to_process? ->
