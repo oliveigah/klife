@@ -177,7 +177,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
           partitions: [
             %{
               partition_index: partition,
-              timestamp: if(latest_or_earliest == :earliest, do: -2, else: -1)
+              timestamp:
+                case latest_or_earliest do
+                  :earliest -> -2
+                  :latest -> -1
+                end
             }
           ]
         }
@@ -235,7 +239,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o}, {:ok, []}}, %__MODULE__{} = state) do
-    backoff_ratio = min((state.empty_fetch_results_count + 1) / 100, 1)
+    backoff_ratio = min((state.empty_fetch_results_count + 1) / 10, 1)
     next_fetch_wait_time = ceil(backoff_ratio * state.topic_config.fetch_interval_ms)
     ref = Process.send_after(self(), :poll_records, next_fetch_wait_time)
 
@@ -249,14 +253,24 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
-  def handle_info({:klife_fetch_response, {_t, _p, _o}, {:ok, recs}}, %__MODULE__{} = state) do
-    new_queue =
-      Enum.reduce(recs, state.records_queue, fn rec, acc_queue -> :queue.in(rec, acc_queue) end)
+  def handle_info(
+        {:klife_fetch_response, {_t, _p, _o}, {:ok, recs}},
+        %__MODULE__{records_queue: curr_queue, records_queue_size: curr_q_size} = state
+      ) do
+    {new_queue, new_queue_size} =
+      Enum.reduce_while(recs, {curr_queue, curr_q_size}, fn rec, {acc_queue, acc_size} ->
+        new_size = acc_size + 1
+
+        if new_size > state.topic_config.max_queue_size,
+          do: {:halt, {acc_queue, acc_size}},
+          else: {:cont, {:queue.in(rec, acc_queue), new_size}}
+      end)
 
     new_state = %__MODULE__{
       state
       | records_queue: new_queue,
-        records_queue_size: state.records_queue_size + length(recs),
+        records_queue_size: new_queue_size,
+        empty_fetch_results_count: 0,
         next_fetch_ref: nil
     }
 
@@ -290,7 +304,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       records_queue_size: records_queue_size,
       topic_config: %TopicConfig{
         handler_max_batch_size: max_batch_size,
-        handler_max_commit_lag: max_commit_lag
+        handler_max_unacked_commits: max_unacked
       },
       latest_committed_offset: latest_committed_offset,
       latest_processed_offset: latest_processed_offset
@@ -300,11 +314,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       ConsumerGroup.processing_allowed?(client_name, cg_mod, topic_id, partition_idx)
 
     has_records_to_process? = records_queue_size > 0
-    curr_commit_lag = latest_processed_offset - latest_committed_offset
+    curr_unacked = latest_processed_offset - latest_committed_offset
 
     cond do
       not processing_allowed? ->
-        Process.send_after(self(), :handle_records, 500)
+        Process.send_after(self(), :handle_records, 1000)
         {:noreply, state}
 
       not has_records_to_process? ->
@@ -317,7 +331,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         {:noreply, %{state | next_fetch_ref: ref}}
 
-      curr_commit_lag > max_commit_lag ->
+      curr_unacked > max_unacked ->
         {:noreply, state}
 
       true ->
@@ -331,7 +345,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         recs = Enum.reverse(recs)
 
-        {parsed_user_result, opts} =
+        {parsed_user_result, usr_opts} =
           case cg_mod.handle_record_batch(topic_name, partition_idx, recs) do
             [_ | _] = result -> {result, []}
             {[_ | _] = result, opts} -> {result, opts}
@@ -339,43 +353,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             action -> {Enum.map(recs, fn rec -> {action, rec} end), []}
           end
 
-        to_move =
-          Enum.filter(parsed_user_result, fn {action, _rec} ->
-            match?({:move_to, _topic}, action)
-          end)
-          |> Enum.map(fn {{:move_to, topic_to_move}, rec} ->
-            rec
-            |> Map.put(:topic, topic_to_move)
-            |> Map.put(:partition, nil)
-          end)
-
-        if to_move != [] do
-          produce_resp = state.client_name.produce_batch(to_move)
-
-          Enum.zip(to_move, produce_resp)
-          |> Enum.each(fn {original_rec, {status, produced_rec}} ->
-            case status do
-              :ok ->
-                :noop
-
-              :error ->
-                Logger.error("""
-                Failed to move record offset #{original_rec.offset} from topic #{original_rec.topic} partition #{original_rec.partition} to topic #{produced_rec.topic} partition #{produced_rec.partition}. Record will be skipped! Error code: #{produced_rec.error_code}
-                """)
-            end
-          end)
-        end
-
-        # TODO: Validate result list inconsistencies
-
         groupped_recs =
-          Enum.group_by(
-            parsed_user_result,
-            fn {action, _rec} -> user_action_to_commit_group(action) end
-          )
+          Enum.group_by(parsed_user_result, fn {action, _rec} ->
+            user_action_to_commit_group(action)
+          end)
 
         to_commit_recs = groupped_recs[:commit] || []
-
         to_retry_recs = groupped_recs[:retry] || []
 
         new_queue =
@@ -397,7 +380,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
                 topic_name: state.topic_name
               }
 
-              Committer.commit(commit_data, state.client_name, state.cg_mod, state.committer_id)
+              :ok =
+                Committer.commit(commit_data, state.client_name, state.cg_mod, state.committer_id)
 
               rec.offset
 
@@ -423,7 +407,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               next_fetch_ref: ref
           }
 
-        next_handle_delay = Keyword.get(opts, :handler_cooldown_ms, 0)
+        next_handle_delay = Keyword.get(usr_opts, :handler_cooldown_ms, 0)
         Process.send_after(self(), :handle_records, next_handle_delay)
 
         {:noreply, new_state}
@@ -465,8 +449,4 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   def user_action_to_commit_group(:retry), do: :retry
   def user_action_to_commit_group(:commit), do: :commit
-  def user_action_to_commit_group(:skip), do: :commit
-  def user_action_to_commit_group({:commit, _str}), do: :commit
-  def user_action_to_commit_group({:skip, _str}), do: :commit
-  def user_action_to_commit_group({:move_to, _str}), do: :commit
 end

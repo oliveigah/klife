@@ -3,7 +3,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     name: [
       type: :string,
       required: true,
-      doc: "Name of the topic the consumer group will subscribe to"
+      doc: "Name of the topic the consumer group will consume records from"
     ],
     fetcher_name: [
       type: {:or, [:atom, :string]},
@@ -12,10 +12,11 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     ],
     isolation_level: [
       type: {:in, [:read_committed, :read_uncommitted]},
-      doc: "May override the isolation level defined on the consumer group"
+      doc: "May override the isolation level defined on the consumer group",
+      default: :read_committed
     ],
     offset_reset_policy: [
-      type: {:in, [:latest, :earliest, :error]},
+      type: {:in, [:latest, :earliest]},
       default: :latest,
       doc:
         "Define from which offset the consumer will start processing records when no previous committed offset is found."
@@ -23,13 +24,15 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     fetch_max_bytes: [
       type: :non_neg_integer,
       default: 500_000,
-      doc:
-        "The maximum amount of bytes to fetch in a single request. Must be lower than fetcher config `max_bytes_per_request`"
+      doc: """
+      The maximum amount of bytes to fetch in a single request. Must be lower than fetcher config `max_bytes_per_request`.
+      """
     ],
-    max_buffer_bytes: [
+    max_queue_size: [
       type: :non_neg_integer,
-      doc:
-        "The maximum amount of bytes the consumer can keep on its internal queue buffer. Defaults to `2 * fetch_max_bytes`"
+      doc: """
+      The maximum number of items the consumer can keep on its internal queue. Defaults to `20 * handler_max_batch_size`
+      """
     ],
     fetch_interval_ms: [
       type: :non_neg_integer,
@@ -37,8 +40,8 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc: """
       Time in milliseconds that the consumer will wait before trying to fetch new data from the broker after it runs out of records to process.
 
-      The consumer always tries to optimize fetch requests wait times by issuing requests before it's internal queue is empty. Therefore
-      this option is only used for the wait time after a fetch request returns empty.
+      The consumer always tries to optimize fetch requests wait times by issuing requests before it's internal queue is empty (the current threshold is
+      2 * handler_max_batch_size). Therefore this option is only used for the wait time after a fetch request returns empty.
       """
     ],
     handler_cooldown_ms: [
@@ -48,7 +51,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       Time in milliseconds that the consumer will wait before handling new records. Can be overrided for one cycle by the handler return value.
       """
     ],
-    handler_max_commit_lag: [
+    handler_max_unacked_commits: [
       type: :non_neg_integer,
       default: 0,
       doc: """
@@ -64,6 +67,22 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       default: 10,
       doc:
         "The maximum amount of records that will be delivered to the handler in each processing cycle."
+    ],
+    # TODO: Implement transactional true!!
+    handler_is_transactional: [
+      type: :boolean,
+      default: false,
+      doc: """
+      Determines whether producer calls are executed inside a transaction linked to the consumer’s offset commit.
+
+      * `true` — Producer calls are executed within a transaction. The transaction is committed together with the consumer’s offset commit.
+        Use this when following a **consume → process → produce** workflow (e.g., Kafka Streams) and you need offsets and produced records to be persisted atomically.
+        Note: Transactions incur additional overhead, reducing throughput and resource efficiency in exchange for stronger consistency.
+
+      * `false` — Producer calls run independently of the consumer. Produced records are not tied to offset commits.
+        This can result in reprocessing of messages or duplicates if commit failures occur. To handle duplicates safely, implement application-level idempotency.
+        This mode maximizes performance and minimizes resource usage.
+      """
     ]
   ]
 
@@ -77,8 +96,8 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     base_tc = Map.merge(%__MODULE__{}, to_merge)
 
     base_tc
-    |> Map.update!(:max_buffer_bytes, fn v ->
-      if v == nil, do: base_tc.fetch_max_bytes * 2, else: v
+    |> Map.update!(:max_queue_size, fn v ->
+      if v == nil, do: base_tc.handler_max_batch_size * 20, else: v
     end)
     |> Map.update!(:fetcher_name, fn v ->
       if v == nil, do: cg_data.fetcher_name, else: v

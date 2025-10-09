@@ -1,6 +1,5 @@
 defmodule Klife.Behaviours.ConsumerGroup do
-  @type action ::
-          :commit | :skip | {:skip, String.t()} | {:move_to, String.t()} | :retry
+  @type action :: :commit | :retry
 
   @type callback_opts :: [
           {:handler_cooldown_ms, non_neg_integer()}
