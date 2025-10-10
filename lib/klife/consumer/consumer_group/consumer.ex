@@ -227,7 +227,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       max_bytes: topic_config.fetch_max_bytes
     ]
 
-    {:ok, _} =
+    {:ok, _timeout} =
       Fetcher.fetch_async(
         {state.topic_name, state.partition_idx, offset_to_fetch},
         state.client_name,
@@ -282,8 +282,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o}, {:error, reason}}, %__MODULE__{} = state) do
     Logger.error("Unexpected fetch error on consumer: #{reason}")
-    Process.send_after(self(), :poll_records, 5000)
-    {:noreply, state}
+    ref = Process.send_after(self(), :poll_records, 5000)
+    {:noreply, %__MODULE__{state | next_fetch_ref: ref}}
   end
 
   @impl true

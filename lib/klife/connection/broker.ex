@@ -136,7 +136,7 @@ defmodule Klife.Connection.Broker do
 
       {:error, reason} = res ->
         Logger.error("""
-        Error while sending message to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
+        Error while sending message #{message_mod} to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
         """)
 
         {:error, reason}
@@ -169,7 +169,7 @@ defmodule Klife.Connection.Broker do
 
       {:error, reason} = res ->
         Logger.error("""
-        Error while sending async message to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
+        Error while sending async message #{msg_mod} to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
         """)
 
         {:error, reason}
@@ -290,7 +290,7 @@ defmodule Klife.Connection.Broker do
 
       {:error, _reason} = res ->
         Logger.error("""
-        Error while connecting to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
+        Error while connecting client #{state.client_name} to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
         """)
 
         :ok = Controller.trigger_brokers_verification_async(state.client_name)

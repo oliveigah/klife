@@ -13,8 +13,6 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   alias Klife.Consumer.ConsumerGroup.Consumer
 
-  alias Klife.PubSub
-
   alias Klife.Consumer.Committer
 
   alias Klife.MetadataCache
@@ -175,8 +173,6 @@ defmodule Klife.Consumer.ConsumerGroup do
       :named_table
     ])
 
-    PubSub.subscribe({:metadata_updated, mod.klife_client()})
-
     init_state =
       %__MODULE__{
         mod: mod,
@@ -233,6 +229,13 @@ defmodule Klife.Consumer.ConsumerGroup do
     fun = fn ->
       case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
         {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
+          if state.coordinator_id != nil and state.coordinator_id != broker_id do
+            Enum.each(state.committers_distribution, fn {commiter_id, _list} ->
+              :ok =
+                Committer.update_coordinator(broker_id, state.client_name, state.mod, commiter_id)
+            end)
+          end
+
           %__MODULE__{state | coordinator_id: broker_id}
 
         {:ok, %{content: %{coordinators: [%{error_code: ec}]}}} ->
@@ -300,7 +303,7 @@ defmodule Klife.Consumer.ConsumerGroup do
            content
          ) do
       {:error, _} ->
-        %__MODULE__{state | heartbeat_interval_ms: 5}
+        get_coordinator!(%__MODULE__{state | heartbeat_interval_ms: 1000})
 
       {:ok, %{content: %{error_code: 0} = resp}} ->
         new_state =
@@ -328,13 +331,7 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         cond do
           coordinator_error? ->
-            if state.coordinator_id != nil do
-              # The easiest thing to do is restart the consumer group, because it guarantees
-              # that all consumers/committers will be forcefully stopped
-              raise "Coordinator error on heartbeat. Error Code: #{ec} Error Message: #{em}"
-            else
-              get_coordinator!(state)
-            end
+            get_coordinator!(state)
 
           fence_error? ->
             # The easiest thing to do is restart the consumer group, because it guarantees

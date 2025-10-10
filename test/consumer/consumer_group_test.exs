@@ -442,4 +442,79 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     refute_receive {TestCG, :processed, ^topic, 0, _count, _rec}, 1000
   end
+
+  @tag capture_log: true
+  @tag cluster_change: true
+  @tag timeout: 120_000
+  test "should be able to handle coordinator changes", ctx do
+    TestUtils.put_test_pid(ctx, self())
+
+    defmodule TestCGX do
+      use Klife.Consumer.ConsumerGroup, client: MyClient
+
+      @pid_key ctx
+      @impl true
+      def handle_record_batch(topic, partition, records) do
+        parent = TestUtils.get_test_pid(@pid_key)
+
+        Enum.map(records, fn %Record{} = rec ->
+          count_val = TestUtils.add_get_counter({__MODULE__, topic, partition})
+          send(parent, {__MODULE__, :processed, topic, partition, count_val, rec})
+          {:commit, rec}
+        end)
+      end
+
+      @impl true
+      def handle_consumer_start(topic, partition) do
+        parent = TestUtils.get_test_pid(@pid_key)
+        TestUtils.init_counter({__MODULE__, topic, partition})
+        send(parent, {__MODULE__, :started_consumer, topic, partition})
+        :ok
+      end
+
+      @impl true
+      def handle_consumer_stop(topic, partition, reason) do
+        parent = TestUtils.get_test_pid(@pid_key)
+        send(parent, {__MODULE__, :stopped_consumer, topic, partition, reason})
+        :ok
+      end
+    end
+
+    consumer_opts = [
+      topics: [
+        [name: "test_consumer_topic_1"],
+        [name: "test_consumer_topic_2"]
+      ],
+      group_name: Base.encode64(:rand.bytes(10))
+    ]
+
+    cg_pid = start_supervised!({TestCGX, consumer_opts}, id: :cg)
+
+    cg_assignments = [
+      {"test_consumer_topic_1", 0},
+      {"test_consumer_topic_1", 1},
+      {"test_consumer_topic_1", 2},
+      {"test_consumer_topic_1", 3},
+      {"test_consumer_topic_2", 0},
+      {"test_consumer_topic_2", 1}
+    ]
+
+    Enum.each(cg_assignments, fn {t, p} ->
+      assert_receive {TestCGX, :started_consumer, ^t, ^p}, 10_000
+    end)
+
+    assert_assignment(cg_assignments, TestCGX)
+
+    cg_state = :sys.get_state(cg_pid)
+
+    {:ok, broker_name} = TestUtils.stop_broker(MyClient, cg_state.coordinator_id)
+
+    new_cg_state = :sys.get_state(cg_pid)
+
+    assert new_cg_state.coordinator_id != cg_state.coordinator_id
+
+    assert_assignment(cg_assignments, TestCGX)
+
+    {:ok, _new_boker_id} = TestUtils.start_broker(broker_name, MyClient)
+  end
 end

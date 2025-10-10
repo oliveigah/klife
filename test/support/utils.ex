@@ -45,7 +45,7 @@ defmodule Klife.TestUtils do
     # of how the PubSub works.
     Task.async(fn -> do_stop_broker(client_name, broker_id) end)
     |> Task.await(:infinity)
-    # This sleep of 10 seconds is needed because we must
+    # This sleep is needed because we must
     # give some time to the producer system react to the cluster
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
@@ -87,7 +87,7 @@ defmodule Klife.TestUtils do
     # of how the PubSub works.
     Task.async(fn -> do_start_broker(service_name, client_name) end)
     |> Task.await(:infinity)
-    # This sleep of 10 seconds is needed because we must
+    # This sleep is needed because we must
     # give some time to the producer system react to the cluster
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not

@@ -5,8 +5,6 @@ defmodule Klife.Consumer.Committer do
 
   alias Klife.GenBatcher
 
-  alias Klife.PubSub
-
   alias Klife.Connection.Broker
 
   alias KlifeProtocol.Messages, as: M
@@ -57,6 +55,12 @@ defmodule Klife.Consumer.Committer do
     |> GenBatcher.insert_call([batch_item])
   end
 
+  def update_coordinator(new_coordinator, client, cg_mod, batcher_id) do
+    client
+    |> get_process_name(cg_mod, batcher_id)
+    |> GenServer.call({:update_coordinator, new_coordinator})
+  end
+
   defp get_process_name(client, cg_mod, batcher_id) do
     via_tuple({__MODULE__, client, cg_mod, batcher_id})
   end
@@ -64,8 +68,6 @@ defmodule Klife.Consumer.Committer do
   @impl true
   def init_state(init_arg) do
     client_name = Keyword.fetch!(init_arg, :client_name)
-
-    :ok = PubSub.subscribe({:cluster_change, client_name})
 
     state =
       %__MODULE__{
@@ -226,5 +228,15 @@ defmodule Klife.Consumer.Committer do
 
     {:noreply,
      %GenBatcher{batcher_state | user_state: %__MODULE__{state | member_epoch: new_epoch}}}
+  end
+
+  @impl true
+  def handle_call(
+        {:update_coordinator, new_coordinator},
+        _from,
+        %GenBatcher{user_state: %__MODULE__{} = state} = batcher_state
+      ) do
+    {:reply, :ok,
+     %GenBatcher{batcher_state | user_state: %__MODULE__{state | broker_id: new_coordinator}}}
   end
 end
