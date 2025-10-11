@@ -7,6 +7,7 @@ defmodule Klife.Connection.SystemTest do
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages.ApiVersions
   alias Klife.ProcessRegistry
+  alias Klife.Connection.Controller, as: ConnController
 
   defp check_broker_connection(client_name, broker_id) do
     parent = self()
@@ -201,7 +202,7 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _pid} = start_supervised(client_name)
 
-    brokers = :persistent_term.get({:known_brokers_ids, client_name})
+    brokers = ConnController.get_known_brokers(client_name)
     broker_id_to_remove = List.first(brokers)
     cb_ref = make_ref()
 
@@ -211,13 +212,13 @@ defmodule Klife.Connection.SystemTest do
 
     assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 1000)
     assert broker_id_to_remove in Enum.map(event_data.removed_brokers, fn {b, _h} -> b end)
-    assert broker_id_to_remove not in :persistent_term.get({:known_brokers_ids, client_name})
+    assert broker_id_to_remove not in ConnController.get_known_brokers(client_name)
 
     {:ok, broker_id} = TestUtils.start_broker(service_name, client_name)
 
     assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 1000)
     assert broker_id in Enum.map(event_data.added_brokers, fn {b, _h} -> b end)
-    assert broker_id in :persistent_term.get({:known_brokers_ids, client_name})
+    assert broker_id in ConnController.get_known_brokers(client_name)
 
     :ok = PubSub.unsubscribe({:cluster_change, client_name})
   end
@@ -245,7 +246,7 @@ defmodule Klife.Connection.SystemTest do
 
     assert {:ok, _client_pid} = start_supervised(client_name)
 
-    brokers = :persistent_term.get({:known_brokers_ids, client_name})
+    brokers = ConnController.get_known_brokers(client_name)
     broker_id_to_remove = Enum.random(brokers)
 
     assert [{producer_pid, _}] =
@@ -319,7 +320,7 @@ defmodule Klife.Connection.SystemTest do
       5000
     )
 
-    Process.sleep(100)
+    Process.sleep(1000)
 
     assert [_new_pid] =
              find_batcher_pid_for_broker_on_supervisor(producer_batcher_sup_pid, new_broker_id)

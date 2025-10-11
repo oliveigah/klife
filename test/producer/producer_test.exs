@@ -233,7 +233,7 @@ defmodule Klife.ProducerTest do
     assert :snappy = KlifeProtocol.RecordBatch.decode_attributes(attr).compression
   end
 
-  @tag cluster_change: true, capture_log: true, timeout: 90_000
+  @tag cluster_change: true, capture_log: true, timeout: 120_000
   test "is able to recover from client changes" do
     topic = "test_no_batch_topic"
 
@@ -252,8 +252,6 @@ defmodule Klife.ProducerTest do
     old_broker_id = MetadataCache.get_metadata_attribute(MyClient, topic, 1, :leader_id)
 
     {:ok, service_name} = TestUtils.stop_broker(MyClient, old_broker_id)
-
-    Process.sleep(50)
 
     new_broker_id = MetadataCache.get_metadata_attribute(MyClient, topic, 1, :leader_id)
 

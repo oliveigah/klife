@@ -196,6 +196,6 @@ config :klife, MyClient,
 #   ]
 # ]
 
-if config_env() == :dev do
+if config_env() in [:dev, :test] do
   import_config "#{config_env()}.exs"
 end

@@ -289,7 +289,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def handle_info({:offset_committed, committed_offset}, %__MODULE__{} = state) do
     send(self(), :handle_records)
-    {:noreply, %__MODULE__{state | latest_committed_offset: committed_offset}}
+
+    {:noreply,
+     %__MODULE__{
+       state
+       | latest_committed_offset: max(state.latest_committed_offset, committed_offset)
+     }}
   end
 
   @impl true

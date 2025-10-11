@@ -21,7 +21,7 @@ defmodule Klife.Connection.Controller do
 
   @max_correlation_counter 1_000_000_000
 
-  @check_cluster_delay :timer.seconds(10)
+  @check_cluster_delay Application.compile_env(:klife, :metadata_check_interval_ms, 10_000)
 
   @connection_opts [
     bootstrap_servers: [

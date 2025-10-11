@@ -17,7 +17,7 @@ defmodule Klife.MetadataCache do
     :enable_unkown_topics
   ]
 
-  @check_interval_ms :timer.seconds(30)
+  @check_interval_ms Application.compile_env(:klife, :metadata_check_interval_ms, 30_000)
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args, name: process_name(args.client_name))

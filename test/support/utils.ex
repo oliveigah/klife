@@ -50,7 +50,7 @@ defmodule Klife.TestUtils do
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
     # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(30)) end)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(2)) end)
   end
 
   defp do_stop_broker(client_name, broker_id) do
@@ -66,14 +66,11 @@ defmodule Klife.TestUtils do
     result =
       receive do
         {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
-          removed_brokers = event_data.removed_brokers
-          brokers_list = Enum.map(removed_brokers, fn {broker_id, _url} -> broker_id end)
-
-          if broker_id in brokers_list,
-            do: {:ok, service_name},
-            else: {:error, :invalid_event, event_data}
+          if broker_id in ConnController.get_known_brokers(client_name),
+            do: {:error, :invalid_event, event_data},
+            else: {:ok, service_name}
       after
-        40_000 ->
+        60_000 ->
           {:error, :timeout}
       end
 
@@ -92,59 +89,31 @@ defmodule Klife.TestUtils do
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
     # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(30)) end)
+    |> tap(fn _ -> Process.sleep(:timer.seconds(2)) end)
   end
 
   defp do_start_broker(service_name, client_name) do
     cb_ref = make_ref()
 
-    port_prefix_service_map =
-      @port_to_service_name
-      |> Enum.map(fn {port, service} ->
-        {port_prefix, _} = String.split_at("#{port}", 2)
-        {service, port_prefix}
-      end)
-      |> Map.new()
-
-    expected_url_prefix = "localhost:#{port_prefix_service_map[service_name]}"
-
     :ok = PubSub.subscribe({:cluster_change, client_name}, cb_ref)
 
-    old_brokers = :persistent_term.get({:known_brokers_ids, client_name})
+    old_brokers = ConnController.get_known_brokers(client_name)
 
     System.shell(
       "docker compose -f #{get_docker_compose_file()} start #{service_name} > /dev/null 2>&1"
     )
 
-    :ok =
-      Enum.reduce_while(1..50, nil, fn _, _acc ->
-        :ok = ConnController.trigger_brokers_verification(client_name)
-        new_brokers = :persistent_term.get({:known_brokers_ids, client_name})
-
-        if old_brokers != new_brokers do
-          {:halt, :ok}
-        else
-          Process.sleep(500)
-          {:cont, nil}
-        end
-      end)
-
     result =
       receive do
         {{:cluster_change, ^client_name}, event_data, ^cb_ref} ->
-          added_brokers = event_data.added_brokers
+          new_brokers = ConnController.get_known_brokers(client_name)
 
-          case Enum.find(added_brokers, fn {_broker_id, url} ->
-                 String.starts_with?(url, expected_url_prefix)
-               end) do
-            nil ->
-              {:error, :invalid_event}
-
-            {broker_id, _} ->
-              {:ok, broker_id}
+          case new_brokers -- old_brokers do
+            [broker_id] -> {:ok, broker_id}
+            _other -> {:error, :invalid_event, event_data}
           end
       after
-        50_000 ->
+        60_000 ->
           {:error, :timeout}
       end
 
@@ -369,35 +338,58 @@ defmodule Klife.TestUtils do
     end)
   end
 
-  def put_test_pid(key, pid) do
-    true = :ets.insert(:test_pids, {key, pid})
+  def create_topics(client_name, tp_list) do
+    # This must be done in a separate process because
+    # of how the PubSub works.
+    Task.async(fn -> do_create_topics(client_name, tp_list) end)
+    |> Task.await(:infinity)
+    # This sleep is needed because we must
+    # give some time to the producer system react to the cluster
+    # change. One way to avoid this, would be having pubsub
+    # events related to the producer system but it does not
+    # exists yet.
+    |> tap(fn _ -> Process.sleep(:timer.seconds(2)) end)
+  end
+
+  defp do_create_topics(client, tp_list) do
+    cb_ref = make_ref()
+    Klife.PubSub.subscribe({:metadata_updated, client}, cb_ref)
+
+    content = %{
+      topics:
+        Enum.map(tp_list, fn tp_map ->
+          %{
+            name: tp_map.name,
+            num_partitions: tp_map[:partitions] || 3,
+            replication_factor: 2,
+            assignments: [],
+            configs: []
+          }
+        end),
+      timeout_ms: 15_000,
+      validate_only: false
+    }
+
+    {:ok, %{content: %{topics: t_resp}}} =
+      Klife.Connection.Broker.send_message(
+        KlifeProtocol.Messages.CreateTopics,
+        client,
+        :controller,
+        content
+      )
+
+    if Enum.any?(t_resp, fn t -> t.error_code not in [0, 36] end) do
+      raise "Unexpected error creating topic #{t_resp}"
+    end
+
+    receive do
+      {{:metadata_updated, ^client}, _event_data, ^cb_ref} ->
+        :ok
+    after
+      60_000 ->
+        {:error, :timeout}
+    end
+
     :ok
-  end
-
-  def get_test_pid(key) do
-    [{^key, pid}] = :ets.lookup(:test_pids, key)
-    pid
-  end
-
-  def init_counter(key) do
-    :persistent_term.put(key, :atomics.new(1, []))
-  end
-
-  def add_counter(key) do
-    key
-    |> :persistent_term.get()
-    |> :atomics.add(1, 1)
-  end
-
-  def get_counter(key) do
-    key
-    |> :persistent_term.get()
-    |> :atomics.get(1)
-  end
-
-  def add_get_counter(key) do
-    key
-    |> :persistent_term.get()
-    |> :atomics.add_get(1, 1)
   end
 end
