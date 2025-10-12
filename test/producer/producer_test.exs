@@ -389,6 +389,7 @@ defmodule Klife.ProducerTest do
 
   test "produce batch message sync with batching" do
     topic = "test_batch_topic"
+    parent = self()
 
     wait_batch_cycle(MyClient, topic, 1)
 
@@ -408,10 +409,15 @@ defmodule Klife.ProducerTest do
       partition: 2
     }
 
-    task_1 =
-      Task.async(fn ->
-        MyClient.produce_batch([rec1_1, rec1_2])
-      end)
+    Task.async(fn ->
+      MyClient.produce_batch_async([rec1_1, rec1_2],
+        callback: fn recs ->
+          send(parent, {:task1_produced, recs})
+        end
+      )
+
+      send(parent, :task1_complete)
+    end)
 
     rec2_1 = %Record{
       value: :rand.bytes(10),
@@ -429,12 +435,17 @@ defmodule Klife.ProducerTest do
       partition: 2
     }
 
-    Process.sleep(5)
+    assert_receive :task1_complete
 
-    task_2 =
-      Task.async(fn ->
-        MyClient.produce_batch([rec2_1, rec2_2])
-      end)
+    Task.async(fn ->
+      MyClient.produce_batch_async([rec2_1, rec2_2],
+        callback: fn recs ->
+          send(parent, {:task2_produced, recs})
+        end
+      )
+
+      send(parent, :task2_complete)
+    end)
 
     rec3_1 = %Record{
       value: :rand.bytes(10),
@@ -452,18 +463,29 @@ defmodule Klife.ProducerTest do
       partition: 2
     }
 
-    Process.sleep(5)
+    assert_receive :task2_complete
 
-    task_3 =
-      Task.async(fn ->
-        MyClient.produce_batch([rec3_1, rec3_2])
-      end)
+    Task.async(fn ->
+      MyClient.produce_batch_async([rec3_1, rec3_2],
+        callback: fn recs ->
+          send(parent, {:task3_produced, recs})
+        end
+      )
 
-    assert [
-             [{:ok, %Record{offset: offset1_1}}, {:ok, %Record{offset: offset1_2}}],
-             [{:ok, %Record{offset: offset2_1}}, {:ok, %Record{offset: offset2_2}}],
-             [{:ok, %Record{offset: offset3_1}}, {:ok, %Record{offset: offset3_2}}]
-           ] = Task.await_many([task_1, task_2, task_3], 2_000)
+      send(parent, :task3_complete)
+    end)
+
+    assert_receive :task3_complete
+
+    assert_receive {:task1_produced,
+                    [{:ok, %Record{offset: offset1_1}}, {:ok, %Record{offset: offset1_2}}]},
+                   6_000
+
+    assert_receive {:task2_produced,
+                    [{:ok, %Record{offset: offset2_1}}, {:ok, %Record{offset: offset2_2}}]}
+
+    assert_receive {:task3_produced,
+                    [{:ok, %Record{offset: offset3_1}}, {:ok, %Record{offset: offset3_2}}]}
 
     assert offset2_1 - offset1_1 == 1
     assert offset3_1 - offset2_1 == 1

@@ -54,7 +54,7 @@ config :klife, MyClient,
     [
       name: :test_batch_producer,
       client_id: "my_custom_client_id",
-      linger_ms: 1_500
+      linger_ms: 5_000
     ],
     [
       name: :test_batch_compressed_producer,
