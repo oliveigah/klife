@@ -79,18 +79,34 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
     result =
       for %{topic: t, partitions: p_list} <- resp_list,
-          %{error_code: ec, partition_index: p, records: rec_batch_list} <- p_list,
+          %{
+            aborted_transactions: at,
+            error_code: ec,
+            partition_index: p,
+            records: rec_batch_list
+          } <- p_list,
           into: %{} do
         key = {t, p}
-
         %Batcher.BatchItem{offset_to_fetch: requested_base_offset} = req_data[key]
 
         case ec do
           0 ->
+            first_aborted_offset =
+              if state.fetcher_config.isolation_level == :read_committed do
+                Enum.map(at, fn %{first_offset: fo} -> fo end)
+                |> Enum.min(fn -> :infinity end)
+              else
+                :infinity
+              end
+
             val =
               rec_batch_list
               |> Enum.flat_map(fn rec_batch -> Record.parse_from_protocol(t, p, rec_batch) end)
-              |> Enum.reject(fn %Record{} = r -> r.offset < requested_base_offset end)
+              |> Enum.reject(fn %Record{} = r ->
+                r.offset < requested_base_offset or
+                  r.batch_attributes.is_control_batch or
+                  (r.offset >= first_aborted_offset and r.batch_attributes.is_transactional)
+              end)
 
             {key, {:ok, val}}
 

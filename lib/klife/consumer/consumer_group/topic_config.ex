@@ -68,7 +68,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       doc:
         "The maximum amount of records that will be delivered to the handler in each processing cycle."
     ],
-    # TODO: Implement transactional true!!
+    # TODO: Implement transactional true
     handler_is_transactional: [
       type: :boolean,
       default: false,

@@ -364,10 +364,22 @@ defmodule Klife.Consumer.ConsumerGroup do
           consumer_group_mod: state.mod,
           group_intance_id: state.instance_id,
           cg_pid: self(),
+          # TODO: Make config
           batcher_config: [
-            # TODO: Make config
             {:batch_wait_time_ms, 0},
-            {:max_in_flight, 5}
+            # To have max_in_flight greater than 1, must think about
+            # how to prevent lower offset values to override
+            # higher ones on retries.
+            #
+            # Eg:
+            # req 1 commit 10 (fail)
+            # req 2 commit 20 (success)
+            # req 1 retry, commit 10 (success)
+            #
+            # With max_in_flight 1 this is not a problem
+            # because failed commits will be merged on
+            # the waiting batch using the higher value
+            {:max_in_flight, 1}
           ]
         ]
 

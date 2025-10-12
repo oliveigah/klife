@@ -14,7 +14,18 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         def handle_record_batch(topic, partition, records) do
           Enum.map(records, fn %Record{} = rec ->
             send(unquote(opts[:parent_pid]), {__MODULE__, :processed, topic, partition, rec})
-            {:commit, rec}
+
+            case String.split(rec.value, "___") do
+              [command_str, rest] ->
+                [action, attempts] = String.split(command_str, "_")
+
+                if rec.consumer_attempts <= String.to_integer(attempts),
+                  do: {String.to_existing_atom(action), rec},
+                  else: {:commit, rec}
+
+              _ ->
+                {:commit, rec}
+            end
           end)
         end
 
@@ -41,19 +52,19 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     Enum.each(exp_assigments, fn {t, p} ->
       [
         {:ok, %Record{offset: offset1} = exp_rec1},
-        {:ok, %Record{offset: offset2} = exp_rec2}
+        {:ok, %Record{offset: offset2} = exp_rec2},
+        {:ok, %Record{offset: offset3} = exp_rec3}
       ] =
         MyClient.produce_batch([
+          %Record{topic: t, partition: p, value: :rand.bytes(10)},
           %Record{topic: t, partition: p, value: :rand.bytes(10)},
           %Record{topic: t, partition: p, value: :rand.bytes(10)}
         ])
 
       [
-        {:ok, %Record{offset: offset3} = exp_rec3},
         {:ok, %Record{offset: offset4} = exp_rec4}
       ] =
         MyClient.produce_batch([
-          %Record{topic: t, partition: p, value: :rand.bytes(10)},
           %Record{topic: t, partition: p, value: :rand.bytes(10)}
         ])
 
@@ -66,12 +77,12 @@ defmodule Klife.Consumer.ConsumerGroupTest do
           %Record{topic: t, partition: p, value: :rand.bytes(10)}
         ])
 
-      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset1} = recv_rec1}, 10_000
-      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset2} = recv_rec2}, 10_000
-      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset3} = recv_rec3}, 10_000
-      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset4} = recv_rec4}, 10_000
-      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset5} = recv_rec5}, 10_000
-      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset6} = recv_rec6}, 10_000
+      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset1} = recv_rec1}, 5_000
+      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset2} = recv_rec2}, 5_000
+      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset3} = recv_rec3}, 5_000
+      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset4} = recv_rec4}, 5_000
+      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset5} = recv_rec5}, 5_000
+      assert_receive {^mod, :processed, ^t, ^p, %Record{offset: ^offset6} = recv_rec6}, 5_000
 
       TestUtils.assert_records(recv_rec1, exp_rec1)
       TestUtils.assert_records(recv_rec2, exp_rec2)
@@ -109,10 +120,158 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     ]
 
     Enum.each(cg_assignments, fn {t, p} ->
-      assert_receive {MyTestCG, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG, :started_consumer, ^t, ^p}, 5_000
     end)
 
     assert_assignment(cg_assignments, MyTestCG)
+
+    [
+      {:ok, %Record{offset: offset1} = exp_rec1},
+      {:ok, %Record{offset: offset2} = exp_rec2}
+    ] =
+      MyClient.produce_batch([
+        %Record{topic: "test_consumer_topic_1", partition: 0, value: :rand.bytes(10)},
+        %Record{
+          topic: "test_consumer_topic_1",
+          partition: 0,
+          value: "retry_2" <> "___" <> :rand.bytes(10)
+        }
+      ])
+
+    assert_receive {MyTestCG, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset1} = recv_rec1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec1, exp_rec1)
+
+    assert_receive {MyTestCG, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 0} = recv_rec2_1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_1, exp_rec2)
+
+    assert_receive {MyTestCG, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 1} = recv_rec2_2},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_2, exp_rec2)
+
+    assert_receive {MyTestCG, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 2} = recv_rec2_3},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_3, exp_rec2)
+
+    assert_receive {MyTestCG, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 3} = recv_rec2_4},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_4, exp_rec2)
+
+    refute_receive {MyTestCG, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+  end
+
+  test "should not read uncommitted records", ctx do
+    parent_pid = self()
+
+    defmodule MyTestCG6 do
+      use CGTest, parent_pid: parent_pid
+    end
+
+    consumer_opts = [
+      topics: [
+        [name: "test_consumer_topic_1"]
+      ],
+      group_name: Base.encode64(:rand.bytes(10))
+    ]
+
+    start_supervised!({MyTestCG6, consumer_opts}, id: :cg1, restart: :temporary)
+
+    cg_assignments = [
+      {"test_consumer_topic_1", 0},
+      {"test_consumer_topic_1", 1},
+      {"test_consumer_topic_1", 2},
+      {"test_consumer_topic_1", 3}
+    ]
+
+    Enum.each(cg_assignments, fn {t, p} ->
+      assert_receive {MyTestCG6, :started_consumer, ^t, ^p}, 5_000
+    end)
+
+    assert_assignment(cg_assignments, MyTestCG6)
+
+    {:ok,
+     [
+       %Record{offset: offset1} = exp_rec1,
+       %Record{offset: offset2} = exp_rec2
+     ]} =
+      MyClient.transaction(fn ->
+        [{:ok, exp_rec1}, {:ok, exp_rec2}] =
+          MyClient.produce_batch([
+            %Record{topic: "test_consumer_topic_1", partition: 0, value: "aaaa"},
+            %Record{
+              topic: "test_consumer_topic_1",
+              partition: 0,
+              value: "retry_2" <> "___" <> "bbbb"
+            }
+          ])
+
+        refute_receive {MyTestCG6, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+        {:ok, [exp_rec1, exp_rec2]}
+      end)
+
+    assert_receive {MyTestCG6, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset1} = recv_rec1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec1, exp_rec1)
+
+    assert_receive {MyTestCG6, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 0} = recv_rec2_1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_1, exp_rec2)
+
+    assert_receive {MyTestCG6, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 1} = recv_rec2_2},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_2, exp_rec2)
+
+    assert_receive {MyTestCG6, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 2} = recv_rec2_3},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_3, exp_rec2)
+
+    assert_receive {MyTestCG6, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 3} = recv_rec2_4},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_4, exp_rec2)
+
+    refute_receive {MyTestCG6, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+    MyClient.transaction(fn ->
+      [{:ok, _exp_rec1}, {:ok, _exp_rec2}] =
+        MyClient.produce_batch([
+          %Record{topic: "test_consumer_topic_1", partition: 0, value: "ccccc"},
+          %Record{
+            topic: "test_consumer_topic_1",
+            partition: 0,
+            value: "retry_2" <> "___" <> "ddddd"
+          }
+        ])
+
+      refute_receive {MyTestCG6, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+      :some_error
+    end)
+
+    refute_receive {MyTestCG6, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+    assert_assignment(cg_assignments, MyTestCG6)
   end
 
   @tag capture_log: true
@@ -163,13 +322,13 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     ]
 
     Enum.each(cg_assignments, fn {t, p} ->
-      assert_receive {MyTestCG5, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG5, :started_consumer, ^t, ^p}, 5_000
     end)
 
-    assert_receive {MyTestCG5, :processed, ^earliest_topic, 0, recv_rec1}, 1_000
-    assert_receive {MyTestCG5, :processed, ^earliest_topic, 1, recv_rec2}, 1_000
-    assert_receive {MyTestCG5, :processed, ^earliest_topic, 2, recv_rec3}, 1_000
-    refute_receive {MyTestCG5, :processed, ^other_topic, _, _recv_rec1}, 1_000
+    assert_receive {MyTestCG5, :processed, ^earliest_topic, 0, recv_rec1}, 5_000
+    assert_receive {MyTestCG5, :processed, ^earliest_topic, 1, recv_rec2}, 5_000
+    assert_receive {MyTestCG5, :processed, ^earliest_topic, 2, recv_rec3}, 5_000
+    refute_receive {MyTestCG5, :processed, ^other_topic, _, _recv_rec1}, 5_000
 
     TestUtils.assert_records(recv_rec1, prev_rec1)
     TestUtils.assert_records(recv_rec2, prev_rec2)
@@ -182,7 +341,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     Enum.each(cg_assignments, fn {t, p} ->
       assert_receive {MyTestCG5, :stopped_consumer, ^t, ^p,
                       {:shutdown, {:assignment_revoked, _tid, ^p}}},
-                     10_000
+                     5_000
     end)
 
     assert_receive {:DOWN, _ref, :process, ^test_cg_pid, :test}
@@ -190,7 +349,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     start_supervised!({MyTestCG5, consumer_opts}, restart: :temporary)
 
     Enum.each(cg_assignments, fn {t, p} ->
-      assert_receive {MyTestCG5, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG5, :started_consumer, ^t, ^p}, 5_000
     end)
 
     refute_receive {MyTestCG5, :processed, _any_topic, _, _recv_rec1}, 5_000
@@ -235,7 +394,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     ]
 
     Enum.each(cg1_assignments, fn {t, p} ->
-      assert_receive {MyTestCG1, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG1, :started_consumer, ^t, ^p}, 5_000
     end)
 
     assert_assignment(cg1_assignments, MyTestCG1)
@@ -244,15 +403,15 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     assert_receive {MyTestCG1, :stopped_consumer, stopped_topic0, p0,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     assert_receive {MyTestCG1, :stopped_consumer, stopped_topic1, p1,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     assert_receive {MyTestCG1, :stopped_consumer, stopped_topic2, p2,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     cg2_assignments = [
       {stopped_topic0, p0},
@@ -263,7 +422,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     cg1_assignments = cg1_assignments -- cg2_assignments
 
     Enum.each(cg2_assignments, fn {t, p} ->
-      assert_receive {MyTestCG2, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG2, :started_consumer, ^t, ^p}, 5_000
     end)
 
     assert_assignment(cg1_assignments, MyTestCG1)
@@ -273,11 +432,11 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     assert_receive {MyTestCG1, :stopped_consumer, stopped_topic0, p0,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     assert_receive {MyTestCG2, :stopped_consumer, stopped_topic1, p1,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     cg3_assignments = [
       {stopped_topic0, p0},
@@ -288,7 +447,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     cg2_assignments = cg2_assignments -- cg3_assignments
 
     Enum.each(cg3_assignments, fn {t, p} ->
-      assert_receive {MyTestCG3, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG3, :started_consumer, ^t, ^p}, 5_000
     end)
 
     assert_assignment(cg1_assignments, MyTestCG1)
@@ -299,14 +458,14 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     assert_receive {MyTestCG1, :stopped_consumer, stopped_topic0, p0,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     assert_receive {MyTestCG1, :stopped_consumer, stopped_topic1, p1,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
-    assert_receive {MyTestCG2, :started_consumer, cg2_t, cg2_p}, 10_000
-    assert_receive {MyTestCG3, :started_consumer, cg3_t, cg3_p}, 10_000
+    assert_receive {MyTestCG2, :started_consumer, cg2_t, cg2_p}, 5_000
+    assert_receive {MyTestCG3, :started_consumer, cg3_t, cg3_p}, 5_000
 
     stopped_list = [{stopped_topic0, p0}, {stopped_topic1, p1}]
 
@@ -326,19 +485,19 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     assert_receive {MyTestCG2, :stopped_consumer, stopped_topic0, p0,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     assert_receive {MyTestCG2, :stopped_consumer, stopped_topic1, p1,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
     assert_receive {MyTestCG2, :stopped_consumer, stopped_topic2, p2,
                     {:shutdown, {:assignment_revoked, _, _}}},
-                   10_000
+                   5_000
 
-    assert_receive {MyTestCG3, :started_consumer, ^stopped_topic0, ^p0}, 10_000
-    assert_receive {MyTestCG3, :started_consumer, ^stopped_topic1, ^p1}, 10_000
-    assert_receive {MyTestCG3, :started_consumer, ^stopped_topic2, ^p2}, 10_000
+    assert_receive {MyTestCG3, :started_consumer, ^stopped_topic0, ^p0}, 5_000
+    assert_receive {MyTestCG3, :started_consumer, ^stopped_topic1, ^p1}, 5_000
+    assert_receive {MyTestCG3, :started_consumer, ^stopped_topic2, ^p2}, 5_000
 
     cg3_assignments = cg3_assignments ++ cg2_assignments
     assert length(cg3_assignments) == 6
@@ -375,7 +534,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     ]
 
     Enum.each(cg_assignments, fn {t, p} ->
-      assert_receive {MyTestCG4, :started_consumer, ^t, ^p}, 10_000
+      assert_receive {MyTestCG4, :started_consumer, ^t, ^p}, 5_000
     end)
 
     assert_assignment(cg_assignments, MyTestCG4)

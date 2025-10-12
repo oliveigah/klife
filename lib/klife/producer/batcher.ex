@@ -428,17 +428,8 @@ defmodule Klife.Producer.Batcher do
     batch_data_to_send
     |> Enum.map(fn {{t, p}, batch} ->
       rec_map =
-        batch.records
-        |> Enum.map(fn rec ->
-          {rec.offset_delta,
-           %Record{
-             headers: rec.headers,
-             key: rec.key,
-             partition: p,
-             topic: t,
-             value: rec.value
-           }}
-        end)
+        Record.parse_from_protocol(t, p, batch)
+        |> Enum.with_index(fn rec, offset_delta -> {offset_delta, rec} end)
         |> Map.new()
 
       {{t, p}, rec_map}

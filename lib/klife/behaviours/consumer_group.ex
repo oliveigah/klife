@@ -11,7 +11,6 @@ defmodule Klife.Behaviours.ConsumerGroup do
               | list({action, Klife.Record.t()})
               | {list({action, Klife.Record.t()}), callback_opts}
 
-  # TODO: Should allow config changes on this callback return?
   @callback handle_consumer_start(topic :: String.t(), partition :: integer) :: :ok
 
   @callback handle_consumer_stop(topic :: String.t(), partition :: integer, reason :: term) :: :ok

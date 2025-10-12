@@ -17,6 +17,7 @@ defmodule Klife.Record do
   - `:offset` (if it was succesfully written)
   - `:partition` (if it was not present in the input)
   - `:error_code` (if something goes wrong on produce. See [kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes) for context)
+  - `:batch_attributes` (record batch attributes byte data. See [kafka protocol attributes](https://kafka.apache.org/documentation/#recordbatch) )
   """
   defstruct [
     :key,
@@ -25,6 +26,7 @@ defmodule Klife.Record do
     :offset,
     :error_code,
     :value,
+    :batch_attributes,
     {:consumer_attempts, 0},
     {:headers, []},
     :__batch_index,
@@ -96,6 +98,7 @@ defmodule Klife.Record do
   def parse_from_protocol(t, p, record_batch) do
     base_offset = record_batch[:base_offset]
     record_list = Enum.with_index(record_batch[:records])
+    batch_attributes = KlifeProtocol.RecordBatch.decode_attributes(record_batch[:attributes])
 
     Enum.map(record_list, fn {rec, idx} ->
       %__MODULE__{
@@ -104,7 +107,8 @@ defmodule Klife.Record do
         value: rec[:value],
         topic: t,
         partition: p,
-        offset: base_offset + idx
+        offset: base_offset + idx,
+        batch_attributes: batch_attributes
       }
     end)
   end

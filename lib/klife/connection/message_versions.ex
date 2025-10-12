@@ -14,7 +14,6 @@ defmodule Klife.Connection.MessageVersions do
 
   defp do_setup_versions([], _, _), do: :ok
 
-  # TODO: Handle non required messages
   defp do_setup_versions([{mod, client_data} | rest], server_map, client_name) do
     api_key = mod.api_key()
 
