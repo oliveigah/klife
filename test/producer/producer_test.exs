@@ -89,9 +89,9 @@ defmodule Klife.ProducerTest do
     assert length(record_batch) == 1
   end
 
-  test "produce message sync with batching" do
+  test "produce with batching" do
     topic = "test_batch_topic"
-
+    parent = self()
     wait_batch_cycle(MyClient, topic, 1)
 
     rec_1 = %Record{
@@ -102,10 +102,15 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    task_1 =
-      Task.async(fn ->
-        MyClient.produce(rec_1)
-      end)
+    Task.async(fn ->
+      MyClient.produce_async(rec_1,
+        callback: fn rec ->
+          send(parent, {:task1, rec})
+        end
+      )
+
+      send(parent, :task1_completed)
+    end)
 
     rec_2 = %Record{
       value: :rand.bytes(10),
@@ -115,12 +120,17 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    Process.sleep(5)
+    assert_receive :task1_completed
 
-    task_2 =
-      Task.async(fn ->
-        MyClient.produce(rec_2)
-      end)
+    Task.async(fn ->
+      MyClient.produce_async(rec_2,
+        callback: fn rec ->
+          send(parent, {:task2, rec})
+        end
+      )
+
+      send(parent, :task2_completed)
+    end)
 
     rec_3 = %Record{
       value: :rand.bytes(10),
@@ -130,18 +140,23 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    Process.sleep(5)
+    assert_receive :task2_completed
 
-    task_3 =
-      Task.async(fn ->
-        MyClient.produce(rec_3)
-      end)
+    Task.async(fn ->
+      MyClient.produce_async(rec_3,
+        callback: fn rec ->
+          send(parent, {:task3, rec})
+        end
+      )
 
-    assert [
-             {:ok, %Record{} = resp_rec1},
-             {:ok, %Record{} = resp_rec2},
-             {:ok, %Record{} = resp_rec3}
-           ] = Task.await_many([task_1, task_2, task_3], 2_000)
+      send(parent, :task3_completed)
+    end)
+
+    assert_receive :task3_completed
+
+    assert_receive {:task1, {:ok, resp_rec1}}, 6_000
+    assert_receive {:task2, {:ok, resp_rec2}}
+    assert_receive {:task3, {:ok, resp_rec3}}
 
     assert resp_rec2.offset - resp_rec1.offset == 1
     assert resp_rec3.offset - resp_rec2.offset == 1
