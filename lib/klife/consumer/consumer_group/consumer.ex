@@ -36,8 +36,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :cg_pid,
     :latest_committed_offset,
     :latest_processed_offset,
-    :records_queue,
-    :records_queue_size,
+    :records_batch_queue,
+    :records_batch_queue_count,
     :unconfirmed_commits_count,
     :empty_fetch_results_count,
     :next_fetch_ref,
@@ -80,8 +80,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         unconfirmed_commits_count: 0,
         empty_fetch_results_count: 0,
         next_fetch_ref: nil,
-        records_queue: :queue.new(),
-        records_queue_size: 0,
+        records_batch_queue: :queue.new(),
+        records_batch_queue_count: 0,
         cg_pid: args_map.consumer_group_pid,
         leader_epoch:
           Klife.MetadataCache.get_metadata_attribute(
@@ -214,9 +214,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def handle_info(:poll_records, %__MODULE__{} = state) do
     offset_to_fetch =
-      case :queue.out_r(state.records_queue) do
-        {{:value, %Record{offset: offset}}, _queue} -> offset + 1
-        {:empty, _queue} -> state.latest_processed_offset + 1
+      case :queue.out_r(state.records_batch_queue) do
+        {{:value, rec_batch}, _queue} ->
+          List.last(rec_batch).offset + 1
+
+        {:empty, _queue} ->
+          state.latest_processed_offset + 1
       end
 
     %TopicConfig{} = topic_config = state.topic_config
@@ -255,21 +258,26 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def handle_info(
         {:klife_fetch_response, {_t, _p, _o}, {:ok, recs}},
-        %__MODULE__{records_queue: curr_queue, records_queue_size: curr_q_size} = state
+        %__MODULE__{records_batch_queue: curr_queue, records_batch_queue_count: curr_q_size} =
+          state
       ) do
+    chunk_size = min(length(recs), state.topic_config.handler_max_batch_size)
+
     {new_queue, new_queue_size} =
-      Enum.reduce_while(recs, {curr_queue, curr_q_size}, fn rec, {acc_queue, acc_size} ->
-        new_size = acc_size + 1
+      recs
+      |> Enum.chunk_every(chunk_size)
+      |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch, {acc_queue, acc_size} ->
+        new_size = acc_size + chunk_size
 
         if new_size > state.topic_config.max_queue_size,
           do: {:halt, {acc_queue, acc_size}},
-          else: {:cont, {:queue.in(rec, acc_queue), new_size}}
+          else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
       end)
 
     new_state = %__MODULE__{
       state
-      | records_queue: new_queue,
-        records_queue_size: new_queue_size,
+      | records_batch_queue: new_queue,
+        records_batch_queue_count: new_queue_size,
         empty_fetch_results_count: 0,
         next_fetch_ref: nil
     }
@@ -305,8 +313,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       topic_id: topic_id,
       topic_name: topic_name,
       partition_idx: partition_idx,
-      records_queue: rec_queue,
-      records_queue_size: records_queue_size,
+      records_batch_queue: rec_queue,
+      records_batch_queue_count: records_batch_queue_count,
       topic_config: %TopicConfig{
         handler_max_batch_size: max_batch_size,
         handler_max_unacked_commits: max_unacked
@@ -318,12 +326,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     processing_allowed? =
       ConsumerGroup.processing_allowed?(client_name, cg_mod, topic_id, partition_idx)
 
-    has_records_to_process? = records_queue_size > 0
+    has_records_to_process? = records_batch_queue_count > 0
     curr_unacked = latest_processed_offset - latest_committed_offset
 
     cond do
       not processing_allowed? ->
-        Process.send_after(self(), :handle_records, 500)
+        Process.send_after(self(), :handle_records, 5)
         {:noreply, state}
 
       not has_records_to_process? ->
@@ -340,43 +348,39 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         {:noreply, state}
 
       true ->
-        max_recs = min(max_batch_size, records_queue_size)
-
-        {recs, new_queue} =
-          Enum.reduce(1..max_recs, {[], rec_queue}, fn _i, {acc_recs, acc_queue} ->
-            {{:value, rec}, new_queue} = :queue.out(acc_queue)
-            {[rec | acc_recs], new_queue}
-          end)
-
-        recs = Enum.reverse(recs)
+        {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
 
         {parsed_user_result, usr_opts} =
-          case cg_mod.handle_record_batch(topic_name, partition_idx, recs) do
+          case cg_mod.handle_record_batch(topic_name, partition_idx, rec_batch) do
             [_ | _] = result -> {result, []}
             {[_ | _] = result, opts} -> {result, opts}
-            {action, opts} -> {Enum.map(recs, fn rec -> {action, rec} end), opts}
-            action -> {Enum.map(recs, fn rec -> {action, rec} end), []}
+            {action, opts} -> {Enum.map(rec_batch, fn rec -> {action, rec} end), opts}
+            action -> {Enum.map(rec_batch, fn rec -> {action, rec} end), []}
           end
 
         groupped_recs =
-          Enum.group_by(parsed_user_result, fn {action, _rec} ->
-            user_action_to_commit_group(action)
-          end)
+          Enum.group_by(
+            parsed_user_result,
+            fn {action, _rec} -> user_action_to_commit_group(action) end,
+            fn {_action, rec} -> rec end
+          )
 
         to_commit_recs = groupped_recs[:commit] || []
         to_retry_recs = groupped_recs[:retry] || []
 
         new_queue =
           to_retry_recs
-          |> Enum.reverse()
-          |> Enum.reduce(new_queue, fn {_action, rec}, acc_queue ->
-            new_rec = Map.update(rec, :consumer_attempts, 1, fn att -> att + 1 end)
-            :queue.in_r(new_rec, acc_queue)
+          |> Enum.map(fn rec ->
+            Map.update(rec, :consumer_attempts, 1, fn att -> att + 1 end)
           end)
+          |> case do
+            [] -> new_queue
+            list -> :queue.in_r(list, new_queue)
+          end
 
         latest_processed_offset =
           case List.last(to_commit_recs) do
-            {_, %Record{} = rec} ->
+            %Record{} = rec ->
               commit_data = %Committer.BatchItem{
                 callback_pid: self(),
                 leader_epoch: state.leader_epoch,
@@ -394,10 +398,10 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               state.latest_processed_offset
           end
 
-        new_queue_size = records_queue_size - length(to_commit_recs)
+        new_queue_size = records_batch_queue_count - length(to_commit_recs)
 
         ref =
-          if new_queue_size <= 2 * max_batch_size and state.next_fetch_ref == nil do
+          if new_queue_size <= 3 * max_batch_size and state.next_fetch_ref == nil do
             Process.send_after(self(), :poll_records, 0)
           else
             state.next_fetch_ref
@@ -406,8 +410,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         new_state =
           %__MODULE__{
             state
-            | records_queue: new_queue,
-              records_queue_size: new_queue_size,
+            | records_batch_queue: new_queue,
+              records_batch_queue_count: new_queue_size,
               latest_processed_offset: latest_processed_offset,
               next_fetch_ref: ref
           }

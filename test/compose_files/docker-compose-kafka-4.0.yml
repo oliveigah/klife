@@ -12,6 +12,8 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_UNSTABLE_API_VERSIONS_ENABLE: true
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
+      KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
+      KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
 
   kafka1:
     image: apache/kafka:4.0.0
@@ -42,6 +44,8 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_UNSTABLE_API_VERSIONS_ENABLE: true
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
+      KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
+      KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -79,6 +83,8 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_UNSTABLE_API_VERSIONS_ENABLE: true
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
+      KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
+      KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -116,6 +122,8 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_UNSTABLE_API_VERSIONS_ENABLE: true
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
+      KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
+      KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks

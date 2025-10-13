@@ -196,6 +196,8 @@ config :klife, MyClient,
 #   ]
 # ]
 
+config :klife, metadata_check_interval_ms: 1000
+
 if config_env() in [:dev, :test] do
   import_config "#{config_env()}.exs"
 end

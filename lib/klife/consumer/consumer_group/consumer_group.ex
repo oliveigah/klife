@@ -209,6 +209,10 @@ defmodule Klife.Consumer.ConsumerGroup do
     do: :"acked_topic_partitions.#{client_name}.#{cg_mod}"
 
   defp ack_topic_partition(client_name, cg_mod, topic_id, partition_idx) do
+    if :persistent_term.get(:klife_after_ack, nil) == nil do
+      :persistent_term.put(:klife_after_ack, System.monotonic_time(:millisecond))
+    end
+
     client_name
     |> get_acked_topic_partitions_table(cg_mod)
     |> :ets.insert({{topic_id, partition_idx}})

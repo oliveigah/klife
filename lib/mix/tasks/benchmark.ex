@@ -3,6 +3,7 @@ if Mix.env() in [:dev] do
     use Mix.Task
 
     alias Klife.TestUtils.AsyncProducerBenchmark
+    alias Klife.Record
 
     def run(args) do
       Application.ensure_all_started(:klife)
@@ -63,22 +64,34 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      Enum.each(1..100_000_000, fn i ->
-        :persistent_term.put({__MODULE__, i}, i)
-      end)
+      l10 = Enum.map(1..10, fn _i -> :rand.bytes(1000) end)
+      l100 = Enum.map(1..100, fn _i -> :rand.bytes(1000) end)
+      l1000 = Enum.map(1..1000, fn _i -> :rand.bytes(1000) end)
+      l10000 = Enum.map(1..10000, fn _i -> :rand.bytes(1000) end)
 
       Benchee.run(
         %{
-          "change" => fn ->
-            Enum.each(1..1000, fn i ->
-              :persistent_term.put({__MODULE__, i}, i * Enum.random(1..1000))
-            end)
-          end
+          "l10" => fn -> List.last(l10) end,
+          "l100" => fn -> List.last(l100) end,
+          "l1000" => fn -> List.last(l1000) end,
+          "l10000" => fn -> List.last(l10000) end
         },
         time: 10,
         memory_time: 2,
         parallel: parallel |> String.to_integer()
       )
+    end
+
+    def do_run_bench("consumer", client) do
+      base_topic = Base.encode16(:rand.bytes(20))
+      partitions = 30
+
+      {:ok, sup_pid} = DynamicSupervisor.start_link(name: :benchmark_supervisor)
+
+      {:ok, target1} = prepare_topic(base_topic, partitions, 5000)
+
+      run_consumer_bench(String.to_existing_atom(client), base_topic, target1, sup_pid)
+      |> IO.inspect(label: client, charlists: :as_lists)
     end
 
     def do_run_bench("producer_async", parallel) do
@@ -346,6 +359,166 @@ if Mix.env() in [:dev] do
         },
         label: "results"
       )
+    end
+
+    defp run_consumer_bench(client, topic, target, sup_pid) do
+      counter = :persistent_term.get({client, topic})
+
+      Enum.map(1..10, fn _ ->
+        {:ok, pid} =
+          case client do
+            :brod ->
+              DynamicSupervisor.start_child(
+                sup_pid,
+                {BrodBenchmarkConsumer,
+                 %{
+                   topics: [topic],
+                   consumer_config: [{:begin_offset, :earliest}],
+                   consumer_group_id: Base.encode64(:rand.bytes(10))
+                 }}
+              )
+
+            :klife ->
+              DynamicSupervisor.start_child(
+                sup_pid,
+                {BenchmarkConsumer,
+                 [
+                   topics: [
+                     [name: topic, offset_reset_policy: :earliest, handler_max_batch_size: 6000]
+                   ],
+                   group_name: Base.encode64(:rand.bytes(10))
+                 ]}
+              )
+          end
+
+        t0 = System.monotonic_time(:millisecond)
+
+        :ok =
+          wait_consumption(
+            counter,
+            target,
+            System.monotonic_time(:millisecond) + 10_000
+          )
+
+        tf = System.monotonic_time(:millisecond)
+
+        t_after_ack = :persistent_term.get(:klife_after_ack, t0)
+        :persistent_term.erase(:klife_after_ack)
+
+        :atomics.put(counter, 1, 0)
+
+        :ok = DynamicSupervisor.terminate_child(sup_pid, pid)
+
+        {tf - t0, t_after_ack - t0}
+      end)
+    end
+
+    defp prepare_topic(topic, partitions, recs_per_partition) do
+      :ok = Klife.TestUtils.create_topics(MyClient, [%{name: topic, partitions: partitions}])
+
+      Enum.map(0..(partitions - 1), fn p ->
+        Task.async(fn ->
+          Enum.map(1..recs_per_partition, fn i ->
+            %Record{
+              value: "#{i}",
+              topic: topic,
+              partition: p
+            }
+          end)
+          |> Enum.chunk_every(5)
+          |> Enum.each(fn rec_batch -> MyClient.produce_batch(rec_batch) end)
+        end)
+      end)
+      |> Task.await_many(30_000)
+
+      :persistent_term.put({:klife, topic}, :atomics.new(1, []))
+      :persistent_term.put({:brod, topic}, :atomics.new(1, []))
+
+      target_val = round(partitions * (recs_per_partition / 2 * (1 + recs_per_partition)))
+
+      {:ok, target_val}
+    end
+
+    defp wait_consumption(atomic_ref, target, deadline) do
+      if System.monotonic_time(:millisecond) > deadline do
+        raise "Timeout on wait consumption!"
+      end
+
+      curr_val = :atomics.get(atomic_ref, 1)
+
+      cond do
+        curr_val < target ->
+          Process.sleep(1)
+          wait_consumption(atomic_ref, target, deadline)
+
+        curr_val == target ->
+          :ok
+
+        curr_val > target ->
+          raise "Double count!"
+      end
+    end
+  end
+
+  defmodule BenchmarkConsumer do
+    use Klife.Consumer.ConsumerGroup, client: MyClient
+
+    @impl true
+    def handle_record_batch(topic, _partition, recs) do
+      counter = :persistent_term.get({:klife, topic})
+
+      Enum.each(recs, fn %Klife.Record{} = rec ->
+        val = String.to_integer(rec.value)
+        :atomics.add(counter, 1, val)
+      end)
+
+      :commit
+    end
+  end
+
+  defmodule BrodBenchmarkConsumer do
+    @behaviour :brod_group_subscriber_v2
+
+    def child_spec(config) do
+      config = %{
+        client: :kafka_client,
+        group_id: config.consumer_group_id,
+        topics: config.topics,
+        cb_module: __MODULE__,
+        consumer_config: config.consumer_config,
+        init_data: [],
+        message_type: :message_set,
+        group_config: [
+          offset_commit_policy: :commit_to_kafka_v2,
+          offset_commit_interval_seconds: 5,
+          rejoin_delay_seconds: 60,
+          reconnect_cool_down_seconds: 60
+        ]
+      }
+
+      %{
+        id: __MODULE__,
+        start: {:brod_group_subscriber_v2, :start_link, [config]},
+        type: :worker,
+        restart: :temporary,
+        shutdown: 5000
+      }
+    end
+
+    @impl :brod_group_subscriber_v2
+    def init(_group_id, _init_data), do: {:ok, []}
+
+    @impl :brod_group_subscriber_v2
+    def handle_message(message, _state) do
+      {:kafka_message_set, topic, _p, _count, recs} = message
+      counter = :persistent_term.get({:brod, topic})
+
+      Enum.each(recs, fn rec ->
+        {:kafka_message, _offset, _headers?, val, _, _, _} = rec
+        :atomics.add(counter, 1, String.to_integer(val))
+      end)
+
+      {:ok, :commit, []}
     end
   end
 end
