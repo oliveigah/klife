@@ -265,7 +265,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     {new_queue, new_queue_size} =
       recs
-      |> Enum.chunk_every(chunk_size)
+      |> Enum.chunk_every(chunk_size, chunk_size, :discard)
       |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch, {acc_queue, acc_size} ->
         new_size = acc_size + chunk_size
 
@@ -289,6 +289,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o}, {:error, reason}}, %__MODULE__{} = state) do
+    # TODO: Hadle error code 1!!!!
     Logger.error("Unexpected fetch error on consumer: #{reason}")
     ref = Process.send_after(self(), :poll_records, 5000)
     {:noreply, %__MODULE__{state | next_fetch_ref: ref}}
