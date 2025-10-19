@@ -170,7 +170,8 @@ defmodule Klife.Consumer.ConsumerGroup do
     :ets.new(get_acked_topic_partitions_table(mod.klife_client(), mod), [
       :set,
       :public,
-      :named_table
+      :named_table,
+      read_concurrency: true
     ])
 
     init_state =

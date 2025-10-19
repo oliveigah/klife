@@ -227,6 +227,10 @@ defmodule Klife.Connection.SystemTest do
   test "auto handle broker specific resources when broker leaves/enter cluster" do
     config = [
       connection: [bootstrap_servers: ["localhost:19092", "localhost:29092"], ssl: false],
+      default_fetcher: :my_default_fetcher,
+      fetchers: [
+        [name: :my_default_fetcher, batchers_count: 1]
+      ],
       topics: [
         [
           name: "test_no_batch_topic"
@@ -266,7 +270,7 @@ defmodule Klife.Connection.SystemTest do
 
     assert [{fetcher_pid, _}] =
              ProcessRegistry.registry_lookup(
-               {Klife.Consumer.Fetcher, client_name, :klife_default_fetcher}
+               {Klife.Consumer.Fetcher, client_name, :my_default_fetcher}
              )
 
     assert %Klife.Consumer.Fetcher{

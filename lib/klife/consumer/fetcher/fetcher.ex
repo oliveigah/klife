@@ -40,8 +40,8 @@ defmodule Klife.Consumer.Fetcher do
     ],
     batchers_count: [
       type: :pos_integer,
-      default: 1,
-      doc: "The number of batchers per broker the fetcher will start."
+      doc:
+        "The number of batchers per broker the fetcher will start. Defaults to `ceil(schedulers_online / known_brokers_count)`"
     ],
     request_timeout_ms: [
       type: :non_neg_integer,
@@ -168,6 +168,18 @@ defmodule Klife.Consumer.Fetcher do
         },
         args_map
       )
+      |> Map.update!(:batchers_count, fn bc ->
+        if bc == nil do
+          known_brokers_count =
+            validated_args.client_name
+            |> ConnController.get_known_brokers()
+            |> length()
+
+          ceil(System.schedulers_online() / known_brokers_count)
+        else
+          bc
+        end
+      end)
 
     :ok = PubSub.subscribe({:metadata_updated, args_map.client_name})
     # Although tecnicaly we could just listen to metadata changes

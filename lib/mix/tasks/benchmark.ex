@@ -84,13 +84,23 @@ if Mix.env() in [:dev] do
 
     def do_run_bench("consumer", client) do
       base_topic = Base.encode16(:rand.bytes(20))
-      partitions = 30
+      partitions = 10
 
+      topics = [t1, t2, t3] = Enum.map(1..3, fn i -> base_topic <> "_#{i}" end)
       {:ok, sup_pid} = DynamicSupervisor.start_link(name: :benchmark_supervisor)
 
-      {:ok, target1} = prepare_topic(base_topic, partitions, 5000)
+      {:ok, target1} = prepare_topic(t1, partitions, 10_000)
+      {:ok, target2} = prepare_topic(t2, partitions, 10_000)
+      {:ok, target3} = prepare_topic(t3, partitions, 10_000)
 
-      run_consumer_bench(String.to_existing_atom(client), base_topic, target1, sup_pid)
+      :persistent_term.put(:bench_counter, :atomics.new(1, []))
+
+      run_consumer_bench(
+        String.to_existing_atom(client),
+        topics,
+        target1 + target2 + target3,
+        sup_pid
+      )
       |> IO.inspect(label: client, charlists: :as_lists)
     end
 
@@ -361,10 +371,10 @@ if Mix.env() in [:dev] do
       )
     end
 
-    defp run_consumer_bench(client, topic, target, sup_pid) do
-      counter = :persistent_term.get({client, topic})
+    defp run_consumer_bench(client, topics, target, sup_pid) do
+      counter = :persistent_term.get(:bench_counter)
 
-      Enum.map(1..10, fn _ ->
+      Enum.map(1..1, fn _ ->
         {:ok, pid} =
           case client do
             :brod ->
@@ -372,7 +382,7 @@ if Mix.env() in [:dev] do
                 sup_pid,
                 {BrodBenchmarkConsumer,
                  %{
-                   topics: [topic],
+                   topics: topics,
                    consumer_config: [{:begin_offset, :earliest}],
                    consumer_group_id: Base.encode64(:rand.bytes(10))
                  }}
@@ -383,9 +393,14 @@ if Mix.env() in [:dev] do
                 sup_pid,
                 {BenchmarkConsumer,
                  [
-                   topics: [
-                     [name: topic, offset_reset_policy: :earliest, handler_max_batch_size: 6000]
-                   ],
+                   topics:
+                     Enum.map(topics, fn tname ->
+                       [
+                         name: tname,
+                         offset_reset_policy: :earliest,
+                         handler_max_batch_size: 10_000
+                       ]
+                     end),
                    group_name: Base.encode64(:rand.bytes(10))
                  ]}
               )
@@ -402,25 +417,36 @@ if Mix.env() in [:dev] do
 
         tf = System.monotonic_time(:millisecond)
 
-        t_after_ack = :persistent_term.get(:klife_after_ack, t0)
-        :persistent_term.erase(:klife_after_ack)
-
+        t_first_call = :persistent_term.get(:first_call)
+        :persistent_term.erase(:first_call)
         :atomics.put(counter, 1, 0)
 
         :ok = DynamicSupervisor.terminate_child(sup_pid, pid)
 
-        {tf - t0, t_after_ack - t0}
+        total = tf - t0
+        first_call = tf - t_first_call
+
+        [
+          total_time: "#{total} ms",
+          since_first_cb_call: "#{first_call} ms (#{Float.round(first_call / total * 100, 2)}%)"
+        ]
       end)
     end
+
+    # klife: [{2288, 94}]
+    # brod:  [{135, 98}]
 
     defp prepare_topic(topic, partitions, recs_per_partition) do
       :ok = Klife.TestUtils.create_topics(MyClient, [%{name: topic, partitions: partitions}])
 
+      rec_size = 1
+      bytes = :rand.bytes(rec_size)
+
       Enum.map(0..(partitions - 1), fn p ->
         Task.async(fn ->
-          Enum.map(1..recs_per_partition, fn i ->
+          Enum.map(1..recs_per_partition, fn _i ->
             %Record{
-              value: "#{i}",
+              value: bytes,
               topic: topic,
               partition: p
             }
@@ -429,12 +455,9 @@ if Mix.env() in [:dev] do
           |> Enum.each(fn rec_batch -> MyClient.produce_batch(rec_batch) end)
         end)
       end)
-      |> Task.await_many(30_000)
+      |> Task.await_many(120_000)
 
-      :persistent_term.put({:klife, topic}, :atomics.new(1, []))
-      :persistent_term.put({:brod, topic}, :atomics.new(1, []))
-
-      target_val = round(partitions * (recs_per_partition / 2 * (1 + recs_per_partition)))
+      target_val = round(partitions * recs_per_partition * rec_size)
 
       {:ok, target_val}
     end
@@ -464,12 +487,15 @@ if Mix.env() in [:dev] do
     use Klife.Consumer.ConsumerGroup, client: MyClient
 
     @impl true
-    def handle_record_batch(topic, _partition, recs) do
-      counter = :persistent_term.get({:klife, topic})
+    def handle_record_batch(_topic, _partition, recs) do
+      if :persistent_term.get(:first_call, nil) == nil do
+        :persistent_term.put(:first_call, System.monotonic_time(:millisecond))
+      end
+
+      counter = :persistent_term.get(:bench_counter)
 
       Enum.each(recs, fn %Klife.Record{} = rec ->
-        val = String.to_integer(rec.value)
-        :atomics.add(counter, 1, val)
+        :atomics.add(counter, 1, byte_size(rec.value))
       end)
 
       :commit
@@ -510,12 +536,16 @@ if Mix.env() in [:dev] do
 
     @impl :brod_group_subscriber_v2
     def handle_message(message, _state) do
-      {:kafka_message_set, topic, _p, _count, recs} = message
-      counter = :persistent_term.get({:brod, topic})
+      if :persistent_term.get(:first_call, nil) == nil do
+        :persistent_term.put(:first_call, System.monotonic_time(:millisecond))
+      end
+
+      {:kafka_message_set, _topic, _p, _count, recs} = message
+      counter = :persistent_term.get(:bench_counter)
 
       Enum.each(recs, fn rec ->
         {:kafka_message, _offset, _headers?, val, _, _, _} = rec
-        :atomics.add(counter, 1, String.to_integer(val))
+        :atomics.add(counter, 1, byte_size(val))
       end)
 
       {:ok, :commit, []}

@@ -23,7 +23,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     ],
     fetch_max_bytes: [
       type: :non_neg_integer,
-      default: 500_000,
+      default: 1_000_000,
       doc: """
       The maximum amount of bytes to fetch in a single request. Must be lower than fetcher config `max_bytes_per_request`.
       """
@@ -31,7 +31,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     max_queue_size: [
       type: :non_neg_integer,
       doc: """
-      The maximum number of items the consumer can keep on its internal queue. Defaults to `20 * handler_max_batch_size`
+      The maximum number of items the consumer can keep on its internal queue. Defaults to `100 * handler_max_batch_size`
       """
     ],
     fetch_interval_ms: [
@@ -97,7 +97,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
 
     base_tc
     |> Map.update!(:max_queue_size, fn v ->
-      if v == nil, do: base_tc.handler_max_batch_size * 20, else: v
+      if v == nil, do: base_tc.handler_max_batch_size * 100, else: v
     end)
     |> Map.update!(:fetcher_name, fn v ->
       if v == nil, do: cg_data.fetcher_name, else: v
