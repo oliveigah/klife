@@ -397,8 +397,7 @@ if Mix.env() in [:dev] do
                      Enum.map(topics, fn tname ->
                        [
                          name: tname,
-                         offset_reset_policy: :earliest,
-                         handler_max_batch_size: 10_000
+                         offset_reset_policy: :earliest
                        ]
                      end),
                    group_name: Base.encode64(:rand.bytes(10))
@@ -412,7 +411,7 @@ if Mix.env() in [:dev] do
           wait_consumption(
             counter,
             target,
-            System.monotonic_time(:millisecond) + 10_000
+            System.monotonic_time(:millisecond) + 30_000
           )
 
         tf = System.monotonic_time(:millisecond)

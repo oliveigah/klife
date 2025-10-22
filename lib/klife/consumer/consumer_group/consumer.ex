@@ -261,18 +261,26 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         %__MODULE__{records_batch_queue: curr_queue, records_batch_queue_count: curr_q_size} =
           state
       ) do
-    chunk_size = min(length(recs), state.topic_config.handler_max_batch_size)
-
     {new_queue, new_queue_size} =
-      recs
-      |> Enum.chunk_every(chunk_size, chunk_size, :discard)
-      |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch, {acc_queue, acc_size} ->
-        new_size = acc_size + chunk_size
+      case state.topic_config.handler_max_batch_size do
+        :dynamic ->
+          new_queue = :queue.in(recs, state.records_batch_queue)
+          new_queue_size = state.records_batch_queue_count + 1
+          {new_queue, new_queue_size}
 
-        if new_size > state.topic_config.max_queue_size,
-          do: {:halt, {acc_queue, acc_size}},
-          else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
-      end)
+        batch_size ->
+          chunk_size = min(length(recs), batch_size)
+
+          recs
+          |> Enum.chunk_every(chunk_size, chunk_size, :discard)
+          |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch, {acc_queue, acc_size} ->
+            new_size = acc_size + 1
+
+            if new_size > state.topic_config.max_queue_size,
+              do: {:halt, {acc_queue, acc_size}},
+              else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
+          end)
+      end
 
     new_state = %__MODULE__{
       state
@@ -317,7 +325,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       records_batch_queue: rec_queue,
       records_batch_queue_count: records_batch_queue_count,
       topic_config: %TopicConfig{
-        handler_max_batch_size: max_batch_size,
         handler_max_unacked_commits: max_unacked
       },
       latest_committed_offset: latest_committed_offset,
@@ -399,10 +406,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               state.latest_processed_offset
           end
 
-        new_queue_size = records_batch_queue_count - length(to_commit_recs)
+        new_queue_size =
+          if to_retry_recs == [],
+            do: records_batch_queue_count - 1,
+            else: records_batch_queue_count
 
         ref =
-          if new_queue_size <= 3 * max_batch_size and state.next_fetch_ref == nil do
+          if new_queue_size <= 1 and state.next_fetch_ref == nil do
             Process.send_after(self(), :poll_records, 0)
           else
             state.next_fetch_ref

@@ -31,7 +31,8 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     max_queue_size: [
       type: :non_neg_integer,
       doc: """
-      The maximum number of items the consumer can keep on its internal queue. Defaults to `100 * handler_max_batch_size`
+      The maximum number of record batches that the consumer can keep on its internal queue.
+      Defaults to 2 if `:handler_max_batch_size` is `:dynamic`, otherwise defaults to 10.
       """
     ],
     fetch_interval_ms: [
@@ -41,7 +42,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       Time in milliseconds that the consumer will wait before trying to fetch new data from the broker after it runs out of records to process.
 
       The consumer always tries to optimize fetch requests wait times by issuing requests before it's internal queue is empty (the current threshold is
-      2 * handler_max_batch_size). Therefore this option is only used for the wait time after a fetch request returns empty.
+      1 batch). Therefore this option is only used for the wait time after a fetch request returns empty.
       """
     ],
     handler_cooldown_ms: [
@@ -63,10 +64,13 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       """
     ],
     handler_max_batch_size: [
-      type: :pos_integer,
-      default: 10,
-      doc:
-        "The maximum amount of records that will be delivered to the handler in each processing cycle."
+      type: {:or, [:pos_integer, :dynamic]},
+      default: :dynamic,
+      doc: """
+      The maximum amount of records that will be delivered to the handler in each processing cycle. If `:dynamic` all records retrieved
+      in the fetch request will be delivered as one single batch to the handler. If positive integer, retrieved records will be chunked
+      into the provided size.
+      """
     ],
     # TODO: Implement transactional true
     handler_is_transactional: [
@@ -97,7 +101,11 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
 
     base_tc
     |> Map.update!(:max_queue_size, fn v ->
-      if v == nil, do: base_tc.handler_max_batch_size * 100, else: v
+      cond do
+        v != nil -> v
+        base_tc.handler_max_batch_size == :dynamic -> 2
+        true -> 10
+      end
     end)
     |> Map.update!(:fetcher_name, fn v ->
       if v == nil, do: cg_data.fetcher_name, else: v

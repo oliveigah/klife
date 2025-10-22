@@ -52,9 +52,14 @@ defmodule Klife.Consumer.Fetcher do
     isolation_level: [
       type: {:in, [:read_committed, :read_uncommitted]},
       default: :read_committed,
-      type_doc: "`:read_committed` or `:read_uncommitted`",
       doc:
         "Define if the consumers of the consumer group will receive uncommitted transactional records"
+    ],
+    max_wait_ms: [
+      type: :non_neg_integer,
+      default: 0,
+      doc:
+        "Define for how long the broker may wait (for more records) before send a response to the client"
     ]
   ]
 
