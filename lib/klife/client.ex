@@ -361,7 +361,7 @@ defmodule Klife.Client do
       iex> :ok = MyClient.produce_batch_async(input, callback: {CB2, :exec, ["arg1", "arg2"]})
 
   """
-  @callback produce_batch_async(record, opts :: Keyword.t()) :: :ok
+  @callback produce_batch_async(list(record), opts :: Keyword.t()) :: :ok
 
   @doc group: "Transaction API"
   @doc """
@@ -484,12 +484,12 @@ defmodule Klife.Client do
       def produce_async(%Record{} = rec, opts \\ []),
         do: Klife.produce_async(rec, __MODULE__, opts)
 
-      @spec produce_batch_async(Record.t(), opts :: list() | nil) :: :ok
+      @spec produce_batch_async(list(Record.t()), opts :: list() | nil) :: :ok
       def produce_batch_async(recs, opts \\ []),
         do: Klife.produce_batch_async(recs, __MODULE__, opts)
 
       @spec produce_batch_txn(list(Record.t()), opts :: list() | nil) ::
-              list({:ok, list(Record.t())}) | list({:error, list(Record.t())})
+              {:ok, list(Record.t())} | {:error, list(Record.t())}
       def produce_batch_txn(recs, opts \\ []), do: Klife.produce_batch_txn(recs, __MODULE__, opts)
 
       @spec transaction(function(), opts :: list() | nil) :: any()

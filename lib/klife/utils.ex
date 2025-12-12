@@ -17,7 +17,7 @@ defmodule Klife.Utils do
       {:ok, res} ->
         {:ok, res}
 
-      :error ->
+      {:error, _err} ->
         now = System.monotonic_time(:millisecond)
 
         if now - init_time > :timer.seconds(15) do

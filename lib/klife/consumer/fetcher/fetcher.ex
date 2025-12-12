@@ -10,6 +10,10 @@ defmodule Klife.Consumer.Fetcher do
 
   alias Klife.PubSub
 
+  alias Klife.Connection.Broker
+
+  alias KlifeProtocol.Messages, as: M
+
   @fetcher_opts [
     name: [
       type: {:or, [:atom, :string]},
@@ -114,6 +118,64 @@ defmodule Klife.Consumer.Fetcher do
     {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
     {:ok, timeout} = Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
     {:ok, timeout}
+  end
+
+  def fetch_raw_async({t, p, o}, client, opts \\ []) do
+    {:ok,
+     %{
+       topic_id: t_id,
+       leader_id: broker
+     }} = MetadataCache.get_metadata(client, t, p)
+
+    data = %{
+      replica_id: opts[:max_wait_ms] || -1,
+      max_wait_ms: opts[:max_wait_ms] || 0,
+      min_bytes: opts[:min_bytes] || 1,
+      max_bytes: opts[:max_bytes] || 500_000,
+      isolation_level:
+        case Keyword.get(opts, :isolation_level, :read_committed) do
+          :read_committed -> 1
+          :read_uncommitted -> 0
+        end,
+      session_id: opts[:session_id] || 0,
+      session_epoch: opts[:session_id] || 0,
+      topics: [
+        %{
+          topic: t_id,
+          partitions: [
+            %{
+              partition: p,
+              current_leader_epoch: opts[:current_leader_epoch] || -1,
+              fetch_offset: o,
+              last_fetched_epoch: opts[:last_fetched_epoch] || -1,
+              log_start_offset: opts[:log_start_offset] || -1,
+              partition_max_bytes: opts[:max_bytes] || 500_000
+            }
+          ]
+        }
+      ],
+      forgotten_topics_data: [],
+      rack_id: nil
+    }
+
+    req_opts = [
+      async: true,
+      callback_pid: self(),
+      callback_ref: opts[:callback_ref] || make_ref()
+    ]
+
+    headers = %{
+      client_id: opts[:client_id] || nil
+    }
+
+    Broker.send_message(
+      M.Fetch,
+      client,
+      broker,
+      data,
+      headers,
+      req_opts
+    )
   end
 
   defp tpo_to_batch_item(t, p, o, client, max_bytes, fetcher) do

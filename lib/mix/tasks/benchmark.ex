@@ -84,21 +84,37 @@ if Mix.env() in [:dev] do
 
     def do_run_bench("consumer", client) do
       base_topic = Base.encode16(:rand.bytes(20))
-      partitions = 10
+      partitions = 30
 
-      topics = [t1, t2, t3] = Enum.map(1..3, fn i -> base_topic <> "_#{i}" end)
+      # brod 3t e 1kb: [total_time: "653 ms", since_first_cb_call: "361 ms (55.28%)"]
+      # klife 3t e 1kb: [total_time: "1040 ms", since_first_cb_call: "826 ms (79.42%)"]
+      #
+      # brod 6t e 1kb: [total_time: "1200 ms", since_first_cb_call: "1121 ms (93.42%)"]
+      # klife 6t e 1kb: [total_time: "1868 ms", since_first_cb_call: "1540 ms (82.44%)"]
+      #
+      # brod 12t e 1kb: [total_time: "2785 ms", since_first_cb_call: "2688 ms (96.52%)"]
+      # klife 12t e 1kb: [total_time: "4551 ms", since_first_cb_call: "2314 ms (50.85%)"]
+      topics = Enum.map(1..3, fn i -> base_topic <> "_#{i}" end)
+
       {:ok, sup_pid} = DynamicSupervisor.start_link(name: :benchmark_supervisor)
 
-      {:ok, target1} = prepare_topic(t1, partitions, 10_000)
-      {:ok, target2} = prepare_topic(t2, partitions, 10_000)
-      {:ok, target3} = prepare_topic(t3, partitions, 10_000)
+      targets =
+        Task.async_stream(
+          topics,
+          fn t ->
+            {:ok, target} = prepare_topic(t, partitions, 10_000, 1000)
+            target
+          end,
+          timeout: 300_000
+        )
+        |> Enum.map(fn {:ok, tgt} -> tgt end)
 
       :persistent_term.put(:bench_counter, :atomics.new(1, []))
 
       run_consumer_bench(
         String.to_existing_atom(client),
         topics,
-        target1 + target2 + target3,
+        Enum.sum(targets),
         sup_pid
       )
       |> IO.inspect(label: client, charlists: :as_lists)
@@ -411,7 +427,7 @@ if Mix.env() in [:dev] do
           wait_consumption(
             counter,
             target,
-            System.monotonic_time(:millisecond) + 30_000
+            System.monotonic_time(:millisecond) + 120_000
           )
 
         tf = System.monotonic_time(:millisecond)
@@ -432,13 +448,9 @@ if Mix.env() in [:dev] do
       end)
     end
 
-    # klife: [{2288, 94}]
-    # brod:  [{135, 98}]
-
-    defp prepare_topic(topic, partitions, recs_per_partition) do
+    defp prepare_topic(topic, partitions, recs_per_partition, rec_size) do
       :ok = Klife.TestUtils.create_topics(MyClient, [%{name: topic, partitions: partitions}])
-
-      rec_size = 1
+      Process.sleep(5000)
       bytes = :rand.bytes(rec_size)
 
       Enum.map(0..(partitions - 1), fn p ->
@@ -454,7 +466,7 @@ if Mix.env() in [:dev] do
           |> Enum.each(fn rec_batch -> MyClient.produce_batch(rec_batch) end)
         end)
       end)
-      |> Task.await_many(120_000)
+      |> Task.await_many(300_000)
 
       target_val = round(partitions * recs_per_partition * rec_size)
 

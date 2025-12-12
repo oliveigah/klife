@@ -128,11 +128,11 @@ defmodule Klife.MetadataCache do
           :ok = PubSub.publish({:metadata_updated, client_name}, %{})
         end
 
+        :ok
+
       {:error, _} = err ->
         err
     end
-
-    :ok
   end
 
   def get_topic_name_by_id(client_name, topic_id) do

@@ -38,7 +38,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :latest_processed_offset,
     :records_batch_queue,
     :records_batch_queue_count,
-    :unconfirmed_commits_count,
     :empty_fetch_results_count,
     :next_fetch_ref,
     :leader_epoch
@@ -77,7 +76,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         cg_member_id: args_map.consumer_group_member_id,
         cg_member_epoch: args_map.consumer_group_epoch,
         cg_coordinator_id: args_map.consumer_group_coordinator_id,
-        unconfirmed_commits_count: 0,
         empty_fetch_results_count: 0,
         next_fetch_ref: nil,
         records_batch_queue: :queue.new(),
