@@ -222,18 +222,40 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     %TopicConfig{} = topic_config = state.topic_config
 
-    opts = [
-      fetcher: topic_config.fetcher_name,
-      isolation_level: topic_config.isolation_level,
-      max_bytes: topic_config.fetch_max_bytes
-    ]
+    fetch_result =
+      case topic_config.fetch_strategy do
+        {:shared, fetcher_name} ->
+          opts = [
+            fetcher: fetcher_name,
+            isolation_level: topic_config.isolation_level,
+            max_bytes: topic_config.fetch_max_bytes
+          ]
 
-    {:ok, _timeout} =
-      Fetcher.fetch_async(
-        {state.topic_name, state.partition_idx, offset_to_fetch},
-        state.client_name,
-        opts
-      )
+          Fetcher.fetch_async(
+            {state.topic_name, state.partition_idx, offset_to_fetch},
+            state.client_name,
+            opts
+          )
+
+        {:exclusive, fetch_opts} ->
+          # Merge topic config options with exclusive fetch options
+          final_opts =
+            Keyword.merge(
+              [
+                isolation_level: topic_config.isolation_level,
+                max_bytes: topic_config.fetch_max_bytes
+              ],
+              fetch_opts
+            )
+
+          Fetcher.fetch_raw_async(
+            {state.topic_name, state.partition_idx, offset_to_fetch},
+            state.client_name,
+            final_opts
+          )
+      end
+
+    {:ok, _timeout} = fetch_result
 
     {:noreply, state}
   end

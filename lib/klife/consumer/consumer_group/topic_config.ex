@@ -5,10 +5,11 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       required: true,
       doc: "Name of the topic the consumer group will consume records from"
     ],
-    fetcher_name: [
-      type: {:or, [:atom, :string]},
-      doc:
-        "Fetcher name to be used by the consumers of this topic. Overrides the one defined on the consumer group."
+    fetch_strategy: [
+      type: {:custom, Klife.Consumer.ConsumerGroup, :validate_fetch_strategy, []},
+      doc: """
+      May override the fetch_strategy defined on the consumer group
+      """
     ],
     isolation_level: [
       type: {:in, [:read_committed, :read_uncommitted]},
@@ -77,9 +78,9 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       type: :boolean,
       default: false,
       doc: """
-      Determines whether producer calls are executed inside a transaction linked to the consumer’s offset commit.
+      Determines whether producer calls are executed inside a transaction linked to the consumer's offset commit.
 
-      * `true` — Producer calls are executed within a transaction. The transaction is committed together with the consumer’s offset commit.
+      * `true` — Producer calls are executed within a transaction. The transaction is committed together with the consumer's offset commit.
         Use this when following a **consume → process → produce** workflow (e.g., Kafka Streams) and you need offsets and produced records to be persisted atomically.
         Note: Transactions incur additional overhead, reducing throughput and resource efficiency in exchange for stronger consistency.
 
@@ -107,8 +108,8 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
         true -> 10
       end
     end)
-    |> Map.update!(:fetcher_name, fn v ->
-      if v == nil, do: cg_data.fetcher_name, else: v
+    |> Map.update!(:fetch_strategy, fn v ->
+      if v == nil, do: cg_data.fetch_strategy, else: v
     end)
   end
 end

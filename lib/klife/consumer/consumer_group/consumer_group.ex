@@ -17,6 +17,63 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   alias Klife.MetadataCache
 
+  @exclusive_fetch_opts [
+    max_wait_ms: [
+      type: :non_neg_integer,
+      default: 0,
+      doc: "The maximum time in milliseconds to wait for the fetch request"
+    ],
+    min_bytes: [
+      type: :pos_integer,
+      default: 1,
+      doc: "The minimum number of bytes the server should return for a fetch request"
+    ],
+    max_bytes: [
+      type: :pos_integer,
+      default: 500_000,
+      doc: "The maximum number of bytes the server should return for a fetch request"
+    ],
+    isolation_level: [
+      type: {:in, [:read_committed, :read_uncommitted]},
+      default: :read_committed,
+      doc: "The isolation level for reading messages"
+    ],
+    session_id: [
+      type: :non_neg_integer,
+      default: 0,
+      doc: "The fetch session ID"
+    ],
+    session_epoch: [
+      type: :non_neg_integer,
+      default: 0,
+      doc: "The fetch session epoch"
+    ],
+    current_leader_epoch: [
+      type: :integer,
+      default: -1,
+      doc: "The current leader epoch for the partition"
+    ],
+    last_fetched_epoch: [
+      type: :integer,
+      default: -1,
+      doc: "The epoch of the last fetched record"
+    ],
+    log_start_offset: [
+      type: :integer,
+      default: -1,
+      doc: "The earliest available offset of the follower replica"
+    ],
+    callback_ref: [
+      type: :any,
+      doc: "Reference for the callback, defaults to make_ref()"
+    ],
+    client_id: [
+      type: {:or, [:string, nil]},
+      default: nil,
+      doc: "Client ID to use in fetch requests"
+    ]
+  ]
+
   @consumer_group_opts [
     client: [
       type: :atom,
@@ -43,10 +100,16 @@ defmodule Klife.Consumer.ConsumerGroup do
       doc:
         "The maximum time in milliseconds that the kafka broker coordinator will wait on the member to revoke it's partitions"
     ],
-    fetcher_name: [
-      type: :atom,
-      doc:
-        "Fetcher name to be used by the consumers of the group. Defaults to client's default fetcher"
+    fetch_strategy: [
+      type: {:custom, __MODULE__, :validate_fetch_strategy, []},
+      doc: """
+      Fetch strategy for this topic. Can be either:
+      - `{:exclusive, options}` - Will call the broker directly
+      - `{:shared, fetcher_name}` - Will use a shared fetcher that will batch requests for the same broker
+
+      Defaults to `:exclusive` with default options
+      TODO: add tradeoffs and default option values
+      """
     ],
     committers_count: [
       type: :pos_integer,
@@ -134,6 +197,26 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
+  def validate_fetch_strategy({:shared, fetcher_name}) when is_atom(fetcher_name) do
+    {:ok, {:shared, fetcher_name}}
+  end
+
+  def validate_fetch_strategy({:exclusive, options}) when is_list(options) do
+    case NimbleOptions.validate(options, @exclusive_fetch_opts) do
+      {:ok, validated_opts} -> {:ok, {:exclusive, validated_opts}}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  def validate_fetch_strategy(nil) do
+    {:ok, nil}
+  end
+
+  def validate_fetch_strategy(value) do
+    {:error,
+     "expected :fetch_strategy to be either {:shared, atom} or {:exclusive, keyword_list}, got: #{inspect(value)}"}
+  end
+
   def start_link(cg_mod, args) do
     base_validated_args = NimbleOptions.validate!(args, @consumer_group_opts)
 
@@ -187,7 +270,8 @@ defmodule Klife.Consumer.ConsumerGroup do
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
         consumers_monitor_map: %{},
-        fetcher_name: args_map[:fetcher_name] || mod.klife_client().get_default_fetcher(),
+        fetch_strategy:
+          args_map[:fetcher_strategy] || {:shared, mod.klife_client().get_default_fetcher()},
         committers_count: args_map.committers_count,
         committers_distribution: %{}
       }
