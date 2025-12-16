@@ -71,6 +71,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       type: {:or, [:string, nil]},
       default: nil,
       doc: "Client ID to use in fetch requests"
+    ],
+    request_timeout_ms: [
+      type: :non_neg_integer,
+      default: :timer.seconds(5),
+      doc:
+        "The maximum amount of time the consumer will wait for a broker response to a request before considering it as failed."
     ]
   ]
 
@@ -102,6 +108,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     ],
     fetch_strategy: [
       type: {:custom, __MODULE__, :validate_fetch_strategy, []},
+      default: {:exclusive, []},
       doc: """
       Fetch strategy for this topic. Can be either:
       - `{:exclusive, options}` - Will call the broker directly
@@ -209,7 +216,7 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def validate_fetch_strategy(nil) do
-    {:ok, nil}
+    validate_fetch_strategy({:exclusive, []})
   end
 
   def validate_fetch_strategy(value) do
@@ -218,7 +225,8 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def start_link(cg_mod, args) do
-    base_validated_args = NimbleOptions.validate!(args, @consumer_group_opts)
+    base_validated_args =
+      NimbleOptions.validate!(args, @consumer_group_opts)
 
     map_args = Helpers.keyword_list_to_map(base_validated_args)
 
@@ -270,8 +278,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
         consumers_monitor_map: %{},
-        fetch_strategy:
-          args_map[:fetcher_strategy] || {:shared, mod.klife_client().get_default_fetcher()},
+        fetch_strategy: args_map.fetch_strategy,
         committers_count: args_map.committers_count,
         committers_distribution: %{}
       }

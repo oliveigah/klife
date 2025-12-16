@@ -78,7 +78,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
     req_data = state.requests[req_ref].data
 
     result =
-      for %{topic: t, partitions: p_list} <- resp_list,
+      for %{topic_id: t, partitions: p_list} <- resp_list,
           %{
             aborted_transactions: at,
             error_code: ec,
@@ -87,7 +87,6 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
           } <- p_list,
           into: %{} do
         key = {t, p}
-        %Batcher.BatchItem{offset_to_fetch: requested_base_offset} = req_data[key]
 
         case ec do
           0 ->
@@ -100,12 +99,10 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
               end
 
             val =
-              rec_batch_list
-              |> Enum.flat_map(fn rec_batch -> Record.parse_from_protocol(t, p, rec_batch) end)
-              |> Enum.reject(fn %Record{} = r ->
-                r.offset < requested_base_offset or
-                  r.batch_attributes.is_control_batch or
-                  (r.offset >= first_aborted_offset and r.batch_attributes.is_transactional)
+              Enum.flat_map(rec_batch_list, fn rec_batch ->
+                Record.parse_from_protocol(req_data[key].topic_name, p, rec_batch,
+                  first_aborted_offset: first_aborted_offset
+                )
               end)
 
             {key, {:ok, val}}
@@ -201,7 +198,6 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       Enum.group_by(batch.data, fn {{t, _p}, _v} -> t end, fn {{_t, _p}, v} -> v end)
 
     %{
-      replica_id: -1,
       max_wait_ms: state.fetcher_config.max_wait_ms,
       # TODO: min_bytes as fetcher config
       min_bytes: 1,
@@ -212,7 +208,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       topics:
         Enum.map(parsed_data, fn {topic_id, items_list} ->
           %{
-            topic: topic_id,
+            topic_id: topic_id,
             partitions:
               Enum.map(items_list, fn %Batcher.BatchItem{} = item ->
                 %{

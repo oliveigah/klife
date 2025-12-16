@@ -36,10 +36,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :cg_pid,
     :latest_committed_offset,
     :latest_processed_offset,
+    :latest_fetched_offset,
     :records_batch_queue,
     :records_batch_queue_count,
     :empty_fetch_results_count,
-    :next_fetch_ref,
+    :fetch_ref,
     :leader_epoch
   ]
 
@@ -76,8 +77,9 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         cg_member_id: args_map.consumer_group_member_id,
         cg_member_epoch: args_map.consumer_group_epoch,
         cg_coordinator_id: args_map.consumer_group_coordinator_id,
+        latest_fetched_offset: -1,
         empty_fetch_results_count: 0,
-        next_fetch_ref: nil,
+        fetch_ref: nil,
         records_batch_queue: :queue.new(),
         records_batch_queue_count: 0,
         cg_pid: args_map.consumer_group_pid,
@@ -210,19 +212,23 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
-  def handle_info(:poll_records, %__MODULE__{} = state) do
+
+  def handle_info(:poll_records, %__MODULE__{fetch_ref: nil} = state) do
     offset_to_fetch =
       case :queue.out_r(state.records_batch_queue) do
         {{:value, rec_batch}, _queue} ->
-          List.last(rec_batch).offset + 1
+          max(List.last(rec_batch).offset + 1, state.latest_fetched_offset + 1)
 
         {:empty, _queue} ->
-          state.latest_processed_offset + 1
+          max(state.latest_processed_offset + 1, state.latest_fetched_offset + 1)
       end
 
     %TopicConfig{} = topic_config = state.topic_config
 
-    fetch_result =
+    tpo = {state.topic_name, state.partition_idx, offset_to_fetch}
+    ref = {make_ref(), tpo}
+
+    {:ok, timeout} =
       case topic_config.fetch_strategy do
         {:shared, fetcher_name} ->
           opts = [
@@ -232,95 +238,107 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
           ]
 
           Fetcher.fetch_async(
-            {state.topic_name, state.partition_idx, offset_to_fetch},
+            tpo,
             state.client_name,
             opts
           )
 
         {:exclusive, fetch_opts} ->
-          # Merge topic config options with exclusive fetch options
           final_opts =
             Keyword.merge(
-              [
-                isolation_level: topic_config.isolation_level,
-                max_bytes: topic_config.fetch_max_bytes
-              ],
-              fetch_opts
+              fetch_opts,
+              isolation_level: topic_config.isolation_level,
+              max_bytes: topic_config.fetch_max_bytes,
+              callback_ref: ref
             )
 
-          Fetcher.fetch_raw_async(
-            {state.topic_name, state.partition_idx, offset_to_fetch},
-            state.client_name,
-            final_opts
-          )
+          :ok =
+            Fetcher.fetch_raw_async(
+              tpo,
+              state.client_name,
+              final_opts
+            )
+
+          {:ok, fetch_opts[:request_timeout_ms]}
       end
 
-    {:ok, _timeout} = fetch_result
+    Process.send_after(self(), {:check_poll_timeout, ref}, timeout + 1000)
 
+    {:noreply, %__MODULE__{state | fetch_ref: ref}}
+  end
+
+  def handle_info(:poll_records, %__MODULE__{} = state) do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_info({:klife_fetch_response, {_t, _p, _o}, {:ok, []}}, %__MODULE__{} = state) do
-    backoff_ratio = min((state.empty_fetch_results_count + 1) / 10, 1)
-    next_fetch_wait_time = ceil(backoff_ratio * state.topic_config.fetch_interval_ms)
-    ref = Process.send_after(self(), :poll_records, next_fetch_wait_time)
+  def handle_info({:check_poll_timeout, ref}, %__MODULE__{} = state) do
+    if ref == state.fetch_ref do
+      Logger.warning(
+        "Fetch request timeout for #{state.topic_name} #{state.partition_idx} on client #{state.client_name}, retrying..."
+      )
 
-    new_state = %__MODULE__{
-      state
-      | empty_fetch_results_count: state.empty_fetch_results_count + 1,
-        next_fetch_ref: ref
-    }
+      Process.send_after(self(), :poll_records, Enum.random(1000..5000))
 
-    {:noreply, new_state}
+      {:noreply, %__MODULE__{state | fetch_ref: nil}}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
-  def handle_info(
-        {:klife_fetch_response, {_t, _p, _o}, {:ok, recs}},
-        %__MODULE__{records_batch_queue: curr_queue, records_batch_queue_count: curr_q_size} =
-          state
-      ) do
-    {new_queue, new_queue_size} =
-      case state.topic_config.handler_max_batch_size do
-        :dynamic ->
-          new_queue = :queue.in(recs, state.records_batch_queue)
-          new_queue_size = state.records_batch_queue_count + 1
-          {new_queue, new_queue_size}
-
-        batch_size ->
-          chunk_size = min(length(recs), batch_size)
-
-          recs
-          |> Enum.chunk_every(chunk_size, chunk_size, :discard)
-          |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch, {acc_queue, acc_size} ->
-            new_size = acc_size + 1
-
-            if new_size > state.topic_config.max_queue_size,
-              do: {:halt, {acc_queue, acc_size}},
-              else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
-          end)
-      end
-
-    new_state = %__MODULE__{
-      state
-      | records_batch_queue: new_queue,
-        records_batch_queue_count: new_queue_size,
-        empty_fetch_results_count: 0,
-        next_fetch_ref: nil
-    }
-
-    send(self(), :handle_records)
-
-    {:noreply, new_state}
+  def handle_info({:klife_fetch_response, {_t, _p, _o} = tpo, {:ok, recs}}, %__MODULE__{} = state) do
+    {:noreply, handle_fetch_response(state, recs, tpo)}
   end
 
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o}, {:error, reason}}, %__MODULE__{} = state) do
     # TODO: Hadle error code 1!!!!
     Logger.error("Unexpected fetch error on consumer: #{reason}")
-    ref = Process.send_after(self(), :poll_records, 5000)
-    {:noreply, %__MODULE__{state | next_fetch_ref: ref}}
+    Process.send_after(self(), :poll_records, 5000)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(
+        {:async_broker_response, {req_ref, {t, p, o} = tpo}, binary_resp, M.Fetch = msg_mod,
+         msg_version},
+        %__MODULE__{fetch_ref: {req_ref, {t, p, o} = tpo}, topic_id: t_id} = state
+      ) do
+    with {:ok, %{content: content}} <- msg_mod.deserialize_response(binary_resp, msg_version),
+         %{error_code: 0, responses: [%{topic_id: ^t_id, partitions: [resp_data]}]} <- content,
+         %{error_code: 0} <- resp_data do
+      first_aborted_offset =
+        if state.topic_config.isolation_level == :read_committed do
+          Enum.map(resp_data.aborted_transactions, fn %{first_offset: fo} -> fo end)
+          |> Enum.min(fn -> :infinity end)
+        else
+          :infinity
+        end
+
+      recs =
+        Enum.flat_map(resp_data.records, fn rec_batch ->
+          Record.parse_from_protocol(t, p, rec_batch, first_aborted_offset: first_aborted_offset)
+        end)
+
+      {:noreply, handle_fetch_response(state, recs, tpo)}
+    else
+      error ->
+        raise "TODO: WHAT TO DO HERE?? #{error}"
+    end
+  end
+
+  @impl true
+  def handle_info(
+        {:async_broker_response, ref, _binary_resp, M.Fetch, _msg_version},
+        %__MODULE__{} = state
+      ) do
+    if state.fetch_ref != ref do
+      Logger.warning(
+        "Unexpected async broker response received for #{state.topic_name} #{state.partition_idx} on client #{state.client_name}"
+      )
+    end
+
+    {:noreply, state}
   end
 
   @impl true
@@ -363,14 +381,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         {:noreply, state}
 
       not has_records_to_process? ->
-        ref =
-          if state.next_fetch_ref == nil do
-            Process.send_after(self(), :poll_records, 0)
-          else
-            state.next_fetch_ref
-          end
+        if state.fetch_ref == nil do
+          Process.send_after(self(), :poll_records, 0)
+        end
 
-        {:noreply, %{state | next_fetch_ref: ref}}
+        {:noreply, state}
 
       curr_unacked > max_unacked ->
         {:noreply, state}
@@ -431,20 +446,16 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             do: records_batch_queue_count - 1,
             else: records_batch_queue_count
 
-        ref =
-          if new_queue_size <= 1 and state.next_fetch_ref == nil do
-            Process.send_after(self(), :poll_records, 0)
-          else
-            state.next_fetch_ref
-          end
+        if new_queue_size <= 1 do
+          Process.send_after(self(), :poll_records, 0)
+        end
 
         new_state =
           %__MODULE__{
             state
             | records_batch_queue: new_queue,
               records_batch_queue_count: new_queue_size,
-              latest_processed_offset: latest_processed_offset,
-              next_fetch_ref: ref
+              latest_processed_offset: latest_processed_offset
           }
 
         next_handle_delay = Keyword.get(usr_opts, :handler_cooldown_ms, 0)
@@ -485,6 +496,71 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     if function_exported?(state.cg_mod, :handle_consumer_stop, 3) do
       :ok = state.cg_mod.handle_consumer_stop(state.topic_name, state.partition_idx, reason)
     end
+  end
+
+  def handle_fetch_response(%__MODULE__{} = state, [], {_t, _p, _o}) do
+    backoff_ratio = min((state.empty_fetch_results_count + 1) / 10, 1)
+    next_fetch_wait_time = ceil(backoff_ratio * state.topic_config.fetch_interval_ms)
+    Process.send_after(self(), :poll_records, next_fetch_wait_time)
+
+    %__MODULE__{
+      state
+      | empty_fetch_results_count: state.empty_fetch_results_count + 1,
+        fetch_ref: nil
+    }
+  end
+
+  def handle_fetch_response(
+        %__MODULE__{records_batch_queue: curr_queue, records_batch_queue_count: curr_q_size} =
+          state,
+        base_recs,
+        {_t, _p, base_offset}
+      ) do
+    filter_rec_opts =
+      [
+        base_offset: base_offset,
+        include_control: false,
+        include_aborted: state.topic_config.isolation_level == :read_uncommitted
+      ]
+
+    {new_queue, new_queue_size} =
+      case Record.filter_records(base_recs, filter_rec_opts) do
+        [] ->
+          {state.records_batch_queue, state.records_batch_queue_count}
+
+        recs ->
+          case state.topic_config.handler_max_batch_size do
+            :dynamic ->
+              new_queue = :queue.in(recs, state.records_batch_queue)
+              new_queue_size = state.records_batch_queue_count + 1
+              {new_queue, new_queue_size}
+
+            batch_size ->
+              chunk_size = min(length(recs), batch_size)
+
+              recs
+              |> Enum.chunk_every(chunk_size, chunk_size, :discard)
+              |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch,
+                                                                 {acc_queue, acc_size} ->
+                new_size = acc_size + 1
+
+                if new_size > state.topic_config.max_queue_size,
+                  do: {:halt, {acc_queue, acc_size}},
+                  else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
+              end)
+          end
+      end
+
+    send(self(), :handle_records)
+
+    %__MODULE__{
+      state
+      | records_batch_queue: new_queue,
+        records_batch_queue_count: new_queue_size,
+        latest_fetched_offset: List.last(base_recs).offset,
+        empty_fetch_results_count: 0,
+        fetch_ref: nil
+    }
   end
 
   def user_action_to_commit_group(:retry), do: :retry

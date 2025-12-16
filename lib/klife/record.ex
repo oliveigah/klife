@@ -27,6 +27,7 @@ defmodule Klife.Record do
     :error_code,
     :value,
     :batch_attributes,
+    :is_aborted,
     {:consumer_attempts, 0},
     {:headers, []},
     :__batch_index,
@@ -95,10 +96,11 @@ defmodule Klife.Record do
     80 + get_size(record.value) + get_size(record.key) + get_size(record.headers)
   end
 
-  def parse_from_protocol(t, p, record_batch) do
+  def parse_from_protocol(t, p, record_batch, opts \\ []) do
     base_offset = record_batch[:base_offset]
     record_list = Enum.with_index(record_batch[:records])
     batch_attributes = KlifeProtocol.RecordBatch.decode_attributes(record_batch[:attributes])
+    first_aborted_offset = opts[:first_aborted_offset] || :infinity
 
     Enum.map(record_list, fn {rec, idx} ->
       %__MODULE__{
@@ -108,8 +110,31 @@ defmodule Klife.Record do
         topic: t,
         partition: p,
         offset: base_offset + idx,
-        batch_attributes: batch_attributes
+        batch_attributes: batch_attributes,
+        is_aborted: base_offset + idx >= first_aborted_offset
       }
+    end)
+  end
+
+  def filter_records(rec_list, opts \\ []) do
+    base_offset = opts[:base_offset] || -1
+    include_control = opts[:include_control] || false
+    include_aborted = opts[:include_aborted] || false
+
+    Enum.reject(rec_list, fn %__MODULE__{} = r ->
+      cond do
+        r.offset < base_offset ->
+          true
+
+        not include_control and r.batch_attributes.is_control_batch ->
+          true
+
+        not include_aborted and r.is_aborted and r.batch_attributes.is_transactional ->
+          true
+
+        true ->
+          false
+      end
     end)
   end
 

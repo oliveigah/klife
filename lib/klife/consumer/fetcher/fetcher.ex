@@ -128,7 +128,6 @@ defmodule Klife.Consumer.Fetcher do
      }} = MetadataCache.get_metadata(client, t, p)
 
     data = %{
-      replica_id: opts[:max_wait_ms] || -1,
       max_wait_ms: opts[:max_wait_ms] || 0,
       min_bytes: opts[:min_bytes] || 1,
       max_bytes: opts[:max_bytes] || 500_000,
@@ -138,10 +137,10 @@ defmodule Klife.Consumer.Fetcher do
           :read_uncommitted -> 0
         end,
       session_id: opts[:session_id] || 0,
-      session_epoch: opts[:session_id] || 0,
+      session_epoch: opts[:session_epoch] || 0,
       topics: [
         %{
-          topic: t_id,
+          topic_id: t_id,
           partitions: [
             %{
               partition: p,
@@ -155,7 +154,7 @@ defmodule Klife.Consumer.Fetcher do
         }
       ],
       forgotten_topics_data: [],
-      rack_id: nil
+      rack_id: opts[:rack_id] || ""
     }
 
     req_opts = [

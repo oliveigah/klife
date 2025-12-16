@@ -106,6 +106,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_2"]
       ],
       group_name: Base.encode64(:rand.bytes(10))
+      # fetch_strategy: {:shared, MyClient.get_default_fetcher()}
     ]
 
     start_supervised!({MyTestCG, consumer_opts}, id: :cg1, restart: :temporary)
@@ -118,6 +119,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       {"test_consumer_topic_2", 0},
       {"test_consumer_topic_2", 1}
     ]
+
+    Process.sleep(5000)
 
     Enum.each(cg_assignments, fn {t, p} ->
       assert_receive {MyTestCG, :started_consumer, ^t, ^p}, 5_000
@@ -169,6 +172,87 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     TestUtils.assert_records(recv_rec2_4, exp_rec2)
 
     refute_receive {MyTestCG, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+  end
+
+  test "basic consume test - shared fetch", ctx do
+    parent_pid = self()
+
+    defmodule MyTestCG8 do
+      use CGTest, parent_pid: parent_pid
+    end
+
+    consumer_opts = [
+      topics: [
+        [name: "test_consumer_topic_1"],
+        [name: "test_consumer_topic_2"]
+      ],
+      group_name: Base.encode64(:rand.bytes(10)),
+      fetch_strategy: {:shared, MyClient.get_default_fetcher()}
+    ]
+
+    start_supervised!({MyTestCG8, consumer_opts}, id: :cg1, restart: :temporary)
+
+    cg_assignments = [
+      {"test_consumer_topic_1", 0},
+      {"test_consumer_topic_1", 1},
+      {"test_consumer_topic_1", 2},
+      {"test_consumer_topic_1", 3},
+      {"test_consumer_topic_2", 0},
+      {"test_consumer_topic_2", 1}
+    ]
+
+    Process.sleep(5000)
+
+    Enum.each(cg_assignments, fn {t, p} ->
+      assert_receive {MyTestCG8, :started_consumer, ^t, ^p}, 5_000
+    end)
+
+    assert_assignment(cg_assignments, MyTestCG8)
+
+    [
+      {:ok, %Record{offset: offset1} = exp_rec1},
+      {:ok, %Record{offset: offset2} = exp_rec2}
+    ] =
+      MyClient.produce_batch([
+        %Record{topic: "test_consumer_topic_1", partition: 0, value: :rand.bytes(10)},
+        %Record{
+          topic: "test_consumer_topic_1",
+          partition: 0,
+          value: "retry_2" <> "___" <> :rand.bytes(10)
+        }
+      ])
+
+    assert_receive {MyTestCG8, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset1} = recv_rec1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec1, exp_rec1)
+
+    assert_receive {MyTestCG8, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 0} = recv_rec2_1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_1, exp_rec2)
+
+    assert_receive {MyTestCG8, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 1} = recv_rec2_2},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_2, exp_rec2)
+
+    assert_receive {MyTestCG8, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 2} = recv_rec2_3},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_3, exp_rec2)
+
+    assert_receive {MyTestCG8, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 3} = recv_rec2_4},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_4, exp_rec2)
+
+    refute_receive {MyTestCG8, :processed, _any_topic, _any_partition, _any_rec}, 5_000
   end
 
   test "should not read uncommitted records", ctx do
@@ -272,6 +356,109 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     refute_receive {MyTestCG6, :processed, _any_topic, _any_partition, _any_rec}, 5_000
 
     assert_assignment(cg_assignments, MyTestCG6)
+  end
+
+  test "should not read uncommitted records - batch with only filtered records", ctx do
+    parent_pid = self()
+
+    defmodule MyTestCG7 do
+      use CGTest, parent_pid: parent_pid
+    end
+
+    consumer_opts = [
+      topics: [
+        [name: "test_consumer_topic_1", fetch_max_bytes: 1]
+      ],
+      group_name: Base.encode64(:rand.bytes(10))
+    ]
+
+    start_supervised!({MyTestCG7, consumer_opts}, id: :cg1, restart: :temporary)
+
+    cg_assignments = [
+      {"test_consumer_topic_1", 0},
+      {"test_consumer_topic_1", 1},
+      {"test_consumer_topic_1", 2},
+      {"test_consumer_topic_1", 3}
+    ]
+
+    Enum.each(cg_assignments, fn {t, p} ->
+      assert_receive {MyTestCG7, :started_consumer, ^t, ^p}, 5_000
+    end)
+
+    assert_assignment(cg_assignments, MyTestCG7)
+
+    {:ok,
+     [
+       %Record{offset: offset1} = exp_rec1,
+       %Record{offset: offset2} = exp_rec2
+     ]} =
+      MyClient.transaction(fn ->
+        [{:ok, exp_rec1}, {:ok, exp_rec2}] =
+          MyClient.produce_batch([
+            %Record{topic: "test_consumer_topic_1", partition: 0, value: "aaaa"},
+            %Record{
+              topic: "test_consumer_topic_1",
+              partition: 0,
+              value: "retry_2" <> "___" <> "bbbb"
+            }
+          ])
+
+        refute_receive {MyTestCG7, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+        {:ok, [exp_rec1, exp_rec2]}
+      end)
+
+    assert_receive {MyTestCG7, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset1} = recv_rec1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec1, exp_rec1)
+
+    assert_receive {MyTestCG7, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 0} = recv_rec2_1},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_1, exp_rec2)
+
+    assert_receive {MyTestCG7, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 1} = recv_rec2_2},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_2, exp_rec2)
+
+    assert_receive {MyTestCG7, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 2} = recv_rec2_3},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_3, exp_rec2)
+
+    assert_receive {MyTestCG7, :processed, "test_consumer_topic_1", 0,
+                    %Record{offset: ^offset2, consumer_attempts: 3} = recv_rec2_4},
+                   5_000
+
+    TestUtils.assert_records(recv_rec2_4, exp_rec2)
+
+    refute_receive {MyTestCG7, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+    MyClient.transaction(fn ->
+      [{:ok, _exp_rec1}, {:ok, _exp_rec2}] =
+        MyClient.produce_batch([
+          %Record{topic: "test_consumer_topic_1", partition: 0, value: "ccccc"},
+          %Record{
+            topic: "test_consumer_topic_1",
+            partition: 0,
+            value: "retry_2" <> "___" <> "ddddd"
+          }
+        ])
+
+      refute_receive {MyTestCG7, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+      :some_error
+    end)
+
+    refute_receive {MyTestCG7, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+
+    assert_assignment(cg_assignments, MyTestCG7)
   end
 
   @tag capture_log: true

@@ -125,7 +125,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
   end
 
   defp add_item_to_batch_data(%BatchItem{} = item, data_map) do
-    key = {item.topic_name, item.partition}
+    key = {item.topic_id, item.partition}
     Map.put(data_map, key, item)
   end
 
@@ -141,7 +141,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
 
   @impl true
   def fit_on_batch?(%BatchItem{} = item, %Batch{} = current_batch) do
-    not Map.has_key?(current_batch.data, {item.topic_name, item.partition})
+    not Map.has_key?(current_batch.data, {item.topic_id, item.partition})
   end
 
   @impl true
