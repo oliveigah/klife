@@ -122,78 +122,18 @@ defmodule Klife.TestUtils do
   end
 
   def get_record_batch_by_offset(client_name, topic, partition, offset) do
-    content = %{
-      replica_id: -1,
-      max_wait_ms: 1000,
-      min_bytes: 1,
-      max_bytes: 100_000,
-      isolation_level: 0,
-      topics: [
-        %{
-          topic: topic,
-          partitions: [
-            %{
-              partition: partition,
-              fetch_offset: offset,
-              # 1 guarantees that only the first record batch will
-              # be retrieved
-              partition_max_bytes: 1
-            }
-          ]
-        }
-      ]
-    }
+    {:ok, %{content: content}} = make_fetch_req(client_name, {topic, partition, offset})
 
-    broker = Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id)
-
-    {:ok, %{content: content}} =
-      Klife.Connection.Broker.send_message(
-        KlifeProtocol.Messages.Fetch,
-        client_name,
-        broker,
-        content
-      )
-
-    topic_resp = Enum.find(content.responses, &(&1.topic == topic))
+    [topic_resp] = content.responses
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
     [%{records: records}] = partition_resp.records
     records
   end
 
   def get_partition_resp_records_by_offset(client_name, topic, partition, offset) do
-    content = %{
-      replica_id: -1,
-      max_wait_ms: 1000,
-      min_bytes: 1,
-      max_bytes: 100_000,
-      isolation_level: 0,
-      topics: [
-        %{
-          topic: topic,
-          partitions: [
-            %{
-              partition: partition,
-              fetch_offset: offset,
-              # 1 guarantees that only the first record batch will
-              # be retrieved
-              partition_max_bytes: 1
-            }
-          ]
-        }
-      ]
-    }
+    {:ok, %{content: content}} = make_fetch_req(client_name, {topic, partition, offset})
 
-    broker = Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id)
-
-    {:ok, %{content: content}} =
-      Klife.Connection.Broker.send_message(
-        KlifeProtocol.Messages.Fetch,
-        client_name,
-        broker,
-        content
-      )
-
-    topic_resp = Enum.find(content.responses, &(&1.topic == topic))
+    [topic_resp] = content.responses
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
     partition_resp.records
   end
@@ -264,45 +204,13 @@ defmodule Klife.TestUtils do
   end
 
   defp get_record_by_offset(client_name, topic, partition, offset, isolation) do
-    isolation_level =
-      case isolation do
-        :committed -> 1
-        :uncommitted -> 0
-      end
-
-    content = %{
-      replica_id: -1,
-      max_wait_ms: 1000,
-      min_bytes: 1,
-      max_bytes: 100_000,
-      isolation_level: isolation_level,
-      topics: [
-        %{
-          topic: topic,
-          partitions: [
-            %{
-              partition: partition,
-              fetch_offset: offset,
-              # 1 guarantees that only the first record batch will
-              # be retrieved
-              partition_max_bytes: 1
-            }
-          ]
-        }
-      ]
-    }
-
-    broker = Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id)
-
     {:ok, %{content: content}} =
-      Klife.Connection.Broker.send_message(
-        KlifeProtocol.Messages.Fetch,
-        client_name,
-        broker,
-        content
+      make_fetch_req(client_name, {topic, partition, offset},
+        isolation_level: isolation,
+        max_bytes: 1
       )
 
-    topic_resp = Enum.find(content.responses, &(&1.topic == topic))
+    [topic_resp] = content.responses
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
 
     aborted_offset =
@@ -391,5 +299,56 @@ defmodule Klife.TestUtils do
     end
 
     :ok
+  end
+
+  def make_fetch_req(client, {t, p, o}, opts \\ []) do
+    {:ok,
+     %{
+       topic_id: t_id,
+       leader_id: broker
+     }} = Klife.MetadataCache.get_metadata(client, t, p)
+
+    data = %{
+      replica_id: opts[:replica_id] || -1,
+      max_wait_ms: opts[:max_wait_ms] || 1000,
+      min_bytes: opts[:min_bytes] || 1,
+      max_bytes: opts[:max_bytes] || 100_000,
+      isolation_level:
+        case Keyword.get(opts, :isolation_level, :committed) do
+          :committed -> 1
+          :uncommitted -> 0
+        end,
+      session_id: opts[:session_id] || 0,
+      session_epoch: opts[:session_epoch] || 0,
+      topics: [
+        %{
+          topic_id: t_id,
+          partitions: [
+            %{
+              partition: p,
+              current_leader_epoch: opts[:current_leader_epoch] || -1,
+              fetch_offset: o,
+              last_fetched_epoch: opts[:last_fetched_epoch] || -1,
+              log_start_offset: opts[:log_start_offset] || -1,
+              partition_max_bytes: opts[:max_bytes] || 100_000
+            }
+          ]
+        }
+      ],
+      forgotten_topics_data: [],
+      rack_id: opts[:rack_id] || ""
+    }
+
+    headers = %{
+      client_id: opts[:client_id] || nil
+    }
+
+    Broker.send_message(
+      M.Fetch,
+      client,
+      broker,
+      data,
+      headers
+    )
   end
 end

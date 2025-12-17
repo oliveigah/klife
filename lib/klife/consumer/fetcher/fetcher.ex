@@ -128,6 +128,7 @@ defmodule Klife.Consumer.Fetcher do
      }} = MetadataCache.get_metadata(client, t, p)
 
     data = %{
+      replica_id: opts[:replica_id] || -1,
       max_wait_ms: opts[:max_wait_ms] || 0,
       min_bytes: opts[:min_bytes] || 1,
       max_bytes: opts[:max_bytes] || 500_000,
@@ -209,6 +210,15 @@ defmodule Klife.Consumer.Fetcher do
 
     receive do
       {:klife_fetch_response, {t, p, o}, resp} ->
+        resp =
+          case resp do
+            {:ok, list_recs} ->
+              {:ok, Klife.Record.filter_records(list_recs, base_offset: o)}
+
+            other ->
+              other
+          end
+
         new_resp_acc = Map.put(resp_acc, {t, p, o}, resp)
         new_counter = counter + 1
         do_wait_fetch_response(deadline, max_resps, new_counter, new_resp_acc)

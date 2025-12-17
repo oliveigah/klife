@@ -150,25 +150,37 @@ defmodule Klife.Testing do
       min_bytes: 1,
       max_bytes: max_bytes,
       isolation_level: 0,
+      session_id: 0,
+      session_epoch: 0,
       topics:
         metas
-        |> Enum.group_by(fn meta -> meta.topic_name end, fn meta -> meta.partition_idx end)
+        |> Enum.group_by(fn meta -> meta.topic_id end, fn meta -> meta.partition_idx end)
         |> Enum.map(fn {topic, partitions} ->
           %{
-            topic: topic,
+            topic_id: topic,
             partitions:
               Enum.map(partitions, fn p ->
                 %{
                   partition: p,
-                  fetch_offset: get_setup_offset(client_name, topic, p) + 1,
-                  partition_max_bytes: round(max_bytes / length(partitions))
+                  current_leader_epoch: -1,
+                  fetch_offset:
+                    get_setup_offset(
+                      client_name,
+                      MetadataCache.get_topic_name_by_id(client_name, topic),
+                      p
+                    ) + 1,
+                  partition_max_bytes: round(max_bytes / length(partitions)),
+                  last_fetched_epoch: -1,
+                  log_start_offset: -1
                 }
               end)
           }
-        end)
+        end),
+      forgotten_topics_data: [],
+      rack_id: ""
     }
 
-    {:ok, %{content: %{responses: [%{topic: topic} = t_data]}}} =
+    {:ok, %{content: %{responses: [%{topic_id: t_id} = t_data]}}} =
       Broker.send_message(
         M.Fetch,
         client_name,
@@ -207,7 +219,7 @@ defmodule Klife.Testing do
     |> Enum.map(fn rec ->
       %Klife.Record{
         value: rec.value,
-        topic: topic,
+        topic: MetadataCache.get_topic_name_by_id(client_name, t_id),
         key: rec.key,
         headers: rec.headers,
         offset: rec.offset,

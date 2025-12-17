@@ -136,13 +136,14 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         nil ->
           send(
             item.__callback,
-            {:klife_fetch_response, {t, p, item.offset_to_fetch}, {:error, :unkown_error}}
+            {:klife_fetch_response, {item.topic_name, p, item.offset_to_fetch},
+             {:error, :unkown_error}}
           )
 
         resp ->
           send(
             item.__callback,
-            {:klife_fetch_response, {t, p, item.offset_to_fetch}, resp}
+            {:klife_fetch_response, {item.topic_name, p, item.offset_to_fetch}, resp}
           )
       end
     end)
@@ -198,6 +199,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       Enum.group_by(batch.data, fn {{t, _p}, _v} -> t end, fn {{_t, _p}, v} -> v end)
 
     %{
+      replica_id: -1,
       max_wait_ms: state.fetcher_config.max_wait_ms,
       # TODO: min_bytes as fetcher config
       min_bytes: 1,
