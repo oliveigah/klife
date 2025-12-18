@@ -140,7 +140,7 @@ defmodule Klife.GenBatcher do
             {:ok, new_item, new_batch, new_user_state} =
               mod.handle_insert_item(item, current_batch, user_state)
 
-            new_state = %__MODULE__{
+            new_state = %{
               acc_state
               | current_batch_size: new_size,
                 current_batch: new_batch,

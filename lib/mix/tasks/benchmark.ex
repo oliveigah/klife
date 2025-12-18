@@ -82,6 +82,41 @@ if Mix.env() in [:dev] do
       )
     end
 
+    def do_run_bench("consumer_klife_only", parallel) do
+      base_topic = Base.encode16(:rand.bytes(20))
+      partitions = 30
+      topics = Enum.map(1..24, fn i -> base_topic <> "_#{i}" end)
+
+      {:ok, sup_pid} = DynamicSupervisor.start_link(name: :benchmark_supervisor)
+
+      targets =
+        Task.async_stream(
+          topics,
+          fn t ->
+            {:ok, target} = prepare_topic(t, partitions, 10_000, 1000)
+            target
+          end,
+          timeout: 300_000
+        )
+        |> Enum.map(fn {:ok, tgt} -> tgt end)
+
+      :persistent_term.put(:bench_counter, :atomics.new(1, []))
+
+      Benchee.run(
+        %{
+          "klife - exclusive" => fn ->
+            run_consumer_bench(:klife, topics, Enum.sum(targets), sup_pid)
+          end,
+          "klife - shared" => fn ->
+            run_consumer_bench(:klife_shared, topics, Enum.sum(targets), sup_pid)
+          end
+        },
+        time: 60,
+        memory_time: 2,
+        parallel: parallel |> String.to_integer()
+      )
+    end
+
     def do_run_bench("consumer", client) do
       base_topic = Base.encode16(:rand.bytes(20))
       partitions = 30
@@ -94,7 +129,7 @@ if Mix.env() in [:dev] do
       #
       # brod 12t e 1kb: [total_time: "2785 ms", since_first_cb_call: "2688 ms (96.52%)"]
       # klife 12t e 1kb: [total_time: "4551 ms", since_first_cb_call: "2314 ms (50.85%)"]
-      topics = Enum.map(1..3, fn i -> base_topic <> "_#{i}" end)
+      topics = Enum.map(1..12, fn i -> base_topic <> "_#{i}" end)
 
       {:ok, sup_pid} = DynamicSupervisor.start_link(name: :benchmark_supervisor)
 
@@ -267,12 +302,12 @@ if Mix.env() in [:dev] do
 
       in_flight_records =
         Enum.map(records_0, fn r ->
-          %Klife.Record{r | topic: "benchmark_topic_in_flight"}
+          %{r | topic: "benchmark_topic_in_flight"}
         end)
 
       in_flight_linger_records =
         Enum.map(records_0, fn r ->
-          %Klife.Record{r | topic: "benchmark_topic_in_flight_linger"}
+          %{r | topic: "benchmark_topic_in_flight_linger"}
         end)
 
       Benchee.run(
@@ -419,6 +454,23 @@ if Mix.env() in [:dev] do
                    group_name: Base.encode64(:rand.bytes(10))
                  ]}
               )
+
+            :klife_shared ->
+              DynamicSupervisor.start_child(
+                sup_pid,
+                {BenchmarkConsumer,
+                 [
+                   topics:
+                     Enum.map(topics, fn tname ->
+                       [
+                         name: tname,
+                         offset_reset_policy: :earliest
+                       ]
+                     end),
+                   group_name: Base.encode64(:rand.bytes(10)),
+                   fetch_strategy: {:shared, MyClient.get_default_fetcher()}
+                 ]}
+              )
           end
 
         t0 = System.monotonic_time(:millisecond)
@@ -445,6 +497,7 @@ if Mix.env() in [:dev] do
           total_time: "#{total} ms",
           since_first_cb_call: "#{first_call} ms (#{Float.round(first_call / total * 100, 2)}%)"
         ]
+        |> IO.inspect()
       end)
     end
 

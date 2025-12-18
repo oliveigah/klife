@@ -1,6 +1,10 @@
 services:
   controller1:
     image: apache/kafka:4.0.0
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: 0.5
     network_mode: host
     environment:
       KAFKA_NODE_ID: 1
@@ -14,9 +18,18 @@ services:
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
       KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
       KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
+      KAFKA_LOG_RETENTION_HOURS: 1000
+      KAFKA_LOG_RETENTION_BYTES: -1
+      KAFKA_OFFSETS_RETENTION_MINUTES: 100000
+      KAFKA_LOG_SEGMENT_BYTES: 1000000000
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 10000000
 
   kafka1:
     image: apache/kafka:4.0.0
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: 0.5
     depends_on:
       - controller1
     network_mode: host
@@ -46,6 +59,11 @@ services:
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
       KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
       KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
+      KAFKA_LOG_RETENTION_HOURS: 1000
+      KAFKA_LOG_RETENTION_BYTES: -1
+      KAFKA_OFFSETS_RETENTION_MINUTES: 100000
+      KAFKA_LOG_SEGMENT_BYTES: 1000000000
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 10000000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -56,6 +74,10 @@ services:
 
   kafka2:
     image: apache/kafka:4.0.0
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: 0.5
     depends_on:
       - controller1
     network_mode: host
@@ -85,6 +107,11 @@ services:
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
       KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
       KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
+      KAFKA_LOG_RETENTION_HOURS: 1000
+      KAFKA_LOG_RETENTION_BYTES: -1
+      KAFKA_OFFSETS_RETENTION_MINUTES: 100000
+      KAFKA_LOG_SEGMENT_BYTES: 1000000000
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 10000000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks
@@ -95,6 +122,10 @@ services:
 
   kafka3:
     image: apache/kafka:4.0.0
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: 0.5
     depends_on:
       - controller1
     network_mode: host
@@ -124,6 +155,11 @@ services:
       KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic,consumer,share
       KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: 1000
       KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
+      KAFKA_LOG_RETENTION_HOURS: 1000
+      KAFKA_LOG_RETENTION_BYTES: -1
+      KAFKA_OFFSETS_RETENTION_MINUTES: 100000
+      KAFKA_LOG_SEGMENT_BYTES: 1000000000
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 10000000
     volumes:
       - ./ssl/localhost.keystore.jks:/secrets/kafka.keystore.jks
       - ./ssl/localhost.keystore.jks:/etc/kafka/secrets/kafka.keystore.jks

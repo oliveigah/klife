@@ -24,11 +24,11 @@ defmodule Klife.Connection.MessageVersions do
       do_setup_versions(rest, server_map, client_name)
     else
       _err ->
-        Logger.warning(
-          "Some features may be disabled because could not agree on API version for #{inspect(mod)} api_key #{api_key} for client #{client_name}."
-        )
-
         Enum.each(client_data.required_for, fn feature ->
+          Logger.warning(
+            "The feature #{feature} will be disabled because could not agree on API version for #{inspect(mod)} api_key #{api_key} for client #{client_name}."
+          )
+
           Controller.disable_feature(feature, client_name)
         end)
 
@@ -36,6 +36,7 @@ defmodule Klife.Connection.MessageVersions do
     end
   end
 
+  # TODO: Add compatibility notes by feature to readme
   defp client_versions do
     [
       {M.ApiVersions, %{min: 0, max: 0, required_for: [:connection]}},
@@ -44,7 +45,7 @@ defmodule Klife.Connection.MessageVersions do
       {M.Produce, %{min: 3, max: 9, required_for: [:producer, :txn_producer]}},
       {M.InitProducerId, %{min: 0, max: 0, required_for: [:producer_idempotence]}},
       {M.Fetch, %{min: 13, max: 17, required_for: [:consumer_group, :testing]}},
-      {M.ListOffsets, %{min: 2, max: 2, required_for: [:testing]}},
+      {M.ListOffsets, %{min: 2, max: 2, required_for: [:testing, :consumer_group]}},
       {M.AddPartitionsToTxn, %{min: 4, max: 4, required_for: [:txn_producer]}},
       {M.FindCoordinator, %{min: 1, max: 6, required_for: [:txn_producer]}},
       {M.EndTxn, %{min: 3, max: 3, required_for: [:txn_producer]}},

@@ -291,18 +291,18 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
-  def handle_info({:klife_fetch_response, {_t, _p, _o}, {:error, reason}}, %__MODULE__{} = state) do
-    # TODO: Hadle error code 1!!!!
-    Logger.error("Unexpected fetch error on consumer: #{reason}")
-    Process.send_after(self(), :poll_records, 5000)
-    {:noreply, state}
+  def handle_info(
+        {:klife_fetch_response, {_t, _p, _o} = tpo, {:error, reason}},
+        %__MODULE__{} = state
+      ) do
+    {:noreply, handle_fetch_error!(state, reason, tpo)}
   end
 
   @impl true
   def handle_info(
         {:async_broker_response, {req_ref, {t, p, o} = tpo}, binary_resp, M.Fetch = msg_mod,
          msg_version},
-        %__MODULE__{fetch_ref: {req_ref, {t, p, o} = tpo}, topic_id: t_id} = state
+        %__MODULE__{fetch_ref: {req_ref, {t, p, o}}, topic_id: t_id} = state
       ) do
     with {:ok, %{content: content}} <- msg_mod.deserialize_response(binary_resp, msg_version),
          %{error_code: 0, responses: [%{topic_id: ^t_id, partitions: [resp_data]}]} <- content,
@@ -322,8 +322,14 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
       {:noreply, handle_fetch_response(state, recs, tpo)}
     else
-      error ->
-        raise "TODO: WHAT TO DO HERE?? #{error}"
+      %{error_code: ec} ->
+        {:noreply, handle_fetch_error!(state, ec, tpo)}
+
+      {:error, reason} ->
+        raise "Unexpected error on consumer fetch. reason: #{inspect(reason)}"
+
+      _err ->
+        raise "unexpected error on consumer fetch"
     end
   end
 
@@ -404,7 +410,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         groupped_recs =
           Enum.group_by(
             parsed_user_result,
-            fn {action, _rec} -> user_action_to_commit_group(action) end,
+            fn {action, _rec} -> action end,
             fn {_action, rec} -> rec end
           )
 
@@ -498,6 +504,29 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     end
   end
 
+  def handle_fetch_error!(%__MODULE__{} = state, 1, {t, p, o}) do
+    Logger.warning(
+      "Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reseting offset..."
+    )
+
+    start_offset =
+      get_start_offset(
+        state.client_name,
+        state.topic_name,
+        state.partition_idx,
+        # Should this be always earliest??
+        state.topic_config.offset_reset_policy
+      )
+
+    send(self(), :poll_records)
+    %__MODULE__{latest_fetched_offset: start_offset - 1, fetch_ref: nil}
+  end
+
+  # TODO: Should handle more error codes?
+  def handle_fetch_error!(%__MODULE__{} = _state, error_code, {t, _p, _o}) do
+    raise "Unexpected error on consumer fetch for topic #{t}. error code: #{inspect(error_code)}"
+  end
+
   def handle_fetch_response(%__MODULE__{} = state, [], {_t, _p, _o}) do
     backoff_ratio = min((state.empty_fetch_results_count + 1) / 10, 1)
     next_fetch_wait_time = ceil(backoff_ratio * state.topic_config.fetch_interval_ms)
@@ -562,7 +591,4 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         fetch_ref: nil
     }
   end
-
-  def user_action_to_commit_group(:retry), do: :retry
-  def user_action_to_commit_group(:commit), do: :commit
 end

@@ -284,7 +284,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       }
       |> get_coordinator!()
 
-    init_state = %__MODULE__{
+    init_state = %{
       init_state
       | topics:
           args_map.topics
@@ -520,7 +520,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       end)
 
     if MapSet.size(to_stop) != 0 or MapSet.size(to_start) != 0 do
-      %__MODULE__{new_state | heartbeat_interval_ms: 5}
+      %{new_state | heartbeat_interval_ms: 5}
     else
       new_state
     end
