@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   # TODO: The new consumer group does not work with kafka 3.9, so I'm disabling CI for it for now
-  # later we must skip some tests based on the supported features
+  # later we must skip some tests based on the supported features defined on API versions negotiation
   #
   # tests-v3_9:
   #   name: test-3.9
@@ -45,14 +45,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - elixir: 1.17
+          - elixir: 1.19
+            otp: 28
+          - elixir: 1.18
             otp: 27
-          - elixir: 1.16
+          - elixir: 1.17
             otp: 26
-          - elixir: 1.15
+          - elixir: 1.16
             otp: 25
-          - elixir: 1.14
-            otp: 24
     steps:
       - uses: actions/checkout@v3
       - uses: erlef/setup-beam@v1
@@ -60,6 +60,7 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
       - run: docker compose -f "test/compose_files/docker-compose-kafka-4.0.yml" up -d
-      - run: MIX_ENV=prod mix deps.get
-      - run: MIX_ENV=prod mix compile --warnings-as-errors
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix dialyzer
       - run: KLIFE_KAFKA_VSN=4.0 mix test --warnings-as-errors

@@ -70,7 +70,7 @@ defmodule Klife.Connection.Broker do
     {:noreply, state}
   end
 
-  def handle_info({:ssl, {:sslsocket, _socket_details, _pids}, msg}, %__MODULE__{} = state) do
+  def handle_info({:ssl, _ssl_details, msg}, %__MODULE__{} = state) do
     :ok = reply_message(msg, state.client_name, state.conn)
     {:noreply, state}
   end
@@ -79,7 +79,7 @@ defmodule Klife.Connection.Broker do
     {:noreply, do_connect(state)}
   end
 
-  def handle_info({:ssl_closed, {:sslsocket, _socket_details, _pids}}, %__MODULE__{} = state) do
+  def handle_info({:ssl_closed, _ssl_details}, %__MODULE__{} = state) do
     {:noreply, do_connect(state)}
   end
 

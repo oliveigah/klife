@@ -402,11 +402,9 @@ defmodule Klife.ProducerTest do
     assert length(record_batch) == 2
   end
 
-  test "produce batch message sync with batching" do
+  test "produce batch message async with batching" do
     topic = "test_batch_topic"
     parent = self()
-
-    wait_batch_cycle(MyClient, topic, 1)
 
     rec1_1 = %Record{
       value: :rand.bytes(10),
@@ -424,16 +422,6 @@ defmodule Klife.ProducerTest do
       partition: 2
     }
 
-    Task.async(fn ->
-      MyClient.produce_batch_async([rec1_1, rec1_2],
-        callback: fn recs ->
-          send(parent, {:task1_produced, recs})
-        end
-      )
-
-      send(parent, :task1_complete)
-    end)
-
     rec2_1 = %Record{
       value: :rand.bytes(10),
       key: :rand.bytes(10),
@@ -449,18 +437,6 @@ defmodule Klife.ProducerTest do
       topic: topic,
       partition: 2
     }
-
-    assert_receive :task1_complete
-
-    Task.async(fn ->
-      MyClient.produce_batch_async([rec2_1, rec2_2],
-        callback: fn recs ->
-          send(parent, {:task2_produced, recs})
-        end
-      )
-
-      send(parent, :task2_complete)
-    end)
 
     rec3_1 = %Record{
       value: :rand.bytes(10),
@@ -478,19 +454,28 @@ defmodule Klife.ProducerTest do
       partition: 2
     }
 
-    assert_receive :task2_complete
+    wait_batch_cycle(MyClient, topic, 1)
 
-    Task.async(fn ->
+    :ok =
+      MyClient.produce_batch_async([rec1_1, rec1_2],
+        callback: fn recs ->
+          send(parent, {:task1_produced, recs})
+        end
+      )
+
+    :ok =
+      MyClient.produce_batch_async([rec2_1, rec2_2],
+        callback: fn recs ->
+          send(parent, {:task2_produced, recs})
+        end
+      )
+
+    :ok =
       MyClient.produce_batch_async([rec3_1, rec3_2],
         callback: fn recs ->
           send(parent, {:task3_produced, recs})
         end
       )
-
-      send(parent, :task3_complete)
-    end)
-
-    assert_receive :task3_complete
 
     assert_receive {:task1_produced,
                     [{:ok, %Record{offset: offset1_1}}, {:ok, %Record{offset: offset1_2}}]},
