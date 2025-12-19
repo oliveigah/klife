@@ -60,7 +60,7 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
       - run: docker compose -f "test/compose_files/docker-compose-kafka-4.0.yml" up -d
-      - run: mix deps.get
-      - run: mix compile --warnings-as-errors
+      - run: MIX_ENV=prod mix deps.get
+      - run: MIX_ENV=prod mix compile --warnings-as-errors
       - run: mix dialyzer
       - run: KLIFE_KAFKA_VSN=4.0 mix test --warnings-as-errors
