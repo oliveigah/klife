@@ -92,7 +92,6 @@ defmodule Klife.ProducerTest do
   test "produce with batching" do
     topic = "test_batch_topic"
     parent = self()
-    wait_batch_cycle(MyClient, topic, 1)
 
     rec_1 = %Record{
       value: :rand.bytes(10),
@@ -102,16 +101,6 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    Task.async(fn ->
-      MyClient.produce_async(rec_1,
-        callback: fn rec ->
-          send(parent, {:task1, rec})
-        end
-      )
-
-      send(parent, :task1_completed)
-    end)
-
     rec_2 = %Record{
       value: :rand.bytes(10),
       key: :rand.bytes(10),
@@ -119,18 +108,6 @@ defmodule Klife.ProducerTest do
       topic: topic,
       partition: 1
     }
-
-    assert_receive :task1_completed
-
-    Task.async(fn ->
-      MyClient.produce_async(rec_2,
-        callback: fn rec ->
-          send(parent, {:task2, rec})
-        end
-      )
-
-      send(parent, :task2_completed)
-    end)
 
     rec_3 = %Record{
       value: :rand.bytes(10),
@@ -140,19 +117,25 @@ defmodule Klife.ProducerTest do
       partition: 1
     }
 
-    assert_receive :task2_completed
+    wait_batch_cycle(MyClient, topic, 1)
 
-    Task.async(fn ->
-      MyClient.produce_async(rec_3,
-        callback: fn rec ->
-          send(parent, {:task3, rec})
-        end
-      )
+    MyClient.produce_async(rec_1,
+      callback: fn rec ->
+        send(parent, {:task1, rec})
+      end
+    )
 
-      send(parent, :task3_completed)
-    end)
+    MyClient.produce_async(rec_2,
+      callback: fn rec ->
+        send(parent, {:task2, rec})
+      end
+    )
 
-    assert_receive :task3_completed
+    MyClient.produce_async(rec_3,
+      callback: fn rec ->
+        send(parent, {:task3, rec})
+      end
+    )
 
     assert_receive {:task1, {:ok, resp_rec1}}, 6_000
     assert_receive {:task2, {:ok, resp_rec2}}

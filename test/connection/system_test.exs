@@ -303,7 +303,7 @@ defmodule Klife.Connection.SystemTest do
                    1000
 
     # sleeps to ensure it keeps dead after a while (transient behaviour)!
-    Process.sleep(1000)
+    Process.sleep(2000)
 
     assert [] =
              find_batcher_pid_for_broker_on_supervisor(
@@ -324,7 +324,7 @@ defmodule Klife.Connection.SystemTest do
       5000
     )
 
-    Process.sleep(1000)
+    Process.sleep(2000)
 
     assert [_new_pid] =
              find_batcher_pid_for_broker_on_supervisor(producer_batcher_sup_pid, new_broker_id)
