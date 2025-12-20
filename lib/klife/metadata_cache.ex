@@ -60,6 +60,11 @@ defmodule Klife.MetadataCache do
 
       {:error, _} ->
         :ok = ConnController.trigger_brokers_verification(state.client_name)
+
+        # Prevent subtle edge case when check metadata
+        # messages may accumullate idefinitely
+        Process.cancel_timer(state.next_check_ref)
+
         new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
         {:noreply, %__MODULE__{state | next_check_ref: new_ref}}
     end
@@ -69,7 +74,7 @@ defmodule Klife.MetadataCache do
         {{:cluster_change, client_name}, _event_data, _callback_data},
         %__MODULE__{client_name: client_name} = state
       ) do
-    :ok = do_check_metadata(state)
+    Process.send_after(self(), :check_metadata, 0)
     {:noreply, state}
   end
 
