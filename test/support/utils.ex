@@ -50,7 +50,13 @@ defmodule Klife.TestUtils do
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
     # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(2)) end)
+    #
+    # Also, it appears that metadata changes may happen in multiple
+    # steps when a broker enters/leaves the cluster and it may cause
+    # metadata changes to occur unexpecteadly inside a test, increase
+    # this sleep may help avoid this scenario, but I think it is
+    # not possible to guarantee it won't happen at all
+    |> tap(fn _ -> Process.sleep(:timer.seconds(5)) end)
   end
 
   defp do_stop_broker(client_name, broker_id) do
@@ -89,7 +95,13 @@ defmodule Klife.TestUtils do
     # change. One way to avoid this, would be having pubsub
     # events related to the producer system but it does not
     # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(2)) end)
+    #
+    # Also, it appears that metadata changes may happen in multiple
+    # steps when a broker enters/leaves the cluster and it may cause
+    # metadata changes to occur unexpecteadly inside a test, increase
+    # this sleep may help avoid this scenario, but I think it is
+    # not possible to guarantee it won't happen at all
+    |> tap(fn _ -> Process.sleep(:timer.seconds(5)) end)
   end
 
   defp do_start_broker(service_name, client_name) do
