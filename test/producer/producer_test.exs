@@ -119,17 +119,9 @@ defmodule Klife.ProducerTest do
 
     wait_batch_cycle(MyClient, topic, 1)
 
-    MyClient.produce_async(rec_1,
-      callback: fn rec ->
-        send(parent, {:task1, rec})
-      end
-    )
+    MyClient.produce_async(rec_1)
 
-    MyClient.produce_async(rec_2,
-      callback: fn rec ->
-        send(parent, {:task2, rec})
-      end
-    )
+    MyClient.produce_async(rec_2)
 
     MyClient.produce_async(rec_3,
       callback: fn rec ->
@@ -137,20 +129,25 @@ defmodule Klife.ProducerTest do
       end
     )
 
-    assert_receive {:task1, {:ok, resp_rec1}}, 6_000
-    assert_receive {:task2, {:ok, resp_rec2}}
-    assert_receive {:task3, {:ok, resp_rec3}}
+    # Because of the current implementation of the produce_async with callback
+    # that relies on Task we can not receive callbacks from rec1 and rec2
+    # because the order is non deterministic and causes flaky tests
+    assert_receive {:task3, {:ok, resp_rec3}}, 6_000
 
-    assert resp_rec2.offset - resp_rec1.offset == 1
-    assert resp_rec3.offset - resp_rec2.offset == 1
+    [raw_rec1, raw_rec2, raw_rec3] =
+      TestUtils.get_record_batch_by_offset(MyClient, topic, 1, resp_rec3.offset)
 
-    assert :ok = TestUtils.assert_offset(MyClient, rec_1, resp_rec1.offset)
-    assert :ok = TestUtils.assert_offset(MyClient, rec_2, resp_rec2.offset)
-    assert :ok = TestUtils.assert_offset(MyClient, rec_3, resp_rec3.offset)
+    assert raw_rec3.offset == resp_rec3.offset
+    assert raw_rec2.offset - raw_rec1.offset == 1
+    assert raw_rec3.offset - raw_rec2.offset == 1
 
-    batch_1 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, resp_rec1.offset)
-    batch_2 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, resp_rec2.offset)
-    batch_3 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, resp_rec3.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec_1, raw_rec1.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec_2, raw_rec2.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec_3, raw_rec3.offset)
+
+    batch_1 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, raw_rec1.offset)
+    batch_2 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, raw_rec2.offset)
+    batch_3 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, raw_rec3.offset)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
@@ -438,20 +435,13 @@ defmodule Klife.ProducerTest do
     }
 
     wait_batch_cycle(MyClient, topic, 1)
+    wait_batch_cycle(MyClient, topic, 2)
 
     :ok =
-      MyClient.produce_batch_async([rec1_1, rec1_2],
-        callback: fn recs ->
-          send(parent, {:task1_produced, recs})
-        end
-      )
+      MyClient.produce_batch_async([rec1_1, rec1_2])
 
     :ok =
-      MyClient.produce_batch_async([rec2_1, rec2_2],
-        callback: fn recs ->
-          send(parent, {:task2_produced, recs})
-        end
-      )
+      MyClient.produce_batch_async([rec2_1, rec2_2])
 
     :ok =
       MyClient.produce_batch_async([rec3_1, rec3_2],
@@ -460,39 +450,41 @@ defmodule Klife.ProducerTest do
         end
       )
 
-    assert_receive {:task1_produced,
-                    [{:ok, %Record{offset: offset1_1}}, {:ok, %Record{offset: offset1_2}}]},
-                   6_000
-
-    assert_receive {:task2_produced,
-                    [{:ok, %Record{offset: offset2_1}}, {:ok, %Record{offset: offset2_2}}]}
-
     assert_receive {:task3_produced,
-                    [{:ok, %Record{offset: offset3_1}}, {:ok, %Record{offset: offset3_2}}]}
+                    [{:ok, %Record{offset: offset3_1}}, {:ok, %Record{offset: offset3_2}}]},
+                   6000
 
-    assert offset2_1 - offset1_1 == 1
-    assert offset3_1 - offset2_1 == 1
+    [raw_rec1_1, raw_rec2_1, raw_rec3_1] =
+      TestUtils.get_record_batch_by_offset(MyClient, topic, 1, offset3_1)
 
-    assert offset2_2 - offset1_2 == 1
-    assert offset3_2 - offset2_2 == 1
+    assert raw_rec3_1.offset == offset3_1
+    assert raw_rec2_1.offset - raw_rec1_1.offset == 1
+    assert raw_rec3_1.offset - raw_rec2_1.offset == 1
 
-    assert :ok = TestUtils.assert_offset(MyClient, rec1_1, offset1_1)
-    assert :ok = TestUtils.assert_offset(MyClient, rec1_2, offset1_2)
-    assert :ok = TestUtils.assert_offset(MyClient, rec2_1, offset2_1)
-    assert :ok = TestUtils.assert_offset(MyClient, rec2_2, offset2_2)
-    assert :ok = TestUtils.assert_offset(MyClient, rec3_1, offset3_1)
-    assert :ok = TestUtils.assert_offset(MyClient, rec3_2, offset3_2)
+    [raw_rec1_2, raw_rec2_2, raw_rec3_2] =
+      TestUtils.get_record_batch_by_offset(MyClient, topic, 2, offset3_2)
 
-    batch_1 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, offset1_1)
-    batch_2 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, offset2_1)
-    batch_3 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, offset3_1)
+    assert raw_rec3_2.offset == offset3_2
+    assert raw_rec2_2.offset - raw_rec1_2.offset == 1
+    assert raw_rec3_2.offset - raw_rec2_2.offset == 1
+
+    assert :ok = TestUtils.assert_offset(MyClient, rec1_1, raw_rec1_1.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec1_2, raw_rec1_2.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec2_1, raw_rec2_1.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec2_2, raw_rec2_2.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec3_1, raw_rec3_1.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec3_2, raw_rec3_2.offset)
+
+    batch_1 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, raw_rec1_1.offset)
+    batch_2 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, raw_rec2_1.offset)
+    batch_3 = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, raw_rec3_1.offset)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
 
-    batch_1 = TestUtils.get_record_batch_by_offset(MyClient, topic, 2, offset1_2)
-    batch_2 = TestUtils.get_record_batch_by_offset(MyClient, topic, 2, offset2_2)
-    batch_3 = TestUtils.get_record_batch_by_offset(MyClient, topic, 2, offset3_2)
+    batch_1 = TestUtils.get_record_batch_by_offset(MyClient, topic, 2, raw_rec1_2.offset)
+    batch_2 = TestUtils.get_record_batch_by_offset(MyClient, topic, 2, raw_rec2_2.offset)
+    batch_3 = TestUtils.get_record_batch_by_offset(MyClient, topic, 2, raw_rec3_2.offset)
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3

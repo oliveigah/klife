@@ -126,8 +126,9 @@ defmodule Klife.TestUtils do
 
     [topic_resp] = content.responses
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
-    [%{records: records}] = partition_resp.records
-    records
+    [%{records: records, base_offset: bo}] = partition_resp.records
+
+    Enum.map(records, fn r -> Map.put(r, :offset, r.offset_delta + bo) end)
   end
 
   def get_partition_resp_records_by_offset(client_name, topic, partition, offset) do
