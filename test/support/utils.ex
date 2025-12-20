@@ -122,7 +122,8 @@ defmodule Klife.TestUtils do
   end
 
   def get_record_batch_by_offset(client_name, topic, partition, offset) do
-    {:ok, %{content: content}} = make_fetch_req(client_name, {topic, partition, offset})
+    {:ok, %{content: content}} =
+      make_fetch_req(client_name, {topic, partition, offset}, max_bytes: 1)
 
     [topic_resp] = content.responses
     partition_resp = Enum.find(topic_resp.partitions, &(&1.partition_index == partition))
