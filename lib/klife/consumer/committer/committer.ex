@@ -45,24 +45,27 @@ defmodule Klife.Consumer.Committer do
     client = Keyword.fetch!(args, :client_name)
     batcher_id = Keyword.fetch!(args, :batcher_id)
     cg_mod = Keyword.fetch!(args, :consumer_group_mod)
+    cg_name = Keyword.fetch!(args, :group_id)
 
-    GenBatcher.start_link(__MODULE__, args, name: get_process_name(client, cg_mod, batcher_id))
+    GenBatcher.start_link(__MODULE__, args,
+      name: get_process_name(client, cg_mod, cg_name, batcher_id)
+    )
   end
 
-  def commit(%BatchItem{} = batch_item, client, cg_mod, batcher_id) do
+  def commit(%BatchItem{} = batch_item, client, cg_mod, cg_name, batcher_id) do
     client
-    |> get_process_name(cg_mod, batcher_id)
+    |> get_process_name(cg_mod, cg_name, batcher_id)
     |> GenBatcher.insert_call([batch_item])
   end
 
-  def update_coordinator(new_coordinator, client, cg_mod, batcher_id) do
+  def update_coordinator(new_coordinator, client, cg_mod, cg_name, batcher_id) do
     client
-    |> get_process_name(cg_mod, batcher_id)
+    |> get_process_name(cg_mod, cg_name, batcher_id)
     |> GenServer.call({:update_coordinator, new_coordinator})
   end
 
-  defp get_process_name(client, cg_mod, batcher_id) do
-    via_tuple({__MODULE__, client, cg_mod, batcher_id})
+  defp get_process_name(client, cg_mod, cg_name, batcher_id) do
+    via_tuple({__MODULE__, client, cg_mod, cg_name, batcher_id})
   end
 
   @impl true

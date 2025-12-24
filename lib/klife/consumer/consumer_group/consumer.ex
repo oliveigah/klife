@@ -274,7 +274,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   def handle_info({:check_poll_timeout, ref}, %__MODULE__{} = state) do
     if ref == state.fetch_ref do
       Logger.warning(
-        "Fetch request timeout for #{state.topic_name} #{state.partition_idx} on client #{state.client_name}, retrying..."
+        "Fetch request timeout for #{state.topic_name} #{state.partition_idx} on client #{state.client_name} group name #{state.cg_name} module #{state.cg_mod}, retrying..."
       )
 
       Process.send_after(self(), :poll_records, Enum.random(1000..5000))
@@ -372,11 +372,18 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         handler_max_unacked_commits: max_unacked
       },
       latest_committed_offset: latest_committed_offset,
-      latest_processed_offset: latest_processed_offset
+      latest_processed_offset: latest_processed_offset,
+      cg_name: cg_name
     } = state
 
     processing_allowed? =
-      ConsumerGroup.processing_allowed?(client_name, cg_mod, topic_id, partition_idx)
+      ConsumerGroup.processing_allowed?(
+        client_name,
+        cg_mod,
+        topic_id,
+        partition_idx,
+        cg_name
+      )
 
     has_records_to_process? = records_batch_queue_count > 0
     curr_unacked = latest_processed_offset - latest_committed_offset
@@ -439,7 +446,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               }
 
               :ok =
-                Committer.commit(commit_data, state.client_name, state.cg_mod, state.committer_id)
+                Committer.commit(
+                  commit_data,
+                  state.client_name,
+                  state.cg_mod,
+                  state.cg_name,
+                  state.committer_id
+                )
 
               rec.offset
 

@@ -65,30 +65,30 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       """
     ],
     handler_max_batch_size: [
-      type: {:or, [:pos_integer, :dynamic]},
+      type: {:or, [:pos_integer, {:in, [:dynamic]}]},
       default: :dynamic,
       doc: """
       The maximum amount of records that will be delivered to the handler in each processing cycle. If `:dynamic` all records retrieved
       in the fetch request will be delivered as one single batch to the handler. If positive integer, retrieved records will be chunked
       into the provided size.
       """
-    ],
-    # TODO: Implement transactional true
-    handler_is_transactional: [
-      type: :boolean,
-      default: false,
-      doc: """
-      Determines whether producer calls are executed inside a transaction linked to the consumer's offset commit.
-
-      * `true` — Producer calls are executed within a transaction. The transaction is committed together with the consumer's offset commit.
-        Use this when following a **consume → process → produce** workflow (e.g., Kafka Streams) and you need offsets and produced records to be persisted atomically.
-        Note: Transactions incur additional overhead, reducing throughput and resource efficiency in exchange for stronger consistency.
-
-      * `false` — Producer calls run independently of the consumer. Produced records are not tied to offset commits.
-        This can result in reprocessing of messages or duplicates if commit failures occur. To handle duplicates safely, implement application-level idempotency.
-        This mode maximizes performance and minimizes resource usage.
-      """
     ]
+    # TODO: Implement transactional true
+    # handler_is_transactional: [
+    #   type: :boolean,
+    #   default: false,
+    #   doc: """
+    #   Determines whether producer calls are executed inside a transaction linked to the consumer's offset commit.
+
+    #   * `true` — Producer calls are executed within a transaction. The transaction is committed together with the consumer's offset commit.
+    #     Use this when following a **consume → process → produce** workflow (e.g., Kafka Streams) and you need offsets and produced records to be persisted atomically.
+    #     Note: Transactions incur additional overhead, reducing throughput and resource efficiency in exchange for stronger consistency.
+
+    #   * `false` — Producer calls run independently of the consumer. Produced records are not tied to offset commits.
+    #     This can result in reprocessing of messages or duplicates if commit failures occur. To handle duplicates safely, implement application-level idempotency.
+    #     This mode maximizes performance and minimizes resource usage.
+    #   """
+    # ]
   ]
 
   defstruct Keyword.keys(@opts)

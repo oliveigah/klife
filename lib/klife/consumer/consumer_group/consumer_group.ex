@@ -17,69 +17,6 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   alias Klife.MetadataCache
 
-  @exclusive_fetch_opts [
-    max_wait_ms: [
-      type: :non_neg_integer,
-      default: 0,
-      doc: "The maximum time in milliseconds to wait for the fetch request"
-    ],
-    min_bytes: [
-      type: :pos_integer,
-      default: 1,
-      doc: "The minimum number of bytes the server should return for a fetch request"
-    ],
-    max_bytes: [
-      type: :pos_integer,
-      default: 500_000,
-      doc: "The maximum number of bytes the server should return for a fetch request"
-    ],
-    isolation_level: [
-      type: {:in, [:read_committed, :read_uncommitted]},
-      default: :read_committed,
-      doc: "The isolation level for reading messages"
-    ],
-    session_id: [
-      type: :non_neg_integer,
-      default: 0,
-      doc: "The fetch session ID"
-    ],
-    session_epoch: [
-      type: :non_neg_integer,
-      default: 0,
-      doc: "The fetch session epoch"
-    ],
-    current_leader_epoch: [
-      type: :integer,
-      default: -1,
-      doc: "The current leader epoch for the partition"
-    ],
-    last_fetched_epoch: [
-      type: :integer,
-      default: -1,
-      doc: "The epoch of the last fetched record"
-    ],
-    log_start_offset: [
-      type: :integer,
-      default: -1,
-      doc: "The earliest available offset of the follower replica"
-    ],
-    callback_ref: [
-      type: :any,
-      doc: "Reference for the callback, defaults to make_ref()"
-    ],
-    client_id: [
-      type: {:or, [:string, nil]},
-      default: nil,
-      doc: "Client ID to use in fetch requests"
-    ],
-    request_timeout_ms: [
-      type: :non_neg_integer,
-      default: :timer.seconds(5),
-      doc:
-        "The maximum amount of time the consumer will wait for a broker response to a request before considering it as failed."
-    ]
-  ]
-
   @consumer_group_opts [
     client: [
       type: :atom,
@@ -128,6 +65,40 @@ defmodule Klife.Consumer.ConsumerGroup do
       default: :read_committed,
       doc:
         "Define if the consumers of the consumer group will receive uncommitted transactional records"
+    ]
+  ]
+
+  @exclusive_fetch_opts [
+    max_wait_ms: [
+      type: :non_neg_integer,
+      default: 0,
+      doc: "The maximum time in milliseconds to wait for the fetch request"
+    ],
+    min_bytes: [
+      type: :pos_integer,
+      default: 1,
+      doc: "The minimum number of bytes the server should return for a fetch request"
+    ],
+    max_bytes: [
+      type: :pos_integer,
+      default: 500_000,
+      doc: "The maximum number of bytes the server should return for a fetch request"
+    ],
+    isolation_level: [
+      type: {:in, [:read_committed, :read_uncommitted]},
+      default: :read_committed,
+      doc: "The isolation level for reading messages"
+    ],
+    client_id: [
+      type: {:or, [:string, nil]},
+      default: nil,
+      doc: "Client ID to use in fetch requests"
+    ],
+    request_timeout_ms: [
+      type: :non_neg_integer,
+      default: :timer.seconds(5),
+      doc:
+        "The maximum amount of time the consumer will wait for a broker response to a request before considering it as failed."
     ]
   ]
 
@@ -204,6 +175,10 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
+  def get_opts(), do: @consumer_group_opts
+
+  def get_exclusive_fetch_opts, do: @exclusive_fetch_opts
+
   def validate_fetch_strategy({:shared, fetcher_name}) when is_atom(fetcher_name) do
     {:ok, {:shared, fetcher_name}}
   end
@@ -256,9 +231,10 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   def init(mod, args_map) do
     Process.flag(:trap_exit, true)
+
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
 
-    :ets.new(get_acked_topic_partitions_table(mod.klife_client(), mod), [
+    :ets.new(get_acked_topic_partitions_table(mod.klife_client(), mod, args_map.group_name), [
       :set,
       :public,
       :named_table,
@@ -297,22 +273,22 @@ defmodule Klife.Consumer.ConsumerGroup do
     {:ok, init_state}
   end
 
-  defp get_acked_topic_partitions_table(client_name, cg_mod),
-    do: :"acked_topic_partitions.#{client_name}.#{cg_mod}"
+  defp get_acked_topic_partitions_table(client_name, cg_mod, cg_name),
+    do: :"acked_topic_partitions.#{client_name}.#{cg_mod}.#{cg_name}"
 
-  defp ack_topic_partition(client_name, cg_mod, topic_id, partition_idx) do
+  defp ack_topic_partition(client_name, cg_mod, topic_id, partition_idx, cg_name) do
     if :persistent_term.get(:klife_after_ack, nil) == nil do
       :persistent_term.put(:klife_after_ack, System.monotonic_time(:millisecond))
     end
 
     client_name
-    |> get_acked_topic_partitions_table(cg_mod)
+    |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.insert({{topic_id, partition_idx}})
   end
 
-  defp unack_topic_partition(client_name, cg_mod, topic_id, partition_idx) do
+  defp unack_topic_partition(client_name, cg_mod, topic_id, partition_idx, cg_name) do
     client_name
-    |> get_acked_topic_partitions_table(cg_mod)
+    |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.delete({{topic_id, partition_idx}})
   end
 
@@ -328,7 +304,13 @@ defmodule Klife.Consumer.ConsumerGroup do
           if state.coordinator_id != nil and state.coordinator_id != broker_id do
             Enum.each(state.committers_distribution, fn {commiter_id, _list} ->
               :ok =
-                Committer.update_coordinator(broker_id, state.client_name, state.mod, commiter_id)
+                Committer.update_coordinator(
+                  broker_id,
+                  state.client_name,
+                  state.mod,
+                  state.group_name,
+                  commiter_id
+                )
             end)
           end
 
@@ -349,9 +331,9 @@ defmodule Klife.Consumer.ConsumerGroup do
     Helpers.with_timeout!(fun, :timer.seconds(30))
   end
 
-  def processing_allowed?(client_name, cg_mod, topic_id, partition) do
+  def processing_allowed?(client_name, cg_mod, topic_id, partition, cg_name) do
     client_name
-    |> get_acked_topic_partitions_table(cg_mod)
+    |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.member({topic_id, partition})
   end
 
@@ -411,7 +393,14 @@ defmodule Klife.Consumer.ConsumerGroup do
           }
 
         Enum.each(tp_list, fn {t_id, p} ->
-          true = ack_topic_partition(new_state.client_name, new_state.mod, t_id, p)
+          true =
+            ack_topic_partition(
+              new_state.client_name,
+              new_state.mod,
+              t_id,
+              p,
+              new_state.group_name
+            )
         end)
 
         new_state
@@ -558,9 +547,12 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     # TODO: make timeout a config
     state.consumers_monitor_map
-    |> Task.async_stream(fn {_k, {tid, p}} ->
-      :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p)
-    end)
+    |> Task.async_stream(
+      fn {_k, {tid, p}} ->
+        :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p)
+      end,
+      timeout: 15_000
+    )
     |> Enum.to_list()
 
     exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
@@ -569,7 +561,9 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   defp stop_consumer(%__MODULE__{} = state, topic_id, partition) do
-    true = unack_topic_partition(state.client_name, state.mod, topic_id, partition)
+    true =
+      unack_topic_partition(state.client_name, state.mod, topic_id, partition, state.group_name)
+
     :ok = Consumer.revoke_assignment_async(state.client_name, state.mod, topic_id, partition)
 
     committer_id =
