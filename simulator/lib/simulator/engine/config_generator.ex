@@ -156,7 +156,6 @@ defmodule Simulator.Engine.ConfigGenerator do
       {5, base_val},
       10_000,
       20_000,
-      30_000,
       60_000,
       120_000
     ])
@@ -211,9 +210,9 @@ defmodule Simulator.Engine.ConfigGenerator do
 
   def get_fuzzy_value(:exclusive_fetch, :request_timeout_ms, base_val) do
     weighted_random_opt([
-      # {5, base_val},
-      # 3000,
-      # 5000,
+      {5, base_val},
+      3000,
+      5000,
       10_000,
       30_000
     ])

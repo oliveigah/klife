@@ -13,9 +13,9 @@ defmodule Simulator.Engine do
   ]
 
   @consumer_groups [
-    %{name: "SimulatorGroup1", max_consumers: 10},
-    %{name: "SimulatorGroup2", max_consumers: 10},
-    %{name: "SimulatorGroup3", max_consumers: 10}
+    %{name: "SimulatorGroup1", max_consumers: 1},
+    %{name: "SimulatorGroup2", max_consumers: 1},
+    %{name: "SimulatorGroup3", max_consumers: 1}
   ]
 
   def get_clients, do: @clients
@@ -25,6 +25,8 @@ defmodule Simulator.Engine do
   @impl true
   def init(_init_args) do
     :ets.new(:engine_support, [:set, :public, :named_table])
+    :ets.new(:consumer_support, [:set, :public, :named_table])
+
     {:ok, _pid} = Simulator.Engine.ProcessRegistry.start_link()
     :ok = handle_producers()
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
@@ -97,5 +99,11 @@ defmodule Simulator.Engine do
 
       {:ok, pid} = DynamicSupervisor.start_child(sup_pid, spec)
     end
+  end
+
+  def get_cg_config(cg_name, cg_mod) do
+    :ets.lookup(:engine_support, {cg_name, cg_mod})
+    |> List.first()
+    |> elem(1)
   end
 end
