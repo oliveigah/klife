@@ -103,8 +103,9 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     send(self(), :poll_records)
 
-    if function_exported?(state.cg_mod, :handle_consumer_start, 2) do
-      :ok = state.cg_mod.handle_consumer_start(state.topic_name, state.partition_idx)
+    if function_exported?(state.cg_mod, :handle_consumer_start, 3) do
+      :ok =
+        state.cg_mod.handle_consumer_start(state.topic_name, state.partition_idx, state.cg_name)
     end
 
     {:ok, state}
@@ -407,7 +408,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
 
         {parsed_user_result, usr_opts} =
-          case cg_mod.handle_record_batch(topic_name, partition_idx, rec_batch) do
+          case cg_mod.handle_record_batch(topic_name, partition_idx, cg_name, rec_batch) do
             [_ | _] = result -> {result, []}
             {[_ | _] = result, opts} -> {result, opts}
             {action, opts} -> {Enum.map(rec_batch, fn rec -> {action, rec} end), opts}
@@ -512,8 +513,14 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def terminate(reason, %__MODULE__{} = state) do
-    if function_exported?(state.cg_mod, :handle_consumer_stop, 3) do
-      :ok = state.cg_mod.handle_consumer_stop(state.topic_name, state.partition_idx, reason)
+    if function_exported?(state.cg_mod, :handle_consumer_stop, 4) do
+      :ok =
+        state.cg_mod.handle_consumer_stop(
+          state.topic_name,
+          state.partition_idx,
+          state.cg_name,
+          reason
+        )
     end
   end
 

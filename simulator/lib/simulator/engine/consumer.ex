@@ -15,7 +15,7 @@ defmodule Simulator.Engine.Consumer do
     end
   end
 
-  def handle_record_batch(_topic, _partition, recs) do
+  def handle_record_batch(_topic, _partition, cg_name, recs) do
     Enum.map(recs, fn %Klife.Record{} = rec ->
       {:commit, rec}
     end)

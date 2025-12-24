@@ -10,7 +10,7 @@ defmodule MyConsumerGroup do
   alias Klife.Record
 
   @impl true
-  def handle_record_batch(topic, partition, record_lists) do
+  def handle_record_batch(topic, partition, _cg_name, record_lists) do
     %Record{offset: first_offset} = List.first(record_lists)
     %Record{offset: last_offset} = List.last(record_lists)
 

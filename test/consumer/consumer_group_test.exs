@@ -11,7 +11,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         use Klife.Consumer.ConsumerGroup, client: MyClient
 
         @impl true
-        def handle_record_batch(topic, partition, records) do
+        def handle_record_batch(topic, partition, _cg_name, records) do
           Enum.map(records, fn %Record{} = rec ->
             send(unquote(opts[:parent_pid]), {__MODULE__, :processed, topic, partition, rec})
 
@@ -30,13 +30,13 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         end
 
         @impl true
-        def handle_consumer_start(topic, partition) do
+        def handle_consumer_start(topic, partition, _cg_name) do
           send(unquote(opts[:parent_pid]), {__MODULE__, :started_consumer, topic, partition})
           :ok
         end
 
         @impl true
-        def handle_consumer_stop(topic, partition, reason) do
+        def handle_consumer_stop(topic, partition, _cg_name, reason) do
           send(
             unquote(opts[:parent_pid]),
             {__MODULE__, :stopped_consumer, topic, partition, reason}
