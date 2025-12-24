@@ -9,7 +9,10 @@ defmodule Simulator.Application do
   def start(_type, _args) do
     children = [
       Simulator.NormalClient,
-      Simulator.TLSClient
+      Simulator.TLSClient,
+      Simulator.Engine
+      # Starts a worker by calling: Simulator.Worker.start_link(arg)
+      # {Simulator.Worker, arg}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
