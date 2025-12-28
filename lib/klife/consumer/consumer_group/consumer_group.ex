@@ -549,7 +549,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     state.consumers_monitor_map
     |> Task.async_stream(
       fn {_k, {tid, p}} ->
-        :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p)
+        :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p, state.group_name)
       end,
       timeout: 15_000
     )
@@ -564,7 +564,14 @@ defmodule Klife.Consumer.ConsumerGroup do
     true =
       unack_topic_partition(state.client_name, state.mod, topic_id, partition, state.group_name)
 
-    :ok = Consumer.revoke_assignment_async(state.client_name, state.mod, topic_id, partition)
+    :ok =
+      Consumer.revoke_assignment_async(
+        state.client_name,
+        state.mod,
+        topic_id,
+        partition,
+        state.group_name
+      )
 
     committer_id =
       find_committer_id_by_topic_partition(state.committers_distribution, topic_id, partition)

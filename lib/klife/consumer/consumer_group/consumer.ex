@@ -49,14 +49,15 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     client_name = Keyword.fetch!(args, :client_name)
     topic_id = Keyword.fetch!(args, :topic_id)
     partition_idx = Keyword.fetch!(args, :partition_idx)
+    cg_name = Keyword.fetch!(args, :consumer_group_name)
 
     GenServer.start_link(__MODULE__, Map.new(args),
-      name: get_process_name(client_name, cg_mod, topic_id, partition_idx)
+      name: get_process_name(client_name, cg_mod, topic_id, partition_idx, cg_name)
     )
   end
 
-  def get_process_name(client_name, cg_mod, topic_id, partition_idx) do
-    via_tuple({__MODULE__, client_name, cg_mod, topic_id, partition_idx})
+  def get_process_name(client_name, cg_mod, topic_id, partition_idx, cg_name) do
+    via_tuple({__MODULE__, client_name, cg_mod, topic_id, partition_idx, cg_name})
   end
 
   @impl true
@@ -200,15 +201,15 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     end
   end
 
-  def revoke_assignment(client_name, cg_mod, topic_id, partition) do
+  def revoke_assignment(client_name, cg_mod, topic_id, partition, cg_name) do
     client_name
-    |> get_process_name(cg_mod, topic_id, partition)
+    |> get_process_name(cg_mod, topic_id, partition, cg_name)
     |> GenServer.call(:assignment_revoked)
   end
 
-  def revoke_assignment_async(client_name, cg_mod, topic_id, partition) do
+  def revoke_assignment_async(client_name, cg_mod, topic_id, partition, cg_name) do
     client_name
-    |> get_process_name(cg_mod, topic_id, partition)
+    |> get_process_name(cg_mod, topic_id, partition, cg_name)
     |> GenServer.cast(:assignment_revoked)
   end
 
@@ -539,7 +540,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       )
 
     send(self(), :poll_records)
-    %__MODULE__{latest_fetched_offset: start_offset - 1, fetch_ref: nil}
+    %__MODULE__{state | latest_fetched_offset: start_offset - 1, fetch_ref: nil}
   end
 
   # TODO: Should handle more error codes?

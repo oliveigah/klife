@@ -3,6 +3,7 @@ defmodule Simulator.Engine.Consumer do
 
   # Need to create multiple modules because the consumer group register itself
   # using {cg_mod.klife_client(), cg_mod, validated_args.group_name}
+  # so it is not possible to reuse the same module for the same group
   for i <- 1..100 do
     defmodule :"#{__MODULE__}.NormalClient#{i}" do
       use Klife.Consumer.ConsumerGroup, client: Simulator.NormalClient
@@ -35,8 +36,9 @@ defmodule Simulator.Engine.Consumer do
     end
   end
 
-  def handle_record_batch(t, p, gn, recs, cg_mod) do
-    should_fail_some? = :rand.uniform() >= 0.90
+  def handle_record_batch(_t, _p, gn, recs, cg_mod) do
+    should_fail_some? = false
+    # :rand.uniform() >= 0.90
 
     to_fail =
       if should_fail_some?,
@@ -48,20 +50,7 @@ defmodule Simulator.Engine.Consumer do
         {:retry, rec}
       else
         # Assert that does not consume duplicates!
-        if :ets.insert_new(:consumer_support, {{t, p, gn, rec.offset}, rec}) == false do
-          raise """
-          CONSUMED DUPLICATED MESSAGE!
-
-          TOPIC: #{t}
-          PARTITION: #{p}
-          GROUP NAME: #{gn}
-          DUPLICATED OFFSET: #{rec.offset}
-
-          CONSUMER GROUP CONFIG:
-
-          #{inspect(Engine.get_cg_config(gn, cg_mod))}
-          """
-        end
+        Engine.insert_consumed_record!(rec, gn, cg_mod)
 
         {:commit, rec}
       end

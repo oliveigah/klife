@@ -62,7 +62,7 @@ defmodule Simulator.Engine.ConfigGenerator do
       Enum.map(tc, fn {key, base_val} ->
         {key, get_fuzzy_value(:cg_topics, key, base_val)}
       end)
-      |> Enum.reject(fn {k, v} -> v == :to_remove end)
+      |> Enum.reject(fn {_k, v} -> v == :to_remove end)
     end)
   end
 

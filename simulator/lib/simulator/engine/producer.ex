@@ -9,10 +9,8 @@ defmodule Simulator.Engine.Producer do
 
   defstruct [
     :client,
-    :table_name,
     :topic,
-    :partition,
-    :records_counter
+    :partition
   ]
 
   @impl true
@@ -20,10 +18,7 @@ defmodule Simulator.Engine.Producer do
     state = %__MODULE__{
       client: init_args.client,
       topic: init_args.topic,
-      partition: init_args.partition,
-      table_name:
-        Engine.producer_table_name(init_args.client, init_args.topic, init_args.partition),
-      records_counter: Engine.get_produced_records_counter(init_args.topic, init_args.partition)
+      partition: init_args.partition
     }
 
     send(self(), :produce_loop)
@@ -39,7 +34,7 @@ defmodule Simulator.Engine.Producer do
 
   @impl true
   def handle_info(:produce_loop, %__MODULE__{} = state) do
-    max_recs = 10
+    max_recs = 1
     rec_count = Enum.random(1..max_recs)
     chunk_size = Enum.random(1..rec_count)
 
@@ -60,8 +55,7 @@ defmodule Simulator.Engine.Producer do
         {status, %Klife.Record{} = rec} <- result do
       case status do
         :ok ->
-          engine_counter_val = :atomics.add_get(state.records_counter, 1, 1)
-          true = :ets.insert_new(state.table_name, {engine_counter_val, rec})
+          :ok = Engine.insert_produced_record(rec)
 
         :error ->
           Logger.error("Error on producer: error_code #{rec.error_code}")
