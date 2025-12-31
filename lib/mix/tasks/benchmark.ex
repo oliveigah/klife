@@ -551,7 +551,7 @@ if Mix.env() in [:dev] do
     use Klife.Consumer.ConsumerGroup, client: MyClient
 
     @impl true
-    def handle_record_batch(_topic, _partition, recs) do
+    def handle_record_batch(_topic, _partition, _cg_name, recs) do
       if :persistent_term.get(:first_call, nil) == nil do
         :persistent_term.put(:first_call, System.monotonic_time(:millisecond))
       end

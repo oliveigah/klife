@@ -586,10 +586,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               {new_queue, new_queue_size}
 
             batch_size ->
-              chunk_size = min(length(recs), batch_size)
-
               recs
-              |> Enum.chunk_every(chunk_size, chunk_size, :discard)
+              |> Enum.chunk_every(batch_size)
               |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch,
                                                                  {acc_queue, acc_size} ->
                 new_size = acc_size + 1

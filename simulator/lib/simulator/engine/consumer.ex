@@ -17,6 +17,10 @@ defmodule Simulator.Engine.Consumer do
           __MODULE__
         )
       end
+
+      def handle_consumer_start(topic, partition, group_name) do
+        :ok = Engine.set_consumer_ready(topic, partition, group_name)
+      end
     end
   end
 
@@ -33,12 +37,15 @@ defmodule Simulator.Engine.Consumer do
           __MODULE__
         )
       end
+
+      def handle_consumer_start(topic, partition, group_name) do
+        :ok = Engine.set_consumer_ready(topic, partition, group_name)
+      end
     end
   end
 
   def handle_record_batch(_t, _p, gn, recs, cg_mod) do
-    should_fail_some? = false
-    # :rand.uniform() >= 0.90
+    should_fail_some? = :rand.uniform() >= 2
 
     to_fail =
       if should_fail_some?,
@@ -49,9 +56,7 @@ defmodule Simulator.Engine.Consumer do
       if rec.offset >= to_fail do
         {:retry, rec}
       else
-        # Assert that does not consume duplicates!
         Engine.insert_consumed_record!(rec, gn, cg_mod)
-
         {:commit, rec}
       end
     end)

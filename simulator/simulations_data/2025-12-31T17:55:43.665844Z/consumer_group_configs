@@ -1,0 +1,175 @@
+[
+  cg_mod: Simulator.Engine.Consumer.TLSClient1,
+  isolation_level: :read_committed,
+  committers_count: 1,
+  fetch_strategy:
+    {:exclusive,
+     [
+       request_timeout_ms: 5000,
+       client_id: nil,
+       isolation_level: :read_committed,
+       max_bytes: 500_000,
+       min_bytes: 1,
+       max_wait_ms: 0
+     ]},
+  rebalance_timeout_ms: 30000,
+  client: Simulator.TLSClient,
+  topics: [
+    [
+      name: "974AD3A592954F802313F197DC51EF5C83065D8928B0226C9EEAF0AEAABA",
+      fetch_strategy:
+        {:exclusive,
+         [
+           request_timeout_ms: 3000,
+           client_id: nil,
+           isolation_level: :read_committed,
+           max_bytes: 500_000,
+           min_bytes: 1,
+           max_wait_ms: 5000
+         ]},
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 1_000_000,
+      max_queue_size: 20,
+      fetch_interval_ms: 2500,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 10,
+      handler_max_batch_size: :dynamic
+    ],
+    [
+      name: "E433597961DBE3BFA22F9E135E1854564C2BA6657875E3CE774082D627FE",
+      fetch_strategy:
+        {:exclusive,
+         [
+           request_timeout_ms: 5000,
+           client_id: nil,
+           isolation_level: :read_committed,
+           max_bytes: 500_000,
+           min_bytes: 1,
+           max_wait_ms: 0
+         ]},
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 1_000_000,
+      fetch_interval_ms: 5000,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 0,
+      handler_max_batch_size: :dynamic
+    ],
+    [
+      name: "71657922CB19A77C986A0D8C59FB5D14EAFE82DB1206F2A32F2BD0F80E86",
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 1_000_000,
+      fetch_interval_ms: 5000,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 10,
+      handler_max_batch_size: :dynamic
+    ]
+  ],
+  group_name: "SimulatorGroup1"
+]
+
+[
+  cg_mod: Simulator.Engine.Consumer.NormalClient1,
+  isolation_level: :read_committed,
+  committers_count: 1,
+  fetch_strategy:
+    {:exclusive,
+     [
+       request_timeout_ms: 5000,
+       client_id: nil,
+       isolation_level: :read_committed,
+       max_bytes: 500_000,
+       min_bytes: 1,
+       max_wait_ms: 0
+     ]},
+  rebalance_timeout_ms: 30000,
+  client: Simulator.NormalClient,
+  topics: [
+    [
+      name: "974AD3A592954F802313F197DC51EF5C83065D8928B0226C9EEAF0AEAABA",
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 5_000_000,
+      max_queue_size: 50,
+      fetch_interval_ms: 5000,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 0,
+      handler_max_batch_size: :dynamic
+    ],
+    [
+      name: "E433597961DBE3BFA22F9E135E1854564C2BA6657875E3CE774082D627FE",
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 5_000_000,
+      fetch_interval_ms: 2500,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 0,
+      handler_max_batch_size: 100
+    ],
+    [
+      name: "71657922CB19A77C986A0D8C59FB5D14EAFE82DB1206F2A32F2BD0F80E86",
+      isolation_level: :read_uncommitted,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 1_000_000,
+      fetch_interval_ms: 5000,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 0,
+      handler_max_batch_size: :dynamic
+    ]
+  ],
+  group_name: "SimulatorGroup2"
+]
+
+[
+  cg_mod: Simulator.Engine.Consumer.NormalClient1,
+  isolation_level: :read_committed,
+  committers_count: 1,
+  fetch_strategy:
+    {:exclusive,
+     [
+       request_timeout_ms: 5000,
+       client_id: nil,
+       isolation_level: :read_committed,
+       max_bytes: 500_000,
+       min_bytes: 1,
+       max_wait_ms: 0
+     ]},
+  rebalance_timeout_ms: 120_000,
+  client: Simulator.NormalClient,
+  topics: [
+    [
+      name: "974AD3A592954F802313F197DC51EF5C83065D8928B0226C9EEAF0AEAABA",
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 1_000_000,
+      fetch_interval_ms: 5000,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 0,
+      handler_max_batch_size: :dynamic
+    ],
+    [
+      name: "E433597961DBE3BFA22F9E135E1854564C2BA6657875E3CE774082D627FE",
+      isolation_level: :read_uncommitted,
+      offset_reset_policy: :earliest,
+      fetch_max_bytes: 500_000,
+      fetch_interval_ms: 2500,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 10,
+      handler_max_batch_size: 100
+    ],
+    [
+      name: "71657922CB19A77C986A0D8C59FB5D14EAFE82DB1206F2A32F2BD0F80E86",
+      isolation_level: :read_committed,
+      offset_reset_policy: :latest,
+      fetch_max_bytes: 1_000_000,
+      max_queue_size: 20,
+      fetch_interval_ms: 5000,
+      handler_cooldown_ms: 0,
+      handler_max_unacked_commits: 0,
+      handler_max_batch_size: :dynamic
+    ]
+  ],
+  group_name: "SimulatorGroup3"
+]

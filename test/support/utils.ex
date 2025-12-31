@@ -365,4 +365,18 @@ defmodule Klife.TestUtils do
       headers
     )
   end
+
+  def setup() do
+    :counters = :ets.new(:counters, [:set, :public, :named_table])
+    :ok
+  end
+
+  def maybe_init_counter(key, val \\ 0) do
+    :ets.insert_new(:counters, {key, val})
+    :ok
+  end
+
+  def increment_counter(key, val \\ 1) do
+    :ets.update_counter(:counters, key, val)
+  end
 end

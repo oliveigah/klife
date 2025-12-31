@@ -80,7 +80,13 @@ defmodule Simulator.Engine.ConfigGenerator do
   end
 
   def get_fuzzy_value(:cg_topics, :handler_max_batch_size, base_val) do
-    weighted_random_opt([base_val, :dynamic, 1, 10, 100])
+    weighted_random_opt([
+      base_val,
+      :dynamic,
+      # 50,
+      # 80,
+      100
+    ])
   end
 
   def get_fuzzy_value(:cg_topics, :offset_reset_policy, base_val) do
@@ -101,8 +107,8 @@ defmodule Simulator.Engine.ConfigGenerator do
   def get_fuzzy_value(:cg_topics, :max_queue_size, base_val) do
     weighted_random_opt([
       {5, base_val},
-      2,
-      5,
+      # 2,
+      # 5,
       10,
       20,
       50
@@ -123,11 +129,9 @@ defmodule Simulator.Engine.ConfigGenerator do
   def get_fuzzy_value(:cg_topics, :handler_cooldown_ms, base_val) do
     weighted_random_opt([
       {5, base_val},
-      0,
-      100,
-      500,
-      1000,
-      5000
+      0
+      # 100,
+      # 500
     ])
   end
 
@@ -138,7 +142,7 @@ defmodule Simulator.Engine.ConfigGenerator do
   def get_fuzzy_value(:cg_topics, :fetch_strategy, base_val) do
     weighted_random_opt([
       {5, base_val},
-      {1, {:shared, :klife_default_fetcher}},
+      # {1, {:shared, :klife_default_fetcher}},
       {1, {:exclusive, generate_config(:exclusive_fetch)}}
     ])
   end
@@ -146,7 +150,7 @@ defmodule Simulator.Engine.ConfigGenerator do
   def get_fuzzy_value(:consumer_group, :fetch_strategy, base_val) do
     weighted_random_opt([
       {5, base_val},
-      {1, {:shared, :klife_default_fetcher}},
+      # {1, {:shared, :klife_default_fetcher}},
       {1, {:exclusive, generate_config(:exclusive_fetch)}}
     ])
   end
@@ -164,11 +168,11 @@ defmodule Simulator.Engine.ConfigGenerator do
   def get_fuzzy_value(:consumer_group, :committers_count, base_val) do
     weighted_random_opt([
       {5, base_val},
-      1,
-      2,
-      3,
-      5,
-      10
+      1
+      # 2,
+      # 3,
+      # 5,
+      # 10
     ])
   end
 
@@ -189,11 +193,11 @@ defmodule Simulator.Engine.ConfigGenerator do
 
   def get_fuzzy_value(:exclusive_fetch, :min_bytes, base_val) do
     weighted_random_opt([
-      {5, base_val},
-      100,
-      1000,
-      10_000,
-      100_000
+      {5, base_val}
+      # 100,
+      # 1000,
+      # 10_000,
+      # 100_000
     ])
   end
 

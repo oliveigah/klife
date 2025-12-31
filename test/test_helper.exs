@@ -12,6 +12,6 @@ case System.fetch_env("KLIFE_KAFKA_VSN") do
   :error -> System.put_env("KLIFE_KAFKA_VSN", "4.0")
 end
 
-:test_pids = :ets.new(:test_pids, [:set, :public, :named_table])
+:ok = Klife.TestUtils.setup()
 
 ExUnit.start()
