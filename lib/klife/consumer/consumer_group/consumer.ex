@@ -535,7 +535,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         state.client_name,
         state.topic_name,
         state.partition_idx,
-        # Should this be always earliest??
+        # TODO: Should this be always earliest??
         state.topic_config.offset_reset_policy
       )
 
@@ -573,29 +573,39 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         include_aborted: state.topic_config.isolation_level == :read_uncommitted
       ]
 
-    {new_queue, new_queue_size} =
+    base_last_fetched_offset = List.last(base_recs).offset
+
+    {new_queue, new_queue_size, last_fetched_offset} =
       case Record.filter_records(base_recs, filter_rec_opts) do
         [] ->
-          {state.records_batch_queue, state.records_batch_queue_count}
+          {
+            state.records_batch_queue,
+            state.records_batch_queue_count,
+            base_last_fetched_offset
+          }
 
         recs ->
           case state.topic_config.handler_max_batch_size do
             :dynamic ->
               new_queue = :queue.in(recs, state.records_batch_queue)
               new_queue_size = state.records_batch_queue_count + 1
-              {new_queue, new_queue_size}
+              {new_queue, new_queue_size, min(base_last_fetched_offset, List.last(recs).offset)}
 
             batch_size ->
-              recs
-              |> Enum.chunk_every(batch_size)
-              |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch,
-                                                                 {acc_queue, acc_size} ->
-                new_size = acc_size + 1
+              {new_queue, new_size} =
+                recs
+                |> Enum.chunk_every(batch_size)
+                |> Enum.reduce_while({curr_queue, curr_q_size}, fn rec_batch,
+                                                                   {acc_queue, acc_size} ->
+                  new_size = acc_size + 1
 
-                if new_size > state.topic_config.max_queue_size,
-                  do: {:halt, {acc_queue, acc_size}},
-                  else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
-              end)
+                  if new_size > state.topic_config.max_queue_size,
+                    do: {:halt, {acc_queue, acc_size}},
+                    else: {:cont, {:queue.in(rec_batch, acc_queue), new_size}}
+                end)
+
+              {:value, last_batch} = :queue.peek_r(new_queue)
+              {new_queue, new_size, min(base_last_fetched_offset, List.last(last_batch).offset)}
           end
       end
 
@@ -605,7 +615,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       state
       | records_batch_queue: new_queue,
         records_batch_queue_count: new_queue_size,
-        latest_fetched_offset: List.last(base_recs).offset,
+        latest_fetched_offset: last_fetched_offset,
         empty_fetch_results_count: 0,
         fetch_ref: nil
     }

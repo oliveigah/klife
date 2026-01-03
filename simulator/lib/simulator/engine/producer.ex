@@ -32,7 +32,8 @@ defmodule Simulator.Engine.Producer do
     t = args.topic
     p = args.partition
     c = args.client
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, c, t, p}))
+    idx = args.index
+    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, c, t, p, idx}))
   end
 
   @impl true
@@ -42,11 +43,6 @@ defmodule Simulator.Engine.Producer do
         do_produce(state)
       else
         allowed? = Engine.allowed_to_produce?(state.topic, state.partition)
-
-        if allowed? do
-          Logger.info("Starting producer #{state.topic} #{state.partition}")
-        end
-
         %{state | allowed_to_produce?: allowed?}
       end
 
@@ -84,6 +80,7 @@ defmodule Simulator.Engine.Producer do
         {status, %Klife.Record{} = rec} <- result do
       case status do
         :ok ->
+          :ok = Engine.confirm_produced_record(rec)
           :ok
 
         :error ->

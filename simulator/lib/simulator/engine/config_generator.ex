@@ -83,9 +83,11 @@ defmodule Simulator.Engine.ConfigGenerator do
     weighted_random_opt([
       base_val,
       :dynamic,
-      # 50,
-      # 80,
-      100
+      50,
+      80,
+      100,
+      200,
+      1000
     ])
   end
 
