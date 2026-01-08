@@ -2,36 +2,29 @@ defmodule Simulator.Engine do
   require Logger
   use GenServer
 
-  @clients [
-    Simulator.NormalClient,
-    Simulator.TLSClient
-  ]
-
-  @consumer_groups [
-    %{name: "SimulatorGroup1", max_consumers: 1},
-    %{name: "SimulatorGroup2", max_consumers: 1},
-    %{name: "SimulatorGroup3", max_consumers: 1}
-  ]
-
-  @producer_rps 300
-  @producer_concurrency 20
+  alias Simulator.EngineConfig
 
   defstruct [
-    :latest_consumed_offsets,
+    :config,
     :total_produced_counter,
     :total_consumed_counters
   ]
 
-  def get_clients, do: @clients
+  def get_config, do: :persistent_term.get(:engine_config)
 
-  def get_simulation_topics_data, do: :persistent_term.get(:simulation_topics_data)
+  def get_clients, do: get_config().clients
+
+  def get_simulation_topics_data, do: get_config().topics
 
   @impl true
   def init(_init_args) do
+    config = EngineConfig.generate_config()
+    :persistent_term.put(:engine_config, config)
+
     total_produced_counter = :atomics.new(1, [])
 
     consumed_counters =
-      Enum.map(@consumer_groups, fn %{name: cgname} ->
+      Enum.map(config.consumer_groups, fn %{name: cgname} ->
         total_consumed_counter = :atomics.new(1, [])
         :persistent_term.put({:total_consumed_counter, cgname}, total_consumed_counter)
         {cgname, total_consumed_counter}
@@ -40,26 +33,27 @@ defmodule Simulator.Engine do
 
     :persistent_term.put(:total_produced_counter, total_produced_counter)
 
-    topics_data = get_input_data(:topics_input)
+    save_data(:config_bin, :erlang.term_to_binary(config))
+    save_data(:config, inspect(config, limit: :infinity) |> Code.format_string!())
 
-    :ok = create_topics(topics_data)
+    :ok = create_topics(config)
 
     # Wait metadata update (TODO: Use pubsub)
     Process.sleep(5_000)
 
-    :ok = handle_tables()
+    :ok = handle_tables(config)
 
     {:ok, _pid} = Simulator.Engine.ProcessRegistry.start_link()
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
 
-    :ok = handle_consumers(consumer_sup_pid)
+    :ok = handle_consumers(config, consumer_sup_pid)
 
-    :ok = handle_producers()
+    :ok = handle_producers(config)
 
     send(self(), :invariants_check_loop)
 
     state = %__MODULE__{
-      latest_consumed_offsets: %{},
+      config: config,
       total_produced_counter: total_produced_counter,
       total_consumed_counters: consumed_counters
     }
@@ -67,14 +61,14 @@ defmodule Simulator.Engine do
     {:ok, state}
   end
 
-  def create_topics(topics_data) do
+  def create_topics(%EngineConfig{} = config) do
     content = %{
       topics:
-        Enum.map(topics_data, fn input ->
+        Enum.map(config.topics, fn input ->
           %{
             name: input[:topic],
             num_partitions: input[:partitions],
-            replication_factor: 2,
+            replication_factor: config.topics_replication_factor,
             assignments: [],
             configs: []
           }
@@ -83,7 +77,7 @@ defmodule Simulator.Engine do
       validate_only: false
     }
 
-    client = Enum.random(get_clients())
+    client = Enum.random(config.clients)
 
     {:ok, %{content: %{topics: topics_response}}} =
       Klife.Connection.Broker.send_message(
@@ -93,10 +87,10 @@ defmodule Simulator.Engine do
         content
       )
 
+    # TODO: Think about how to reuse the same topic!
     Enum.filter(topics_response, fn e -> e.error_code != 0 end)
     |> case do
       [] ->
-        :persistent_term.put(:simulation_topics_data, topics_data)
         :ok
 
       err ->
@@ -131,17 +125,18 @@ defmodule Simulator.Engine do
 
   @impl true
   def handle_info(:invariants_check_loop, %__MODULE__{} = state) do
+    config = state.config
     total_produced_rec_count = :atomics.get(state.total_produced_counter, 1)
     Logger.info("Running invariants check!")
     Logger.info("Total produced records: #{total_produced_rec_count}")
 
-    Enum.each(@consumer_groups, fn %{name: cgname} ->
+    Enum.each(config.consumer_groups, fn %{name: cgname} ->
       Logger.info(
         "Total consumed records for #{cgname}: #{:atomics.get(state.total_consumed_counters[cgname], 1)}"
       )
     end)
 
-    Process.send_after(self(), :invariants_check_loop, 5_000)
+    Process.send_after(self(), :invariants_check_loop, config.invariants_check_interval_ms)
 
     if total_produced_rec_count > 0,
       do: {:noreply, do_check_invariants(state)},
@@ -149,12 +144,14 @@ defmodule Simulator.Engine do
   end
 
   defp do_check_invariants(%__MODULE__{} = state) do
+    config = state.config
     now = System.monotonic_time(:millisecond)
+    lag_threshold = EngineConfig.lag_warning_threshold(config)
 
-    for %{topic: t, partitions: pcount} <- get_simulation_topics_data(),
+    for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
       cg_latest_ts_map =
-        Enum.map(@consumer_groups, fn %{name: cgname} ->
+        Enum.map(config.consumer_groups, fn %{name: cgname} ->
           [{_, latest_ts}] = :ets.lookup(consumer_table_name(t, p, cgname), :latest_timestamp)
           {cgname, latest_ts}
         end)
@@ -165,7 +162,7 @@ defmodule Simulator.Engine do
       all_data
       |> Enum.frequencies_by(fn {{_key, cg}, _hash, _time, _offset, _conf_ts} -> cg end)
       |> Enum.each(fn {cg, rec_count} ->
-        if rec_count >= 5 * @producer_rps * @producer_concurrency do
+        if rec_count >= lag_threshold do
           Logger.warning("Too much lag (#{rec_count}) for #{cg} #{t} #{p}")
         end
       end)
@@ -182,13 +179,13 @@ defmodule Simulator.Engine do
             :ok
 
           skipped ->
-            {{oldest_key, _cg}, _hash, _insert_ts, offset, conf_ts} =
+            {{_oldest_key, _cg}, _hash, _insert_ts, offset, conf_ts} =
               Enum.max_by(skipped, fn {{_key, _cg}, _hash, _insert_time, _offset, conf_ts} ->
                 now - conf_ts
               end)
 
             Logger.warning(
-              "Skipped #{length(skipped)} records on #{cg} #{t} #{p}! oldest offset #{offset} oldest key #{oldest_key} oldest time diff #{now - conf_ts}"
+              "Skipped #{length(skipped)} records on #{cg} #{t} #{p}! oldest offset #{offset} oldest time diff #{now - conf_ts}"
             )
         end
       end
@@ -197,14 +194,14 @@ defmodule Simulator.Engine do
     state
   end
 
-  def handle_tables() do
+  def handle_tables(%EngineConfig{} = config) do
     :ets.new(:engine_support, [:set, :public, :named_table])
 
-    for %{topic: t, partitions: pcount} <- get_simulation_topics_data(),
+    for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
       :ets.new(producer_table_name(t, p), [:ordered_set, :public, :named_table])
 
-      Enum.each(@consumer_groups, fn %{name: cg_name} ->
+      Enum.each(config.consumer_groups, fn %{name: cg_name} ->
         ref = :atomics.new(1, [])
         :atomics.sub(ref, 1, 1)
 
@@ -225,15 +222,18 @@ defmodule Simulator.Engine do
     :ok
   end
 
-  def handle_producers() do
-    for %{topic: t, partitions: pcount} <- get_simulation_topics_data(),
+  def handle_producers(%EngineConfig{} = config) do
+    for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1),
-        idx <- 1..@producer_concurrency do
+        idx <- 1..config.producer_concurrency do
       args = %{
-        client: Enum.random(@clients),
+        client: Enum.random(config.clients),
         topic: t,
         partition: p,
-        max_records: @producer_rps,
+        max_records: config.producer_max_rps,
+        loop_interval_ms: config.producer_loop_interval_ms,
+        record_value_bytes: config.record_value_bytes,
+        record_key_bytes: config.record_key_bytes,
         index: idx
       }
 
@@ -256,10 +256,8 @@ defmodule Simulator.Engine do
   def idempotency_table_name(topic, partition, cg_name),
     do: :"consumer_idempotency.#{topic}.#{partition}.#{cg_name}"
 
-  def handle_consumers(sup_pid) do
-    configs = get_input_data(:consumers_config_input)
-
-    Enum.map(configs, fn opts ->
+  def handle_consumers(%EngineConfig{} = config, sup_pid) do
+    Enum.map(config.consumer_group_configs, fn opts ->
       spec = %{
         id: {opts[:group_name], opts[:cg_mod]},
         start: {opts[:cg_mod], :start_link, [Keyword.delete(opts, :cg_mod)]},
@@ -272,57 +270,12 @@ defmodule Simulator.Engine do
       {:ok, _pid} = DynamicSupervisor.start_child(sup_pid, spec)
     end)
 
-    to_write =
-      configs
-      |> Enum.map(fn e -> inspect(e) end)
-      |> Enum.join("\n \n")
-      |> Code.format_string!()
-
-    save_data("consumer_group_configs", to_write)
+    :ok
   end
 
   def save_data(type, val) do
     ts = :persistent_term.get(:simulation_timestamp)
     File.write!(Path.relative("simulations_data/#{ts}/#{type}"), val)
-  end
-
-  def get_input_data(type) do
-    val =
-      case :persistent_term.get(:rerun_timestamp, nil) do
-        nil ->
-          case type do
-            :topics_input ->
-              [
-                %{topic: Base.encode16(:rand.bytes(30)), partitions: 10},
-                %{topic: Base.encode16(:rand.bytes(30)), partitions: 10},
-                %{topic: Base.encode16(:rand.bytes(30)), partitions: 10}
-              ]
-
-            :consumers_config_input ->
-              for %{name: cg_name, max_consumers: mc} <- @consumer_groups,
-                  idx <- 1..mc do
-                opts = Simulator.Engine.ConfigGenerator.generate_config(:consumer_group)
-
-                cg_mod =
-                  case opts[:client] do
-                    Simulator.NormalClient -> :"#{Simulator.Engine.Consumer.NormalClient}#{idx}"
-                    Simulator.TLSClient -> :"#{Simulator.Engine.Consumer.TLSClient}#{idx}"
-                  end
-
-                opts
-                |> Keyword.replace(:group_name, cg_name)
-                |> Keyword.put(:cg_mod, cg_mod)
-              end
-          end
-
-        val ->
-          File.read!(Path.relative("simulations_data/#{val}/#{type}"))
-          |> :erlang.binary_to_term()
-      end
-
-    save_data(type, :erlang.term_to_binary(val))
-
-    val
   end
 
   def insert_consumed_record!(%Klife.Record{} = rec, cg_name, cg_mod) do
@@ -347,14 +300,6 @@ defmodule Simulator.Engine do
       end
 
     out_of_order? = latest_consummed_offset > rec.offset
-
-    # This is not a valid check for every case, because gaps are normal
-    # for now, im levaing it here to have more guarantees
-    if latest_consummed_offset + 1 != rec.offset do
-      Logger.error(
-        "Gap (#{rec.offset - latest_consummed_offset}) in offset for #{cg_name} #{rec.topic} #{rec.partition}"
-      )
-    end
 
     cond do
       duplicated_message? ->
@@ -462,11 +407,12 @@ defmodule Simulator.Engine do
   end
 
   def insert_produced_record(%Klife.Record{} = rec) do
+    config = get_config()
     table = producer_table_name(rec.topic, rec.partition)
     hash_data = hash_record(rec)
 
     to_insert =
-      Enum.map(@consumer_groups, fn %{name: cg_name} ->
+      Enum.map(config.consumer_groups, fn %{name: cg_name} ->
         {{rec.key, cg_name}, hash_data, System.monotonic_time(:millisecond), nil, nil}
       end)
 
@@ -476,9 +422,10 @@ defmodule Simulator.Engine do
   end
 
   def confirm_produced_record(%Klife.Record{} = rec) do
+    config = get_config()
     table = producer_table_name(rec.topic, rec.partition)
 
-    Enum.map(@consumer_groups, fn %{name: cg_name} ->
+    Enum.map(config.consumer_groups, fn %{name: cg_name} ->
       :ets.update_element(table, {rec.key, cg_name}, [
         {4, rec.offset},
         {5, System.monotonic_time(:millisecond)}
@@ -489,9 +436,10 @@ defmodule Simulator.Engine do
   end
 
   def rollback_produced_record(%Klife.Record{} = rec) do
+    config = get_config()
     table = producer_table_name(rec.topic, rec.partition)
 
-    Enum.map(@consumer_groups, fn %{name: cg_name} ->
+    Enum.map(config.consumer_groups, fn %{name: cg_name} ->
       true = :ets.delete(table, {rec.key, cg_name})
     end)
 
@@ -511,7 +459,9 @@ defmodule Simulator.Engine do
   end
 
   def allowed_to_produce?(topic, partition) do
-    Enum.map(@consumer_groups, fn %{name: cg} ->
+    config = get_config()
+
+    Enum.map(config.consumer_groups, fn %{name: cg} ->
       case :ets.lookup(:engine_support, {:consumer_ready, topic, partition, cg}) do
         [{_key, val}] -> val
         [] -> false

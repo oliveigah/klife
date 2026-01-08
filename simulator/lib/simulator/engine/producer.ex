@@ -12,7 +12,10 @@ defmodule Simulator.Engine.Producer do
     :topic,
     :partition,
     :allowed_to_produce?,
-    :max_records
+    :max_records,
+    :loop_interval_ms,
+    :record_value_bytes,
+    :record_key_bytes
   ]
 
   @impl true
@@ -21,7 +24,10 @@ defmodule Simulator.Engine.Producer do
       client: init_args.client,
       topic: init_args.topic,
       partition: init_args.partition,
-      max_records: init_args.max_records
+      max_records: init_args.max_records,
+      loop_interval_ms: init_args.loop_interval_ms,
+      record_value_bytes: init_args.record_value_bytes,
+      record_key_bytes: init_args.record_key_bytes
     }
 
     send(self(), :produce_loop)
@@ -46,7 +52,7 @@ defmodule Simulator.Engine.Producer do
         %{state | allowed_to_produce?: allowed?}
       end
 
-    Process.send_after(self(), :produce_loop, 1000)
+    Process.send_after(self(), :produce_loop, state.loop_interval_ms)
     {:noreply, new_state}
   end
 
@@ -60,8 +66,8 @@ defmodule Simulator.Engine.Producer do
         rec = %Klife.Record{
           topic: state.topic,
           partition: state.partition,
-          value: :rand.bytes(10),
-          key: :crypto.strong_rand_bytes(64) |> Base.encode16()
+          value: :rand.bytes(state.record_value_bytes),
+          key: :crypto.strong_rand_bytes(state.record_key_bytes) |> Base.encode16()
         }
 
         :ok = Engine.insert_produced_record(rec)
