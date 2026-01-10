@@ -33,8 +33,7 @@ defmodule Simulator.Engine do
 
     :persistent_term.put(:total_produced_counter, total_produced_counter)
 
-    save_data(:config_bin, :erlang.term_to_binary(config))
-    save_data(:config, inspect(config, limit: :infinity) |> Code.format_string!())
+    save_data(:"config.exs", inspect(config, limit: :infinity) |> Code.format_string!())
 
     :ok = create_topics(config)
 
@@ -99,7 +98,7 @@ defmodule Simulator.Engine do
   end
 
   def start_link(args) do
-    ts = DateTime.utc_now() |> DateTime.to_iso8601()
+    ts = "_" <> (DateTime.utc_now() |> DateTime.to_iso8601())
     :persistent_term.put(:simulation_timestamp, ts)
 
     case System.get_env("RERUN_TS") do

@@ -46,10 +46,9 @@ defmodule Simulator.EngineConfig do
   end
 
   defp generate_from_file(rerun_ts) do
-    %__MODULE__{} =
-      base_config =
-      File.read!(Path.relative("simulations_data/#{rerun_ts}/config_bin"))
-      |> :erlang.binary_to_term()
+    {%__MODULE__{}, _binding} =
+      {base_config, _binding} =
+      Code.eval_file(Path.relative("simulations_data/#{rerun_ts}/config.exs"))
 
     # Must update the topics in order to resimulate from a new topic
     # instead of reuse the old one that may have old data that may
@@ -95,11 +94,11 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:consumer_groups, _config) do
-    cg_count = weighted_random_opt([3, 5, 10])
+    cg_count = weighted_random_opt([5])
 
     Enum.map(1..cg_count, fn i ->
       # TODO: Fix the problem with multiple consumers that start producing before everyone is ready
-      %{name: "SimulatorGroup#{i}", max_consumers: weighted_random_opt([1, 2, 5, 10])}
+      %{name: "SimulatorGroup#{i}", max_consumers: weighted_random_opt([1])}
     end)
   end
 
@@ -174,35 +173,35 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:producer_max_rps, _config) do
-    weighted_random_opt([{5, 15}, 5, 10, 20, 30, 50])
+    weighted_random_opt([50])
   end
 
   defp random_value(:producer_concurrency, _config) do
-    weighted_random_opt([{5, 50}, 10, 25, 75, 100])
+    weighted_random_opt([5])
   end
 
   defp random_value(:producer_loop_interval_ms, _config) do
-    weighted_random_opt([{5, 1_000}, 500, 2_000, 5_000])
+    weighted_random_opt([1000])
   end
 
   defp random_value(:record_value_bytes, _config) do
-    weighted_random_opt([{5, 10}, 50, 100, 500, 1_000])
+    weighted_random_opt([10])
   end
 
   defp random_value(:record_key_bytes, _config) do
-    weighted_random_opt([{5, 64}, 16, 32, 128])
+    weighted_random_opt([64])
   end
 
   defp random_value(:invariants_check_interval_ms, _config) do
-    weighted_random_opt([{5, 5_000}, 2_000, 10_000, 30_000])
+    weighted_random_opt([5_000])
   end
 
   defp random_value(:lag_warning_multiplier, _config) do
-    weighted_random_opt([{5, 5}, 3, 10])
+    weighted_random_opt([5])
   end
 
   defp random_value({:cg_topics, :handler_max_unacked_commits}, base_val) do
-    weighted_random_opt([{5, base_val}, 0, 5, 10])
+    weighted_random_opt([base_val])
   end
 
   defp random_value({:cg_topics, :handler_max_batch_size}, base_val) do
@@ -214,7 +213,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :fetch_max_bytes}, base_val) do
-    weighted_random_opt([{5, base_val}, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000])
+    weighted_random_opt([base_val])
   end
 
   defp random_value({:cg_topics, :max_queue_size}, base_val) do

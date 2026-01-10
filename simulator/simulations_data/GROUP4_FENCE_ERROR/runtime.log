@@ -1,0 +1,386 @@
+2026-01-09T18:58:43.583473-03:00 info: Running invariants check!
+2026-01-09T18:58:43.586899-03:00 info: Total produced records: 0
+2026-01-09T18:58:43.587022-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:43.587076-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:43.587120-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:43.587144-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:43.587175-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:45.587298-03:00 info: Running invariants check!
+2026-01-09T18:58:45.587634-03:00 info: Total produced records: 0
+2026-01-09T18:58:45.587745-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:45.587796-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:45.587852-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:45.587913-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:45.588034-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:47.588330-03:00 info: Running invariants check!
+2026-01-09T18:58:47.588515-03:00 info: Total produced records: 0
+2026-01-09T18:58:47.588622-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:47.588771-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:47.588869-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:47.588948-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:47.589073-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:49.589362-03:00 info: Running invariants check!
+2026-01-09T18:58:49.589571-03:00 info: Total produced records: 144
+2026-01-09T18:58:49.589773-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:49.589852-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:49.589957-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:49.590037-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:49.590226-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:51.591347-03:00 info: Running invariants check!
+2026-01-09T18:58:51.591541-03:00 info: Total produced records: 144
+2026-01-09T18:58:51.591574-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:51.591606-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:51.591639-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:51.591666-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:51.591728-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:53.592341-03:00 info: Running invariants check!
+2026-01-09T18:58:53.592487-03:00 info: Total produced records: 1314
+2026-01-09T18:58:53.592513-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:53.592554-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:53.592634-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:53.592760-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:53.592795-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:55.593433-03:00 info: Running invariants check!
+2026-01-09T18:58:55.593698-03:00 info: Total produced records: 1337
+2026-01-09T18:58:55.593749-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:55.593788-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:55.594013-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:55.594087-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:55.594122-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:57.594377-03:00 info: Running invariants check!
+2026-01-09T18:58:57.594572-03:00 info: Total produced records: 1355
+2026-01-09T18:58:57.594619-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-09T18:58:57.594715-03:00 info: Total consumed records for SimulatorGroup2: 0
+2026-01-09T18:58:57.594741-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:57.594761-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:57.594778-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:58:59.595345-03:00 info: Running invariants check!
+2026-01-09T18:58:59.595517-03:00 info: Total produced records: 2400
+2026-01-09T18:58:59.595549-03:00 info: Total consumed records for SimulatorGroup1: 1757
+2026-01-09T18:58:59.595914-03:00 info: Total consumed records for SimulatorGroup2: 1972
+2026-01-09T18:58:59.596059-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:58:59.596133-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:58:59.596168-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:59:01.596447-03:00 info: Running invariants check!
+2026-01-09T18:59:01.596761-03:00 info: Total produced records: 2766
+2026-01-09T18:59:01.596940-03:00 info: Total consumed records for SimulatorGroup1: 2161
+2026-01-09T18:59:01.597006-03:00 info: Total consumed records for SimulatorGroup2: 2661
+2026-01-09T18:59:01.597063-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:59:01.597439-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:01.597507-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:59:03.598356-03:00 info: Running invariants check!
+2026-01-09T18:59:03.598547-03:00 info: Total produced records: 3622
+2026-01-09T18:59:03.598581-03:00 info: Total consumed records for SimulatorGroup1: 2789
+2026-01-09T18:59:03.598605-03:00 info: Total consumed records for SimulatorGroup2: 2780
+2026-01-09T18:59:03.598692-03:00 info: Total consumed records for SimulatorGroup3: 0
+2026-01-09T18:59:03.598747-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:03.598776-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:59:05.599406-03:00 info: Running invariants check!
+2026-01-09T18:59:05.599696-03:00 info: Total produced records: 5041
+2026-01-09T18:59:05.599771-03:00 info: Total consumed records for SimulatorGroup1: 4057
+2026-01-09T18:59:05.599880-03:00 info: Total consumed records for SimulatorGroup2: 3923
+2026-01-09T18:59:05.599921-03:00 info: Total consumed records for SimulatorGroup3: 3517
+2026-01-09T18:59:05.599980-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:05.600035-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:59:07.600380-03:00 info: Running invariants check!
+2026-01-09T18:59:07.600635-03:00 info: Total produced records: 5097
+2026-01-09T18:59:07.600703-03:00 info: Total consumed records for SimulatorGroup1: 4620
+2026-01-09T18:59:07.600774-03:00 info: Total consumed records for SimulatorGroup2: 4940
+2026-01-09T18:59:07.600844-03:00 info: Total consumed records for SimulatorGroup3: 4568
+2026-01-09T18:59:07.600882-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:07.601026-03:00 info: Total consumed records for SimulatorGroup5: 0
+2026-01-09T18:59:09.601370-03:00 info: Running invariants check!
+2026-01-09T18:59:09.601594-03:00 info: Total produced records: 7303
+2026-01-09T18:59:09.601644-03:00 info: Total consumed records for SimulatorGroup1: 5314
+2026-01-09T18:59:09.601726-03:00 info: Total consumed records for SimulatorGroup2: 5740
+2026-01-09T18:59:09.601955-03:00 info: Total consumed records for SimulatorGroup3: 5464
+2026-01-09T18:59:09.602038-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:09.602078-03:00 info: Total consumed records for SimulatorGroup5: 5217
+2026-01-09T18:59:11.602356-03:00 info: Running invariants check!
+2026-01-09T18:59:11.602525-03:00 info: Total produced records: 8004
+2026-01-09T18:59:11.602553-03:00 info: Total consumed records for SimulatorGroup1: 6590
+2026-01-09T18:59:11.602577-03:00 info: Total consumed records for SimulatorGroup2: 6797
+2026-01-09T18:59:11.602612-03:00 info: Total consumed records for SimulatorGroup3: 6606
+2026-01-09T18:59:11.602642-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:11.602689-03:00 info: Total consumed records for SimulatorGroup5: 6350
+2026-01-09T18:59:13.603350-03:00 info: Running invariants check!
+2026-01-09T18:59:13.603547-03:00 info: Total produced records: 9055
+2026-01-09T18:59:13.603591-03:00 info: Total consumed records for SimulatorGroup1: 7491
+2026-01-09T18:59:13.603746-03:00 info: Total consumed records for SimulatorGroup2: 8023
+2026-01-09T18:59:13.603803-03:00 info: Total consumed records for SimulatorGroup3: 7557
+2026-01-09T18:59:13.603820-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:13.603850-03:00 info: Total consumed records for SimulatorGroup5: 7486
+2026-01-09T18:59:15.604375-03:00 info: Running invariants check!
+2026-01-09T18:59:15.604576-03:00 info: Total produced records: 10579
+2026-01-09T18:59:15.604618-03:00 info: Total consumed records for SimulatorGroup1: 9494
+2026-01-09T18:59:15.604650-03:00 info: Total consumed records for SimulatorGroup2: 9947
+2026-01-09T18:59:15.604744-03:00 info: Total consumed records for SimulatorGroup3: 9215
+2026-01-09T18:59:15.604779-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:15.604815-03:00 info: Total consumed records for SimulatorGroup5: 9234
+2026-01-09T18:59:17.605363-03:00 info: Running invariants check!
+2026-01-09T18:59:17.605595-03:00 info: Total produced records: 11529
+2026-01-09T18:59:17.605726-03:00 info: Total consumed records for SimulatorGroup1: 10210
+2026-01-09T18:59:17.605782-03:00 info: Total consumed records for SimulatorGroup2: 11040
+2026-01-09T18:59:17.605840-03:00 info: Total consumed records for SimulatorGroup3: 10749
+2026-01-09T18:59:17.605887-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:17.606301-03:00 info: Total consumed records for SimulatorGroup5: 10524
+2026-01-09T18:59:19.607403-03:00 info: Running invariants check!
+2026-01-09T18:59:19.607716-03:00 info: Total produced records: 14227
+2026-01-09T18:59:19.607796-03:00 info: Total consumed records for SimulatorGroup1: 12021
+2026-01-09T18:59:19.607870-03:00 info: Total consumed records for SimulatorGroup2: 11928
+2026-01-09T18:59:19.607912-03:00 info: Total consumed records for SimulatorGroup3: 11899
+2026-01-09T18:59:19.607950-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:19.608044-03:00 info: Total consumed records for SimulatorGroup5: 11603
+2026-01-09T18:59:21.608373-03:00 info: Running invariants check!
+2026-01-09T18:59:21.608576-03:00 info: Total produced records: 15240
+2026-01-09T18:59:21.608645-03:00 info: Total consumed records for SimulatorGroup1: 13593
+2026-01-09T18:59:21.608670-03:00 info: Total consumed records for SimulatorGroup2: 14022
+2026-01-09T18:59:21.608845-03:00 info: Total consumed records for SimulatorGroup3: 13595
+2026-01-09T18:59:21.608904-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:21.609044-03:00 info: Total consumed records for SimulatorGroup5: 13227
+2026-01-09T18:59:23.609349-03:00 info: Running invariants check!
+2026-01-09T18:59:23.609533-03:00 info: Total produced records: 16793
+2026-01-09T18:59:23.609565-03:00 info: Total consumed records for SimulatorGroup1: 15014
+2026-01-09T18:59:23.609588-03:00 info: Total consumed records for SimulatorGroup2: 15335
+2026-01-09T18:59:23.609643-03:00 info: Total consumed records for SimulatorGroup3: 15030
+2026-01-09T18:59:23.609675-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:23.609735-03:00 info: Total consumed records for SimulatorGroup5: 15161
+2026-01-09T18:59:25.610368-03:00 info: Running invariants check!
+2026-01-09T18:59:25.610588-03:00 info: Total produced records: 19244
+2026-01-09T18:59:25.610625-03:00 info: Total consumed records for SimulatorGroup1: 16822
+2026-01-09T18:59:25.610709-03:00 info: Total consumed records for SimulatorGroup2: 17928
+2026-01-09T18:59:25.610731-03:00 info: Total consumed records for SimulatorGroup3: 16974
+2026-01-09T18:59:25.610788-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:25.610817-03:00 info: Total consumed records for SimulatorGroup5: 17485
+2026-01-09T18:59:27.611339-03:00 info: Running invariants check!
+2026-01-09T18:59:27.611480-03:00 info: Total produced records: 20190
+2026-01-09T18:59:27.611506-03:00 info: Total consumed records for SimulatorGroup1: 18747
+2026-01-09T18:59:27.611531-03:00 info: Total consumed records for SimulatorGroup2: 19512
+2026-01-09T18:59:27.611554-03:00 info: Total consumed records for SimulatorGroup3: 18523
+2026-01-09T18:59:27.611598-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:27.611802-03:00 info: Total consumed records for SimulatorGroup5: 19076
+2026-01-09T18:59:28.588722-03:00 error: Error code 25 returned from broker for client Simulator.TLSClient on KlifeProtocol.Messages.OffsetFetch call
+2026-01-09T18:59:29.092334-03:00 error: Heartbeat error on consumer group SimulatorGroup4 for module Elixir.Simulator.Engine.Consumer.TLSClient1. Error Code: 25 Error Message: Member 599ce7f8-406e-44bb-ac32-d0b2ea88ea22 is not a member of group SimulatorGroup4.
+2026-01-09T18:59:29.098480-03:00 error: GenServer {Klife.ProcessRegistry, {Klife.Consumer.ConsumerGroup, Simulator.TLSClient, Simulator.Engine.Consumer.TLSClient1, "SimulatorGroup4"}} terminating, ** (RuntimeError) Fence error on heartbeat. Error Code: 25 Error Message: Member 599ce7f8-406e-44bb-ac32-d0b2ea88ea22 is not a member of group SimulatorGroup4., (klife 0.5.0) lib/klife/consumer/consumer_group/consumer_group.ex:424: Klife.Consumer.ConsumerGroup.do_heartbeat/1, (stdlib 7.2) gen_server.erl:2482: :gen_server.try_terminate/3, (stdlib 7.2) gen_server.erl:2733: :gen_server.terminate/9, (stdlib 7.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3, Last message: :heartbeat, State: %Klife.Consumer.ConsumerGroup{client: nil, topics: %{"1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F" => %Klife.Consumer.ConsumerGroup.TopicConfig{name: "1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_committed, offset_reset_policy: :latest, fetch_max_bytes: 500000, max_queue_size: 50, fetch_interval_ms: 2500, handler_cooldown_ms: 0, handler_max_unacked_commits: 10, handler_max_batch_size: :dynamic}, "207062696249B148CCA8395CCCD580F5A7A44A799BCB5D977174DDD8828B" => %Klife.Consumer.ConsumerGroup.TopicConfig{name: "207062696249B148CCA8395CCCD580F5A7A44A799BCB5D977174DDD8828B", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_committed, offset_reset_policy: :latest, fetch_max_bytes: 1000000, max_queue_size: 20, fetch_interval_ms: 1000, handler_cooldown_ms: 0, handler_max_unacked_commits: 0, handler_max_batch_size: :dynamic}, "682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE" => %Klife.Consumer.ConsumerGroup.TopicConfig{name: "682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_uncommitted, offset_reset_policy: :latest, fetch_max_bytes: 1000000, max_queue_size: 20, fetch_interval_ms: 30000, handler_cooldown_ms: 0, handler_max_unacked_commits: 5, handler_max_batch_size: :dynamic}, "6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA" => %Klife.Consumer.ConsumerGroup.TopicConfig{name: "6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_committed, offset_reset_policy: :latest, fetch_max_bytes: 1000000, max_queue_size: 10, fetch_interval_ms: 2500, handler_cooldown_ms: 0, handler_max_unacked_commits: 0, handler_max_batch_size: 1000}, "A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E" => %Klife.Consumer.ConsumerGroup.TopicConfig{name: "A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_committed, offset_reset_policy: :latest, fetch_max_bytes: 500000, max_queue_size: 10, fetch_interval_ms: 5000, handler_cooldown_ms: 0, handler_max_unacked_commits: 0, handler_max_batch_size: 200}}, group_name: "SimulatorGroup4", instance_id: nil, rebalance_timeout_ms: 10000, ...}
+2026-01-09T18:59:29.105219-03:00 error: GenServer #PID<0.839.0> terminating, ** (RuntimeError) Fence error on heartbeat. Error Code: 25 Error Message: Member 599ce7f8-406e-44bb-ac32-d0b2ea88ea22 is not a member of group SimulatorGroup4., (klife 0.5.0) lib/klife/consumer/consumer_group/consumer_group.ex:424: Klife.Consumer.ConsumerGroup.do_heartbeat/1, (stdlib 7.2) gen_server.erl:2482: :gen_server.try_terminate/3, (stdlib 7.2) gen_server.erl:2733: :gen_server.terminate/9, (stdlib 7.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3, Last message: {:EXIT, #PID<0.838.0>, {%RuntimeError{message: "Fence error on heartbeat. Error Code: 25 Error Message: Member 599ce7f8-406e-44bb-ac32-d0b2ea88ea22 is not a member of group SimulatorGroup4."}, [{Klife.Consumer.ConsumerGroup, :do_heartbeat, 1, [file: ~c"lib/klife/consumer/consumer_group/consumer_group.ex", line: 424, error_info: %{module: Exception}]}, {:gen_server, :try_terminate, 3, [file: ~c"gen_server.erl", line: 2482]}, {:gen_server, :terminate, 9, [file: ~c"gen_server.erl", line: 2733]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}}, State: %DynamicSupervisor{args: {:ok, %{intensity: 3, period: 5, strategy: :one_for_one, max_children: :infinity, extra_arguments: []}}, extra_arguments: [], mod: Supervisor.Default, name: {#PID<0.839.0>, Supervisor.Default}, strategy: :one_for_one, max_children: :infinity, max_restarts: 3, max_seconds: 5, children: %{#PID<0.3793.0> => {{Klife.Consumer.ConsumerGroup.Consumer, :start_link, [[consumer_group_mod: Simulator.Engine.Consumer.TLSClient1, topic_id: "86ad6a8f-f6af-4b49-986a-d36ea0262fe2", partition_idx: 15, committer_id: 1, topic_config: %Klife.Consumer.ConsumerGroup.TopicConfig{name: "A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_committed, offset_reset_policy: :latest, fetch_max_bytes: 500000, max_queue_size: 10, fetch_interval_ms: 5000, handler_cooldown_ms: 0, handler_max_unacked_commits: 0, handler_max_batch_size: 200}, client_name: Simulator.TLSClient, consumer_group_name: "SimulatorGroup4", consumer_group_member_id: "599ce7f8-406e-44bb-ac32-d0b2ea88ea22", consumer_group_epoch: 2, consumer_group_coordinator_id: 4, consumer_group_pid: #PID<0.838.0>]]}, :transient, 5000, :worker, [Klife.Consumer.ConsumerGroup.Consumer]}, #PID<0.3796.0> => {{Klife.Consumer.ConsumerGroup.Consumer, :start_link, [[consumer_group_mod: Simulator.Engine.Consumer.TLSClient1, topic_id: "3f008e48-9eb1-4e1c-9bd8-8ffb01d8f0ee", partition_idx: 17, committer_id: 1, topic_config: %Klife.Consumer.ConsumerGroup.TopicConfig{name: "207062696249B148CCA8395CCCD580F5A7A44A799BCB5D977174DDD8828B", fetch_strategy: {:exclusive, [request_timeout_ms: 30000, client_id: nil, isolation_level: :read_committed, max_bytes: 500000, min_bytes: 1, max_wait_ms: 500]}, isolation_level: :read_committed, offset_reset_policy: :latest, fetch_max_bytes: 1000000, max_queue_size: 20, fetch_interval_ms: 1000, handler_cooldown_ms: 0, handler_max_unacked_commits: 0, handler_max_batch_size: :dynamic}, client_name: Simulator.TLSClient, consumer_group_name: "SimulatorGroup4", consumer_group_member_id: "599ce7f8-406e-44bb-ac32-d0b2ea88ea22", consumer_group_epoch: 2, consumer_group_coordinator_id: 4, consumer_group_pid: #PID<0.838.0>]]}, :transient, 5000, :worker, [Klife.Consumer.ConsumerGroup.Consumer]}, #PID<0.3710.0> => {{...}, ...}, ...}, ...}
+2026-01-09T18:59:29.612716-03:00 info: Running invariants check!
+2026-01-09T18:59:29.613091-03:00 info: Total produced records: 22771
+2026-01-09T18:59:29.613152-03:00 info: Total consumed records for SimulatorGroup1: 19807
+2026-01-09T18:59:29.613355-03:00 info: Total consumed records for SimulatorGroup2: 20549
+2026-01-09T18:59:29.613395-03:00 info: Total consumed records for SimulatorGroup3: 19653
+2026-01-09T18:59:29.613519-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:29.613692-03:00 info: Total consumed records for SimulatorGroup5: 20330
+2026-01-09T18:59:31.614375-03:00 info: Running invariants check!
+2026-01-09T18:59:31.614541-03:00 info: Total produced records: 24588
+2026-01-09T18:59:31.614575-03:00 info: Total consumed records for SimulatorGroup1: 23851
+2026-01-09T18:59:31.614652-03:00 info: Total consumed records for SimulatorGroup2: 23714
+2026-01-09T18:59:31.614700-03:00 info: Total consumed records for SimulatorGroup3: 23609
+2026-01-09T18:59:31.614745-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:31.614788-03:00 info: Total consumed records for SimulatorGroup5: 23663
+2026-01-09T18:59:33.615343-03:00 info: Running invariants check!
+2026-01-09T18:59:33.615489-03:00 info: Total produced records: 27532
+2026-01-09T18:59:33.615521-03:00 info: Total consumed records for SimulatorGroup1: 25041
+2026-01-09T18:59:33.615582-03:00 info: Total consumed records for SimulatorGroup2: 24997
+2026-01-09T18:59:33.615614-03:00 info: Total consumed records for SimulatorGroup3: 24953
+2026-01-09T18:59:33.615646-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:33.615769-03:00 info: Total consumed records for SimulatorGroup5: 24891
+2026-01-09T18:59:35.616364-03:00 info: Running invariants check!
+2026-01-09T18:59:35.616559-03:00 info: Total produced records: 30804
+2026-01-09T18:59:35.616624-03:00 info: Total consumed records for SimulatorGroup1: 27522
+2026-01-09T18:59:35.616660-03:00 info: Total consumed records for SimulatorGroup2: 28171
+2026-01-09T18:59:35.616718-03:00 info: Total consumed records for SimulatorGroup3: 27072
+2026-01-09T18:59:35.616756-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:35.616848-03:00 info: Total consumed records for SimulatorGroup5: 27468
+2026-01-09T18:59:35.646184-03:00 warning: Too much lag (1322) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:37.617343-03:00 info: Running invariants check!
+2026-01-09T18:59:37.617507-03:00 info: Total produced records: 31488
+2026-01-09T18:59:37.617534-03:00 info: Total consumed records for SimulatorGroup1: 30386
+2026-01-09T18:59:37.617580-03:00 info: Total consumed records for SimulatorGroup2: 31165
+2026-01-09T18:59:37.617597-03:00 info: Total consumed records for SimulatorGroup3: 30462
+2026-01-09T18:59:37.617617-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:37.617671-03:00 info: Total consumed records for SimulatorGroup5: 30479
+2026-01-09T18:59:37.625708-03:00 warning: Too much lag (1300) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:37.629724-03:00 warning: Too much lag (1322) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:37.630606-03:00 warning: Too much lag (1272) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:39.618296-03:00 info: Running invariants check!
+2026-01-09T18:59:39.618487-03:00 info: Total produced records: 34805
+2026-01-09T18:59:39.618524-03:00 info: Total consumed records for SimulatorGroup1: 31784
+2026-01-09T18:59:39.618556-03:00 info: Total consumed records for SimulatorGroup2: 32446
+2026-01-09T18:59:39.618618-03:00 info: Total consumed records for SimulatorGroup3: 32213
+2026-01-09T18:59:39.618789-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:39.618851-03:00 info: Total consumed records for SimulatorGroup5: 32824
+2026-01-09T18:59:39.630076-03:00 warning: Too much lag (1300) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:39.638048-03:00 warning: Too much lag (1322) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:39.639676-03:00 warning: Too much lag (1282) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:41.619352-03:00 info: Running invariants check!
+2026-01-09T18:59:41.619511-03:00 info: Total produced records: 37652
+2026-01-09T18:59:41.619560-03:00 info: Total consumed records for SimulatorGroup1: 35107
+2026-01-09T18:59:41.619581-03:00 info: Total consumed records for SimulatorGroup2: 36188
+2026-01-09T18:59:41.619604-03:00 info: Total consumed records for SimulatorGroup3: 35498
+2026-01-09T18:59:41.619624-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:41.619643-03:00 info: Total consumed records for SimulatorGroup5: 35257
+2026-01-09T18:59:41.637417-03:00 warning: Too much lag (1390) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:41.642397-03:00 warning: Too much lag (1262) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:41.648852-03:00 warning: Too much lag (1460) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:41.651481-03:00 warning: Too much lag (1396) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:41.661599-03:00 warning: Too much lag (1269) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:41.663949-03:00 warning: Too much lag (1271) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:43.620341-03:00 info: Running invariants check!
+2026-01-09T18:59:43.620499-03:00 info: Total produced records: 38351
+2026-01-09T18:59:43.620532-03:00 info: Total consumed records for SimulatorGroup1: 37558
+2026-01-09T18:59:43.620556-03:00 info: Total consumed records for SimulatorGroup2: 38200
+2026-01-09T18:59:43.620591-03:00 info: Total consumed records for SimulatorGroup3: 37180
+2026-01-09T18:59:43.620630-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:43.620658-03:00 info: Total consumed records for SimulatorGroup5: 37339
+2026-01-09T18:59:43.630783-03:00 warning: Too much lag (1411) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:43.634621-03:00 warning: Too much lag (1262) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:43.639170-03:00 warning: Too much lag (1460) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:43.640711-03:00 warning: Too much lag (1406) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:43.646648-03:00 warning: Too much lag (1281) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:43.649046-03:00 warning: Too much lag (1289) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:43.650888-03:00 warning: Too much lag (1271) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:45.621350-03:00 info: Running invariants check!
+2026-01-09T18:59:45.621503-03:00 info: Total produced records: 41715
+2026-01-09T18:59:45.621549-03:00 info: Total consumed records for SimulatorGroup1: 39692
+2026-01-09T18:59:45.621571-03:00 info: Total consumed records for SimulatorGroup2: 39201
+2026-01-09T18:59:45.621592-03:00 info: Total consumed records for SimulatorGroup3: 38441
+2026-01-09T18:59:45.621648-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:45.621672-03:00 info: Total consumed records for SimulatorGroup5: 40161
+2026-01-09T18:59:45.640071-03:00 warning: Too much lag (1411) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:45.642091-03:00 warning: Too much lag (1266) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:45.642980-03:00 warning: Too much lag (1262) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:45.647178-03:00 warning: Too much lag (1460) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:45.648366-03:00 warning: Too much lag (1413) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:45.653973-03:00 warning: Too much lag (1302) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:45.656716-03:00 warning: Too much lag (1310) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:45.659244-03:00 warning: Too much lag (1281) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:47.622386-03:00 info: Running invariants check!
+2026-01-09T18:59:47.622579-03:00 info: Total produced records: 44863
+2026-01-09T18:59:47.622619-03:00 info: Total consumed records for SimulatorGroup1: 42515
+2026-01-09T18:59:47.622770-03:00 info: Total consumed records for SimulatorGroup2: 43735
+2026-01-09T18:59:47.622950-03:00 info: Total consumed records for SimulatorGroup3: 42523
+2026-01-09T18:59:47.623129-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:47.623191-03:00 info: Total consumed records for SimulatorGroup5: 42540
+2026-01-09T18:59:47.624696-03:00 warning: Too much lag (1345) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 0
+2026-01-09T18:59:47.628647-03:00 warning: Too much lag (1326) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 9
+2026-01-09T18:59:47.637492-03:00 warning: Too much lag (1550) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:47.640588-03:00 warning: Too much lag (1356) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:47.642176-03:00 warning: Too much lag (1419) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:47.648069-03:00 warning: Too much lag (1612) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:47.650884-03:00 warning: Too much lag (1510) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:47.654804-03:00 warning: Too much lag (1269) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 16
+2026-01-09T18:59:47.660341-03:00 warning: Too much lag (1404) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:47.662930-03:00 warning: Too much lag (1427) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:47.665452-03:00 warning: Too much lag (1418) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:49.624379-03:00 info: Running invariants check!
+2026-01-09T18:59:49.624613-03:00 info: Total produced records: 45653
+2026-01-09T18:59:49.624665-03:00 info: Total consumed records for SimulatorGroup1: 44074
+2026-01-09T18:59:49.624708-03:00 info: Total consumed records for SimulatorGroup2: 44879
+2026-01-09T18:59:49.624889-03:00 info: Total consumed records for SimulatorGroup3: 44072
+2026-01-09T18:59:49.625058-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:49.625107-03:00 info: Total consumed records for SimulatorGroup5: 44955
+2026-01-09T18:59:49.626516-03:00 warning: Too much lag (1355) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 0
+2026-01-09T18:59:49.631839-03:00 warning: Too much lag (1337) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 9
+2026-01-09T18:59:49.636296-03:00 warning: Too much lag (1252) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 18
+2026-01-09T18:59:49.642793-03:00 warning: Too much lag (1557) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:49.645436-03:00 warning: Too much lag (1374) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:49.646810-03:00 warning: Too much lag (1419) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:49.652015-03:00 warning: Too much lag (1620) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:49.653650-03:00 warning: Too much lag (1524) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:49.656298-03:00 warning: Too much lag (1294) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 16
+2026-01-09T18:59:49.659717-03:00 warning: Too much lag (1407) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:49.662158-03:00 warning: Too much lag (1428) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:49.664256-03:00 warning: Too much lag (1422) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:51.625380-03:00 info: Running invariants check!
+2026-01-09T18:59:51.625628-03:00 info: Total produced records: 49503
+2026-01-09T18:59:51.625802-03:00 info: Total consumed records for SimulatorGroup1: 48032
+2026-01-09T18:59:51.625859-03:00 info: Total consumed records for SimulatorGroup2: 48223
+2026-01-09T18:59:51.625908-03:00 info: Total consumed records for SimulatorGroup3: 48493
+2026-01-09T18:59:51.625983-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:51.626100-03:00 info: Total consumed records for SimulatorGroup5: 47623
+2026-01-09T18:59:51.627282-03:00 warning: Too much lag (1409) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 0
+2026-01-09T18:59:51.631930-03:00 warning: Too much lag (1375) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 9
+2026-01-09T18:59:51.636795-03:00 warning: Too much lag (1359) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 18
+2026-01-09T18:59:51.646738-03:00 warning: Too much lag (1611) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:51.650837-03:00 warning: Too much lag (1382) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:51.652882-03:00 warning: Too much lag (1504) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:51.657377-03:00 warning: Too much lag (1308) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 3
+2026-01-09T18:59:51.659512-03:00 warning: Too much lag (1677) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:51.662156-03:00 warning: Too much lag (1582) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:51.664818-03:00 warning: Too much lag (1353) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 16
+2026-01-09T18:59:51.668070-03:00 warning: Too much lag (1424) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:51.669263-03:00 warning: Too much lag (1279) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 10
+2026-01-09T18:59:51.671519-03:00 warning: Too much lag (1428) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:51.674966-03:00 warning: Too much lag (1511) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:53.626380-03:00 info: Running invariants check!
+2026-01-09T18:59:53.626550-03:00 info: Total produced records: 51862
+2026-01-09T18:59:53.626574-03:00 info: Total consumed records for SimulatorGroup1: 49873
+2026-01-09T18:59:53.626593-03:00 info: Total consumed records for SimulatorGroup2: 50679
+2026-01-09T18:59:53.626619-03:00 info: Total consumed records for SimulatorGroup3: 50374
+2026-01-09T18:59:53.626640-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:53.626710-03:00 info: Total consumed records for SimulatorGroup5: 50561
+2026-01-09T18:59:53.628184-03:00 warning: Too much lag (1476) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 0
+2026-01-09T18:59:53.632413-03:00 warning: Too much lag (1466) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 9
+2026-01-09T18:59:53.637009-03:00 warning: Too much lag (1383) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 18
+2026-01-09T18:59:53.639709-03:00 warning: Too much lag (1312) for SimulatorGroup4 207062696249B148CCA8395CCCD580F5A7A44A799BCB5D977174DDD8828B 14
+2026-01-09T18:59:53.642688-03:00 warning: Too much lag (1682) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:53.644632-03:00 warning: Too much lag (1493) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:53.646076-03:00 warning: Too much lag (1528) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:53.649117-03:00 warning: Too much lag (1324) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 3
+2026-01-09T18:59:53.651495-03:00 warning: Too much lag (1734) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:53.653010-03:00 warning: Too much lag (1611) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:53.655485-03:00 warning: Too much lag (1370) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 16
+2026-01-09T18:59:53.659191-03:00 warning: Too much lag (1576) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:53.659962-03:00 warning: Too much lag (1284) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 10
+2026-01-09T18:59:53.661467-03:00 warning: Too much lag (1575) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:53.664163-03:00 warning: Too much lag (1556) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:55.627362-03:00 info: Running invariants check!
+2026-01-09T18:59:55.627546-03:00 info: Total produced records: 54758
+2026-01-09T18:59:55.627573-03:00 info: Total consumed records for SimulatorGroup1: 51785
+2026-01-09T18:59:55.627590-03:00 info: Total consumed records for SimulatorGroup2: 51899
+2026-01-09T18:59:55.627680-03:00 info: Total consumed records for SimulatorGroup3: 51699
+2026-01-09T18:59:55.627698-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:55.627760-03:00 info: Total consumed records for SimulatorGroup5: 51769
+2026-01-09T18:59:55.629073-03:00 warning: Too much lag (1490) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 0
+2026-01-09T18:59:55.633603-03:00 warning: Too much lag (1475) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 9
+2026-01-09T18:59:55.640467-03:00 warning: Too much lag (1493) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 18
+2026-01-09T18:59:55.644280-03:00 warning: Too much lag (1322) for SimulatorGroup4 207062696249B148CCA8395CCCD580F5A7A44A799BCB5D977174DDD8828B 14
+2026-01-09T18:59:55.649139-03:00 warning: Too much lag (1697) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:55.652221-03:00 warning: Too much lag (1502) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:55.653228-03:00 warning: Too much lag (1558) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:55.657122-03:00 warning: Too much lag (1367) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 3
+2026-01-09T18:59:55.659292-03:00 warning: Too much lag (1758) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:55.660870-03:00 warning: Too much lag (1658) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:55.662486-03:00 warning: Too much lag (1281) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 14
+2026-01-09T18:59:55.663837-03:00 warning: Too much lag (1424) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 16
+2026-01-09T18:59:55.667769-03:00 warning: Too much lag (1273) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 5
+2026-01-09T18:59:55.668963-03:00 warning: Too much lag (1585) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:55.669808-03:00 warning: Too much lag (1321) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 10
+2026-01-09T18:59:55.671305-03:00 warning: Too much lag (1575) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:55.674019-03:00 warning: Too much lag (1561) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19
+2026-01-09T18:59:57.628356-03:00 info: Running invariants check!
+2026-01-09T18:59:57.628526-03:00 info: Total produced records: 57778
+2026-01-09T18:59:57.628560-03:00 info: Total consumed records for SimulatorGroup1: 56049
+2026-01-09T18:59:57.628599-03:00 info: Total consumed records for SimulatorGroup2: 55975
+2026-01-09T18:59:57.628628-03:00 info: Total consumed records for SimulatorGroup3: 55977
+2026-01-09T18:59:57.628653-03:00 info: Total consumed records for SimulatorGroup4: 0
+2026-01-09T18:59:57.628761-03:00 info: Total consumed records for SimulatorGroup5: 56028
+2026-01-09T18:59:57.629985-03:00 warning: Too much lag (1597) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 0
+2026-01-09T18:59:57.632000-03:00 warning: Too much lag (1311) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 3
+2026-01-09T18:59:57.634011-03:00 warning: Too much lag (1591) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 9
+2026-01-09T18:59:57.638993-03:00 warning: Too much lag (1508) for SimulatorGroup4 6DC3929629EBFF122B68BD089CC25AB166EB5E8F4DD0D9CAFD8DB4C1EFAA 18
+2026-01-09T18:59:57.642543-03:00 warning: Too much lag (1466) for SimulatorGroup4 207062696249B148CCA8395CCCD580F5A7A44A799BCB5D977174DDD8828B 14
+2026-01-09T18:59:57.645809-03:00 warning: Too much lag (1776) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 4
+2026-01-09T18:59:57.648246-03:00 warning: Too much lag (1601) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 8
+2026-01-09T18:59:57.649213-03:00 warning: Too much lag (1634) for SimulatorGroup4 1163127B48C51F8A38D3CAC696697EE1CB66C5B66EB4D0A21FEC8B7C3D4F 14
+2026-01-09T18:59:57.653104-03:00 warning: Too much lag (1452) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 3
+2026-01-09T18:59:57.654899-03:00 warning: Too much lag (1807) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 8
+2026-01-09T18:59:57.656639-03:00 warning: Too much lag (1709) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 11
+2026-01-09T18:59:57.657711-03:00 warning: Too much lag (1258) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 13
+2026-01-09T18:59:57.658895-03:00 warning: Too much lag (1313) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 14
+2026-01-09T18:59:57.660215-03:00 warning: Too much lag (1498) for SimulatorGroup4 682335AB420E47AFAFDF6B5E14283449AF5B758D8C9E862267735E5F15CE 16
+2026-01-09T18:59:57.663116-03:00 warning: Too much lag (1293) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 5
+2026-01-09T18:59:57.664408-03:00 warning: Too much lag (1709) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 8
+2026-01-09T18:59:57.665572-03:00 warning: Too much lag (1428) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 10
+2026-01-09T18:59:57.667877-03:00 warning: Too much lag (1706) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 14
+2026-01-09T18:59:57.670562-03:00 warning: Too much lag (1636) for SimulatorGroup4 A99CAD7503CD9BBE9065FAD5FD1DA1A47A9A675F3CD802DC10514D186E4E 19

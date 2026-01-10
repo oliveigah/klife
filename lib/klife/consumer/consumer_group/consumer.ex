@@ -113,6 +113,9 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   defp get_latest_committed_offset(%__MODULE__{} = state) do
+    # TODO: This need to be done in batch and in the consumer_group layer!
+    # It is causing startup issues with a large number of topic partitions
+    # eg: simulator/simulations_data/NO_CONSUME simulation file
     content = %{
       groups: [
         %{
