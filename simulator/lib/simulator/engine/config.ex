@@ -1,6 +1,7 @@
 defmodule Simulator.EngineConfig do
   alias Klife.Consumer.ConsumerGroup
 
+  # TODO: Add random seeds in the config file as well!
   defstruct [
     :clients,
     :topics,
@@ -82,10 +83,12 @@ defmodule Simulator.EngineConfig do
 
   defp random_value(:topics, _config) do
     topic_count = weighted_random_opt([3, 5, 10])
-    partitions = weighted_random_opt([1, 5, 10, 15, 20])
 
     Enum.map(1..topic_count, fn _ ->
-      %{topic: Base.encode16(:rand.bytes(30)), partitions: partitions}
+      %{
+        topic: Base.encode16(:rand.bytes(30)),
+        partitions: weighted_random_opt([1, 5, 10, 15, 20])
+      }
     end)
   end
 
