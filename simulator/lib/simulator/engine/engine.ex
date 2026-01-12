@@ -145,7 +145,7 @@ defmodule Simulator.Engine do
   defp do_check_invariants(%__MODULE__{} = state) do
     config = state.config
     now = System.monotonic_time(:millisecond)
-    lag_threshold = EngineConfig.lag_warning_threshold(config)
+    lag_threshold = :timer.seconds(10)
 
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
@@ -158,34 +158,52 @@ defmodule Simulator.Engine do
 
       all_data = :ets.tab2list(producer_table_name(t, p))
 
-      all_data
-      |> Enum.frequencies_by(fn {{_key, cg}, _hash, _time, _offset, _conf_ts} -> cg end)
-      |> Enum.each(fn {cg, rec_count} ->
-        if rec_count >= lag_threshold do
-          Logger.warning("Too much lag (#{rec_count}) for #{cg} #{t} #{p}")
-        end
-      end)
-
       grouped_data =
         Enum.group_by(all_data, fn {{_key, cg}, _hash, _time, _offset, _conf_ts} -> cg end)
 
       for {cg, list_of_items} <- grouped_data do
         Enum.filter(list_of_items, fn {{_key, cg}, _hash, _insert_time, offset, conf_ts} ->
-          is_number(conf_ts) and is_number(offset) and conf_ts < cg_latest_ts_map[cg]
+          is_number(conf_ts) and is_number(offset) and
+            (conf_ts < cg_latest_ts_map[cg] or now - conf_ts >= lag_threshold)
         end)
         |> case do
           [] ->
             :ok
 
-          skipped ->
-            {{_oldest_key, _cg}, _hash, _insert_ts, offset, conf_ts} =
-              Enum.max_by(skipped, fn {{_key, _cg}, _hash, _insert_time, _offset, conf_ts} ->
-                now - conf_ts
+          skipped_or_delayed ->
+            skipped =
+              Enum.filter(skipped_or_delayed, fn {{_key, _cg}, _hash, _insert_time, _offset,
+                                                  conf_ts} ->
+                conf_ts < cg_latest_ts_map[cg]
               end)
 
-            Logger.warning(
-              "Skipped #{length(skipped)} records on #{cg} #{t} #{p}! oldest offset #{offset} oldest time diff #{now - conf_ts}"
-            )
+            if skipped != [] do
+              {{_oldest_key, _cg}, _hash, _insert_ts, offset, conf_ts} =
+                Enum.max_by(skipped, fn {{_key, _cg}, _hash, _insert_time, _offset, conf_ts} ->
+                  now - conf_ts
+                end)
+
+              Logger.warning(
+                "Skipped #{length(skipped)} records on #{cg} #{t} #{p}! oldest offset #{offset} oldest time diff #{now - conf_ts} ms"
+              )
+            end
+
+            delayed =
+              Enum.filter(skipped_or_delayed, fn {{_key, _cg}, _hash, _insert_time, _offset,
+                                                  conf_ts} ->
+                now - conf_ts >= lag_threshold
+              end)
+
+            if delayed != [] do
+              {{_oldest_key, _cg}, _hash, _insert_ts, offset, conf_ts} =
+                Enum.max_by(delayed, fn {{_key, _cg}, _hash, _insert_time, _offset, conf_ts} ->
+                  now - conf_ts
+                end)
+
+              Logger.warning(
+                "Too much lag for #{cg} #{t} #{p}! Oldest offset #{offset} oldest time diff #{now - conf_ts} ms!"
+              )
+            end
         end
       end
     end

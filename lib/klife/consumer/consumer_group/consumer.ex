@@ -13,8 +13,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   alias Klife.Consumer.Committer
 
-  alias Klife.Connection.Broker
-
   alias KlifeProtocol.Messages, as: M
 
   alias Klife.Consumer.Fetcher
@@ -79,6 +77,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         cg_member_epoch: args_map.consumer_group_epoch,
         cg_coordinator_id: args_map.consumer_group_coordinator_id,
         latest_fetched_offset: -1,
+        latest_processed_offset: args_map.init_offset,
+        latest_committed_offset: args_map.init_offset,
         empty_fetch_results_count: 0,
         fetch_ref: nil,
         records_batch_queue: :queue.new(),
@@ -92,8 +92,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             :leader_epoch
           )
       }
-
-    state = get_latest_committed_offset(state)
 
     :ok =
       ConsumerGroup.send_consumer_up(
@@ -110,98 +108,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     end
 
     {:ok, state}
-  end
-
-  defp get_latest_committed_offset(%__MODULE__{} = state) do
-    # TODO: This need to be done in batch and in the consumer_group layer!
-    # It is causing startup issues with a large number of topic partitions
-    # eg: simulator/simulations_data/NO_CONSUME simulation file
-    content = %{
-      groups: [
-        %{
-          group_id: state.cg_name,
-          member_id: state.cg_member_id,
-          member_epoch: state.cg_member_epoch,
-          topics: [
-            %{name: state.topic_name, partition_indexes: [state.partition_idx]}
-          ]
-        }
-      ],
-      require_stable: true
-    }
-
-    %TopicConfig{} = tc = state.topic_config
-
-    case Broker.send_message(M.OffsetFetch, state.client_name, state.cg_coordinator_id, content) do
-      {:ok,
-       %{
-         content: %{
-           groups: [%{error_code: 0, topics: [%{partitions: [%{committed_offset: -1}]}]}]
-         }
-       }} ->
-        latest_offset =
-          get_start_offset(
-            state.client_name,
-            state.topic_name,
-            state.partition_idx,
-            tc.offset_reset_policy
-          )
-
-        %__MODULE__{
-          state
-          | latest_committed_offset: latest_offset - 1,
-            latest_processed_offset: latest_offset - 1
-        }
-
-      {:ok,
-       %{
-         content: %{
-           groups: [%{error_code: 0, topics: [%{partitions: [%{committed_offset: co}]}]}]
-         }
-       }} ->
-        %__MODULE__{state | latest_committed_offset: co, latest_processed_offset: co}
-
-      {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
-        Logger.error(
-          "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.OffsetFetch)} call"
-        )
-
-        raise "Unexpected"
-    end
-  end
-
-  defp get_start_offset(client, topic, partition, latest_or_earliest) do
-    broker = Klife.MetadataCache.get_metadata_attribute(client, topic, partition, :leader_id)
-
-    content = %{
-      replica_id: -1,
-      isolation_level: 1,
-      topics: [
-        %{
-          name: topic,
-          partitions: [
-            %{
-              partition_index: partition,
-              timestamp:
-                case latest_or_earliest do
-                  :earliest -> -2
-                  :latest -> -1
-                end
-            }
-          ]
-        }
-      ]
-    }
-
-    case Broker.send_message(M.ListOffsets, client, broker, content) do
-      {:ok, %{content: %{topics: [%{partitions: [%{error_code: 0, offset: offset}]}]}}} ->
-        offset
-
-      {:ok, %{content: %{topics: [%{partitions: [%{error_code: ec}]}]}}} ->
-        Logger.error(
-          "Error code #{ec} returned from broker for client #{inspect(client)} on #{inspect(M.ListOffsets)} call"
-        )
-    end
   end
 
   def revoke_assignment(client_name, cg_mod, topic_id, partition, cg_name) do
@@ -267,7 +173,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
           {:ok, fetch_opts[:request_timeout_ms]}
       end
 
-    Process.send_after(self(), {:check_poll_timeout, ref}, timeout + 1000)
+    Process.send_after(self(), {:check_poll_timeout, ref}, timeout + 5000)
 
     {:noreply, %__MODULE__{state | fetch_ref: ref}}
   end
@@ -411,6 +317,21 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       true ->
         {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
 
+        # # To validate lag on simulation test
+        # Process.sleep(11_000)
+
+        # # To validate skip on simulation test
+        # rec_batch =
+        #   if length(rec_batch) >= 2 do
+        #     List.delete_at(rec_batch, 0)
+        #   else
+        #     rec_batch
+        #   end
+        #
+
+        # # To validate out of order on simulation test
+        # rec_batch = Enum.reverse(rec_batch)
+
         {parsed_user_result, usr_opts} =
           case cg_mod.handle_record_batch(topic_name, partition_idx, cg_name, rec_batch) do
             [_ | _] = result -> {result, []}
@@ -428,6 +349,14 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         to_commit_recs = groupped_recs[:commit] || []
         to_retry_recs = groupped_recs[:retry] || []
+
+        # # To validate duplicate records on simulation test
+        # to_retry_recs =
+        #   if to_commit_recs != [] do
+        #     [List.first(to_commit_recs)] ++ to_retry_recs
+        #   else
+        #     to_retry_recs
+        #   end
 
         new_queue =
           to_retry_recs
@@ -533,17 +462,26 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       "Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reseting offset..."
     )
 
-    start_offset =
-      get_start_offset(
+    reset_offset_map =
+      ConsumerGroup.get_reset_offset(
+        [{state.topic_name, state.partition_idx}],
         state.client_name,
-        state.topic_name,
-        state.partition_idx,
-        # TODO: Should this be always earliest??
-        state.topic_config.offset_reset_policy
+        %{
+          state.topic_name => state.topic_config
+        }
       )
 
+    reset_offset = Map.fetch!(reset_offset_map, {state.topic_name, state.partition_idx})
+
     send(self(), :poll_records)
-    %__MODULE__{state | latest_fetched_offset: start_offset - 1, fetch_ref: nil}
+    %__MODULE__{state | latest_fetched_offset: reset_offset, fetch_ref: nil}
+  end
+
+  def handle_fetch_error!(%__MODULE__{} = state, :timeout, {t, p, o}) do
+    Logger.warning("Timeout on fetch from offset #{o} for topic #{t} partition #{p}. Retrying...")
+
+    send(self(), :poll_records)
+    %__MODULE__{state | fetch_ref: nil}
   end
 
   # TODO: Should handle more error codes?

@@ -92,6 +92,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
   defp start_dispatcher(%__MODULE__{} = state) do
     args = [
       fetcher_config: state.fetcher_config,
+      iso_lvl: state.isolation_level,
       broker_id: state.broker_id,
       batcher_id: state.batcher_id,
       batcher_pid: self(),
@@ -99,8 +100,11 @@ defmodule Klife.Consumer.Fetcher.Batcher do
     ]
 
     case Dispatcher.start_link(args) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        {:ok, pid}
     end
   end
 

@@ -116,7 +116,7 @@ defmodule Klife.Producer.Dispatcher do
   def handle_info({:check_timeout, req_ref, timeout_ref}, %__MODULE__{} = state) do
     case Map.get(state.timeouts, req_ref) do
       ^timeout_ref ->
-        %{producer_config: %{retry_ms: retry_ms}} = Map.fetch!(state.requests, req_ref)
+        %{producer_config: %{retry_backoff_ms: retry_ms}} = Map.fetch!(state.requests, req_ref)
         Process.send_after(self(), {:dispatch, req_ref}, retry_ms)
         {:noreply, state}
 
@@ -302,7 +302,17 @@ defmodule Klife.Producer.Dispatcher do
     with {:before_deadline?, true} <- {:before_deadline?, before_deadline?},
          :ok <- send_to_broker_async(client_name, state.broker_id, content, headers, req_ref) do
       timeout_ref = make_ref()
-      Process.send_after(self(), {:check_timeout, req_ref, timeout_ref}, req_timeout)
+
+      Process.send_after(
+        self(),
+        {:check_timeout, req_ref, timeout_ref},
+        # Need to add some seconds to give some room for the request come
+        # back from the server. Otherwise, in extreme cases the dispatcher
+        # will retry while the broker already answred but message is
+        # in transit
+        req_timeout + :timer.seconds(5)
+      )
+
       {:ok, timeout_ref}
     else
       {:before_deadline?, false} ->

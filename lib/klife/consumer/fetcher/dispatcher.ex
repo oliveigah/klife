@@ -25,9 +25,10 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
     broker_id = Keyword.fetch!(args, :broker_id)
     batcher_id = Keyword.fetch!(args, :batcher_id)
+    iso_lvl = Keyword.fetch!(args, :iso_lvl)
 
     GenServer.start_link(__MODULE__, args,
-      name: via_tuple({__MODULE__, client_name, broker_id, p_name, batcher_id})
+      name: via_tuple({__MODULE__, client_name, broker_id, p_name, batcher_id, iso_lvl})
     )
   end
 
@@ -178,7 +179,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         Process.send_after(
           self(),
           {:check_timeout, batch.dispatch_ref},
-          state.fetcher_config.request_timeout_ms
+          state.fetcher_config.request_timeout_ms + 5000
         )
 
         :ok

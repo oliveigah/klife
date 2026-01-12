@@ -135,8 +135,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1"],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
-      # fetch_strategy: {:shared, MyClient.get_default_fetcher()}
+      group_name: Base.encode64(:rand.bytes(10)),
+      fetch_strategy: {:exclusive, []}
     ]
 
     start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)
@@ -217,8 +217,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1"],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10)),
-      fetch_strategy: {:shared, MyClient.get_default_fetcher()}
+      group_name: Base.encode64(:rand.bytes(10))
     ]
 
     start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)

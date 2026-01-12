@@ -51,8 +51,9 @@ defmodule Klife.Consumer.ConsumerGroup do
       - `{:exclusive, options}` - Will call the broker directly
       - `{:shared, fetcher_name}` - Will use a shared fetcher that will batch requests for the same broker
 
-      Defaults to `:exclusive` with default options
-      TODO: add tradeoffs and default option values
+      Defaults to `{:shared, default_fetcher}`
+
+      TODO: add tradeoffs
       """
     ],
     committers_count: [
@@ -190,16 +191,19 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
-  def validate_fetch_strategy(nil) do
-    validate_fetch_strategy({:exclusive, []})
-  end
-
   def validate_fetch_strategy(value) do
     {:error,
      "expected :fetch_strategy to be either {:shared, atom} or {:exclusive, keyword_list}, got: #{inspect(value)}"}
   end
 
   def start_link(cg_mod, args) do
+    args =
+      Keyword.put_new(
+        args,
+        :fetch_strategy,
+        {:shared, cg_mod.klife_client().get_default_fetcher()}
+      )
+
     base_validated_args =
       NimbleOptions.validate!(args, @consumer_group_opts)
 
@@ -481,6 +485,117 @@ defmodule Klife.Consumer.ConsumerGroup do
     state
   end
 
+  defp get_init_offsets(%__MODULE__{} = state, tid_p_list) do
+    # TODO: Think how to handle errors on specific topics/partitions
+    tname_map =
+      tid_p_list
+      |> Enum.map(fn {tid, _p} -> tid end)
+      |> Enum.uniq()
+      |> Enum.map(fn tid ->
+        tname = MetadataCache.get_topic_name_by_id(state.client_name, tid)
+        {tid, tname}
+      end)
+      |> Map.new()
+
+    parsed_list =
+      tid_p_list
+      |> Enum.map(fn {tid, p} -> {tname_map[tid], p} end)
+      |> Enum.group_by(fn {tname, _p} -> tname end, fn {_tname, p} -> p end)
+
+    content = %{
+      groups: [
+        %{
+          group_id: state.group_name,
+          member_id: state.member_id,
+          member_epoch: state.epoch,
+          topics:
+            Enum.map(parsed_list, fn {tname, p_list} ->
+              %{
+                name: tname,
+                partition_indexes: p_list
+              }
+            end)
+        }
+      ],
+      require_stable: true
+    }
+
+    offset_fetch_result =
+      case Broker.send_message(M.OffsetFetch, state.client_name, state.coordinator_id, content) do
+        {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
+          for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions, into: %{} do
+            {{topic_resp.name, pdata.partition_index}, pdata.committed_offset}
+          end
+
+        {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
+          raise "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.OffsetFetch)} call"
+      end
+
+    missing_resp_tp =
+      offset_fetch_result
+      |> Enum.filter(fn {{_tname, _p}, offset} -> offset == -1 end)
+      |> Enum.map(fn {{t, p}, -1} -> {t, p} end)
+
+    reset_offset_map = get_reset_offset(missing_resp_tp, state.client_name, state.topics)
+
+    tid_map = tname_map |> Enum.map(fn {tname, tid} -> {tid, tname} end) |> Map.new()
+
+    Map.merge(offset_fetch_result, reset_offset_map)
+    |> Enum.map(fn {{tname, p}, offset} -> {{tid_map[tname], p}, offset} end)
+    |> Map.new()
+  end
+
+  def get_reset_offset(tname_p_list, client, tconfig_map) do
+    # TODO: Think how to handle errors on specific topics/partitions
+    grouped_by_broker =
+      Enum.group_by(
+        tname_p_list,
+        fn {tname, p} -> MetadataCache.get_metadata_attribute(client, tname, p, :leader_id) end
+      )
+
+    contents =
+      Enum.map(grouped_by_broker, fn {broker, tp_list} ->
+        grouped_tp_list =
+          Enum.group_by(tp_list, fn {tname, _p} -> tname end, fn {_tname, p} -> p end)
+
+        content = %{
+          replica_id: -1,
+          isolation_level: 1,
+          topics:
+            Enum.map(grouped_tp_list, fn {tname, plist} ->
+              %{
+                name: tname,
+                partitions:
+                  Enum.map(plist, fn p ->
+                    %{
+                      partition_index: p,
+                      timestamp:
+                        case tconfig_map[tname].offset_reset_policy do
+                          :earliest -> -2
+                          :latest -> -1
+                        end
+                    }
+                  end)
+              }
+            end)
+        }
+
+        {broker, content}
+      end)
+
+    Task.async_stream(contents, fn {broker, content} ->
+      {:ok, %{content: %{topics: tdata}}} =
+        Broker.send_message(M.ListOffsets, client, broker, content)
+
+      for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions do
+        # Need the -1 so we do not skip the first record
+        {{topic_resp.name, pdata.partition_index}, pdata.offset - 1}
+      end
+    end)
+    |> Enum.flat_map(fn {:ok, resp} -> resp end)
+    |> Map.new()
+  end
+
   defp handle_assignment(%__MODULE__{consumers_monitor_map: cm_map} = state) do
     assignment_keys =
       for %{partitions: p_data, topic_id: t_id} <- state.assigned_topic_partitions,
@@ -503,9 +618,11 @@ defmodule Klife.Consumer.ConsumerGroup do
         stop_consumer(acc_state, topic_id, partition)
       end)
 
+    init_offsets_map = get_init_offsets(state, to_start)
+
     new_state =
       Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
-        start_consumer(acc_state, topic_id, partition)
+        start_consumer(acc_state, topic_id, partition, init_offsets_map[{topic_id, partition}])
       end)
 
     if MapSet.size(to_stop) != 0 or MapSet.size(to_start) != 0 do
@@ -584,7 +701,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     %__MODULE__{state | committers_distribution: new_dist}
   end
 
-  defp start_consumer(%__MODULE__{} = state, topic_id, partition) do
+  defp start_consumer(%__MODULE__{} = state, topic_id, partition, init_offset) do
     committer_id = get_next_committer_id(state.committers_distribution)
     topic_name = MetadataCache.get_topic_name_by_id(state.client_name, topic_id)
 
@@ -599,7 +716,8 @@ defmodule Klife.Consumer.ConsumerGroup do
       consumer_group_member_id: state.member_id,
       consumer_group_epoch: state.epoch,
       consumer_group_coordinator_id: state.coordinator_id,
-      consumer_group_pid: self()
+      consumer_group_pid: self(),
+      init_offset: init_offset
     ]
 
     spec = %{

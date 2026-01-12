@@ -716,6 +716,5 @@
   producer_loop_interval_ms: 1000,
   record_value_bytes: 10,
   record_key_bytes: 64,
-  invariants_check_interval_ms: 5000,
-  lag_warning_multiplier: 5
+  invariants_check_interval_ms: 5000
 }

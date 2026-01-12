@@ -45,7 +45,8 @@ defmodule Simulator.Engine.Consumer do
   end
 
   def handle_record_batch(_t, _p, gn, recs, cg_mod) do
-    should_fail_some? = :rand.uniform() >= 2
+    # TODO: Add failure rate to the engine config
+    should_fail_some? = :rand.uniform() >= 0.9
 
     to_fail =
       if should_fail_some?,

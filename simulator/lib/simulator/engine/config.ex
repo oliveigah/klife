@@ -37,8 +37,7 @@ defmodule Simulator.EngineConfig do
       :producer_loop_interval_ms,
       :record_value_bytes,
       :record_key_bytes,
-      :invariants_check_interval_ms,
-      :lag_warning_multiplier
+      :invariants_check_interval_ms
     ]
 
     Enum.reduce(config_keys, %__MODULE__{}, fn key, acc_config ->
@@ -56,7 +55,7 @@ defmodule Simulator.EngineConfig do
     # interfere on the tests
     old_to_new_topics =
       Map.new(base_config.topics, fn %{topic: old_name} ->
-        {old_name, Base.encode16(:rand.bytes(30))}
+        {old_name, old_name <> "_" <> Base.encode16(:rand.bytes(5))}
       end)
 
     new_topics =
@@ -128,7 +127,11 @@ defmodule Simulator.EngineConfig do
     base_args = [
       client: Enum.random(config.clients),
       topics: random_value(:cg_topics, config),
-      group_name: Base.encode16(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10)),
+      # Fetch strategy needs to be defined here because
+      # we need a runtime defined default value, otherwise
+      # it raises!
+      fetch_strategy: random_value(:fetch_strategy, config)
     ]
 
     base_config = NimbleOptions.validate!(base_args, opts)
@@ -175,6 +178,13 @@ defmodule Simulator.EngineConfig do
     end)
   end
 
+  defp random_value(:fetch_strategy, _config) do
+    weighted_random_opt([
+      {1, {:exclusive, random_value(:exclusive_fetch, nil)}},
+      {5, {:shared, :klife_default_fetcher}}
+    ])
+  end
+
   defp random_value(:producer_max_rps, _config) do
     weighted_random_opt([50])
   end
@@ -197,10 +207,6 @@ defmodule Simulator.EngineConfig do
 
   defp random_value(:invariants_check_interval_ms, _config) do
     weighted_random_opt([5_000])
-  end
-
-  defp random_value(:lag_warning_multiplier, _config) do
-    weighted_random_opt([5])
   end
 
   defp random_value({:cg_topics, :handler_max_unacked_commits}, base_val) do
@@ -235,13 +241,20 @@ defmodule Simulator.EngineConfig do
     weighted_random_opt([{5, base_val}, :read_committed, :read_uncommitted])
   end
 
-  # TODO: Add shared fetch strategy on fetch_strategy
   defp random_value({:cg_topics, :fetch_strategy}, base_val) do
-    weighted_random_opt([{5, base_val}, {1, {:exclusive, random_value(:exclusive_fetch, nil)}}])
+    weighted_random_opt([
+      {5, base_val},
+      {1, {:exclusive, random_value(:exclusive_fetch, nil)}},
+      {1, {:shared, :klife_default_fetcher}}
+    ])
   end
 
   defp random_value({:consumer_group, :fetch_strategy}, base_val) do
-    weighted_random_opt([{5, base_val}, {1, {:exclusive, random_value(:exclusive_fetch, nil)}}])
+    weighted_random_opt([
+      {5, base_val},
+      {1, {:exclusive, random_value(:exclusive_fetch, nil)}},
+      {1, {:shared, :klife_default_fetcher}}
+    ])
   end
 
   defp random_value({:consumer_group, :rebalance_timeout_ms}, base_val) do
@@ -269,7 +282,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:exclusive_fetch, :request_timeout_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 3000, 5000, 10_000, 30_000])
+    weighted_random_opt([{5, base_val}, 3_000, 5_000, 10_000, 30_000])
   end
 
   defp random_value({:exclusive_fetch, :isolation_level}, base_val) do
@@ -306,6 +319,6 @@ defmodule Simulator.EngineConfig do
   end
 
   def lag_warning_threshold(%__MODULE__{} = config) do
-    config.lag_warning_multiplier * config.producer_max_rps * config.producer_concurrency
+    20 * config.producer_max_rps * config.producer_concurrency
   end
 end

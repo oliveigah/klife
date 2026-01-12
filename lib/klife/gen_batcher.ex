@@ -253,7 +253,10 @@ defmodule Klife.GenBatcher do
   def dispatch_completed(%__MODULE__{in_flight_pool: in_flight_pool} = state, dispatch_ref) do
     case Enum.find_index(in_flight_pool, fn i -> i == dispatch_ref end) do
       nil ->
-        Logger.warning("Unkown dispatch ref received!")
+        raise(
+          "Unkown dispatch ref #{inspect(dispatch_ref)} received for #{state.user_state.__struct__}!"
+        )
+
         state
 
       pool_idx ->
