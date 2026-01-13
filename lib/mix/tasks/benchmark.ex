@@ -85,7 +85,7 @@ if Mix.env() in [:dev] do
     def do_run_bench("consumer_klife_only", parallel) do
       base_topic = Base.encode16(:rand.bytes(20))
       partitions = 30
-      topics = Enum.map(1..24, fn i -> base_topic <> "_#{i}" end)
+      topics = Enum.map(1..30, fn i -> base_topic <> "_#{i}" end)
 
       {:ok, sup_pid} = DynamicSupervisor.start_link(name: :benchmark_supervisor)
 
@@ -105,7 +105,7 @@ if Mix.env() in [:dev] do
       Benchee.run(
         %{
           "klife - exclusive" => fn ->
-            run_consumer_bench(:klife, topics, Enum.sum(targets), sup_pid)
+            run_consumer_bench(:klife_exclusive, topics, Enum.sum(targets), sup_pid)
           end,
           "klife - shared" => fn ->
             run_consumer_bench(:klife_shared, topics, Enum.sum(targets), sup_pid)
@@ -439,7 +439,7 @@ if Mix.env() in [:dev] do
                  }}
               )
 
-            :klife ->
+            :klife_exclusive ->
               DynamicSupervisor.start_child(
                 sup_pid,
                 {BenchmarkConsumer,
@@ -451,7 +451,8 @@ if Mix.env() in [:dev] do
                          offset_reset_policy: :earliest
                        ]
                      end),
-                   group_name: Base.encode64(:rand.bytes(10))
+                   group_name: Base.encode64(:rand.bytes(10)),
+                   fetch_strategy: {:exclusive, []}
                  ]}
               )
 
@@ -548,6 +549,7 @@ if Mix.env() in [:dev] do
   end
 
   defmodule BenchmarkConsumer do
+    require Logger
     use Klife.Consumer.ConsumerGroup, client: MyClient
 
     @impl true

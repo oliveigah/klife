@@ -157,9 +157,21 @@ defmodule Klife.Connection.Broker do
 
     callback_pid = Keyword.get(opts, :callback_pid)
     callback_ref = Keyword.get(opts, :callback_ref)
+    timeout_ms = Keyword.get(opts, :timeout_ms)
+
+    timeout_ref =
+      if timeout_ms != nil and callback_pid != nil do
+        Process.send_after(
+          callback_pid,
+          {:async_broker_response, callback_ref, :timeout},
+          timeout_ms
+        )
+      end
 
     in_flight_data =
-      if callback_pid, do: {callback_pid, callback_ref, msg_mod, msg_version}, else: :noop
+      if callback_pid,
+        do: {callback_pid, callback_ref, msg_mod, msg_version, timeout_ref},
+        else: :noop
 
     true = Controller.insert_in_flight(client_name, correlation_id, in_flight_data)
 
@@ -188,10 +200,27 @@ defmodule Klife.Connection.Broker do
         send(waiting_pid, {:broker_response, reply})
 
       # async send function callback
-      {^correlation_id, {callback_pid, callback_ref, msg_mod, msg_version}} ->
-        send(callback_pid, {:async_broker_response, callback_ref, reply, msg_mod, msg_version})
+      {^correlation_id, {callback_pid, callback_ref, msg_mod, msg_version, timeout_ref}} ->
+        before_timeout? =
+          if timeout_ref != nil do
+            Process.cancel_timer(timeout_ref) |> is_integer()
+          else
+            true
+          end
 
-      # async send with no callback
+        if before_timeout? do
+          send(callback_pid, {:async_broker_response, callback_ref, reply, msg_mod, msg_version})
+        else
+          if Process.alive?(callback_pid) do
+            Logger.warning("""
+            Delivery confirmation arrived after timeout for message #{inspect(msg_mod)} on client #{inspect(client_name)}
+
+            conn: #{inspect(conn)}
+            """)
+          end
+        end
+
+      # async send with no callback and no timeout
       {^correlation_id, :noop} ->
         :noop
 

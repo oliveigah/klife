@@ -116,7 +116,10 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
     {:noreply, complete_batch(state, state.requests[req_ref], result)}
   end
 
-  def handle_info({:check_timeout, req_ref}, %__MODULE__{requests: reqs} = state) do
+  def handle_info(
+        {:async_broker_response, req_ref, :timeout},
+        %__MODULE__{requests: reqs} = state
+      ) do
     case Map.get(reqs, req_ref) do
       nil ->
         {:noreply, state}
@@ -163,7 +166,8 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
     opts = [
       async: true,
       callback_pid: self(),
-      callback_ref: batch.dispatch_ref
+      callback_ref: batch.dispatch_ref,
+      timeout_ms: state.fetcher_config.request_timeout_ms
     ]
 
     Broker.send_message(
@@ -174,19 +178,6 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       headers,
       opts
     )
-    |> case do
-      :ok ->
-        Process.send_after(
-          self(),
-          {:check_timeout, batch.dispatch_ref},
-          state.fetcher_config.request_timeout_ms + 5000
-        )
-
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
-    end
   end
 
   defp parse_batch_for_send(%Batcher.Batch{} = batch, %__MODULE__{} = state) do

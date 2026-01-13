@@ -15,8 +15,7 @@ defmodule Klife.Producer.Dispatcher do
   defstruct [
     :batcher_pid,
     :broker_id,
-    :requests,
-    :timeouts
+    :requests
   ]
 
   use GenServer
@@ -49,7 +48,6 @@ defmodule Klife.Producer.Dispatcher do
   def init(args) do
     state = %__MODULE__{
       requests: %{},
-      timeouts: %{},
       broker_id: args[:broker_id],
       batcher_pid: args[:batcher_pid]
     }
@@ -69,9 +67,8 @@ defmodule Klife.Producer.Dispatcher do
     } = data
 
     case do_dispatch(data, state) do
-      {:ok, timeout_ref} ->
+      :ok ->
         new_state = put_in(state.requests[request_ref], data)
-        new_state = put_in(new_state.timeouts[request_ref], timeout_ref)
 
         {:reply, :ok, new_state}
 
@@ -98,8 +95,8 @@ defmodule Klife.Producer.Dispatcher do
       } = Map.fetch!(state.requests, req_ref)
 
     case do_dispatch(data, state) do
-      {:ok, timeout_ref} ->
-        {:noreply, put_in(state.timeouts[request_ref], timeout_ref)}
+      :ok ->
+        {:noreply, state}
 
       {:error, :retry} ->
         Process.send_after(self(), {:dispatch, request_ref}, retry_ms)
@@ -113,14 +110,14 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  def handle_info({:check_timeout, req_ref, timeout_ref}, %__MODULE__{} = state) do
-    case Map.get(state.timeouts, req_ref) do
-      ^timeout_ref ->
-        %{producer_config: %{retry_backoff_ms: retry_ms}} = Map.fetch!(state.requests, req_ref)
+  def handle_info({:async_broker_response, req_ref, :timeout}, %__MODULE__{} = state) do
+    case Map.get(state.requests, req_ref) do
+      %{producer_config: %{retry_backoff_ms: retry_ms}} ->
         Process.send_after(self(), {:dispatch, req_ref}, retry_ms)
         {:noreply, state}
 
       _ ->
+        Logger.warning("Timeout message received for an unknown request ref!")
         {:noreply, state}
     end
   end
@@ -134,8 +131,7 @@ defmodule Klife.Producer.Dispatcher do
       ) do
     %__MODULE__{
       requests: requests,
-      broker_id: broker_id,
-      timeouts: timeouts
+      broker_id: broker_id
     } = state
 
     data =
@@ -264,8 +260,7 @@ defmodule Klife.Producer.Dispatcher do
 
       new_state = %{
         state
-        | requests: Map.put(requests, req_ref, new_req_data),
-          timeouts: Map.delete(timeouts, req_ref)
+        | requests: Map.put(requests, req_ref, new_req_data)
       }
 
       {:noreply, new_state}
@@ -300,20 +295,16 @@ defmodule Klife.Producer.Dispatcher do
     before_deadline? = now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
 
     with {:before_deadline?, true} <- {:before_deadline?, before_deadline?},
-         :ok <- send_to_broker_async(client_name, state.broker_id, content, headers, req_ref) do
-      timeout_ref = make_ref()
-
-      Process.send_after(
-        self(),
-        {:check_timeout, req_ref, timeout_ref},
-        # Need to add some seconds to give some room for the request come
-        # back from the server. Otherwise, in extreme cases the dispatcher
-        # will retry while the broker already answred but message is
-        # in transit
-        req_timeout + :timer.seconds(5)
-      )
-
-      {:ok, timeout_ref}
+         :ok <-
+           send_to_broker_async(
+             client_name,
+             state.broker_id,
+             content,
+             headers,
+             req_ref,
+             req_timeout
+           ) do
+      :ok
     else
       {:before_deadline?, false} ->
         {:error, :request_deadline}
@@ -323,11 +314,16 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  defp send_to_broker_async(client_name, broker_id, content, headers, req_ref) do
+  defp send_to_broker_async(client_name, broker_id, content, headers, req_ref, req_timeout) do
     opts = [
       async: true,
       callback_pid: self(),
-      callback_ref: req_ref
+      callback_ref: req_ref,
+      # Need to add some seconds to give some room for the request come
+      # back from the server. Otherwise, in extreme cases the dispatcher
+      # will retry while the broker already answred but message is
+      # in transit
+      timeout_ms: req_timeout + 5_000
     ]
 
     Broker.send_message(M.Produce, client_name, broker_id, content, headers, opts)
@@ -351,7 +347,7 @@ defmodule Klife.Producer.Dispatcher do
   end
 
   defp remove_request(%__MODULE__{} = state, req_ref) do
-    %__MODULE__{requests: requests, timeouts: timeouts} = state
-    %{state | requests: Map.delete(requests, req_ref), timeouts: Map.delete(timeouts, req_ref)}
+    %__MODULE__{requests: requests} = state
+    %{state | requests: Map.delete(requests, req_ref)}
   end
 end

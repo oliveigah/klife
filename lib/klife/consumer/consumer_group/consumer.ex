@@ -139,7 +139,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     tpo = {state.topic_name, state.partition_idx, offset_to_fetch}
     ref = {make_ref(), tpo}
 
-    {:ok, timeout} =
+    :ok =
       case topic_config.fetch_strategy do
         {:shared, fetcher_name} ->
           opts = [
@@ -160,40 +160,22 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               fetch_opts,
               isolation_level: topic_config.isolation_level,
               max_bytes: topic_config.fetch_max_bytes,
-              callback_ref: ref
+              callback_ref: ref,
+              timeout_ms: fetch_opts[:request_timeout_ms] + 5000
             )
 
-          :ok =
-            Fetcher.fetch_raw_async(
-              tpo,
-              state.client_name,
-              final_opts
-            )
-
-          {:ok, fetch_opts[:request_timeout_ms]}
+          Fetcher.fetch_raw_async(
+            tpo,
+            state.client_name,
+            final_opts
+          )
       end
-
-    Process.send_after(self(), {:check_poll_timeout, ref}, timeout + 5000)
 
     {:noreply, %__MODULE__{state | fetch_ref: ref}}
   end
 
   def handle_info(:poll_records, %__MODULE__{} = state) do
     {:noreply, state}
-  end
-
-  def handle_info({:check_poll_timeout, ref}, %__MODULE__{} = state) do
-    if ref == state.fetch_ref do
-      Logger.warning(
-        "Fetch request timeout for #{state.topic_name} #{state.partition_idx} on client #{state.client_name} group name #{state.cg_name} module #{state.cg_mod}, retrying..."
-      )
-
-      Process.send_after(self(), :poll_records, Enum.random(1000..5000))
-
-      {:noreply, %__MODULE__{state | fetch_ref: nil}}
-    else
-      {:noreply, state}
-    end
   end
 
   @impl true
@@ -207,6 +189,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         %__MODULE__{} = state
       ) do
     {:noreply, handle_fetch_error!(state, reason, tpo)}
+  end
+
+  def handle_info(
+        {:async_broker_response, {req_ref, {t, p, o} = tpo}, :timeout},
+        %__MODULE__{fetch_ref: {req_ref, {t, p, o}}} = state
+      ) do
+    {:noreply, handle_fetch_error!(state, :timeout, tpo)}
   end
 
   @impl true
@@ -252,6 +241,20 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     if state.fetch_ref != ref do
       Logger.warning(
         "Unexpected async broker response received for #{state.topic_name} #{state.partition_idx} on client #{state.client_name}"
+      )
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(
+        {:async_broker_response, ref, :timeout},
+        %__MODULE__{} = state
+      ) do
+    if state.fetch_ref != ref do
+      Logger.warning(
+        "Unexpected async broker response timeout received for #{state.topic_name} #{state.partition_idx} on client #{state.client_name}"
       )
     end
 

@@ -116,8 +116,8 @@ defmodule Klife.Consumer.Fetcher do
     max_bytes = opts[:max_bytes] || 100_000
 
     {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
-    {:ok, timeout} = Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
-    {:ok, timeout}
+    {:ok, _timeout} = Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
+    :ok
   end
 
   def fetch_raw_async({t, p, o}, client, opts \\ []) do
@@ -161,7 +161,8 @@ defmodule Klife.Consumer.Fetcher do
     req_opts = [
       async: true,
       callback_pid: self(),
-      callback_ref: opts[:callback_ref] || make_ref()
+      callback_ref: opts[:callback_ref] || make_ref(),
+      timeout_ms: opts[:timeout_ms]
     ]
 
     headers = %{
