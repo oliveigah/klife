@@ -187,8 +187,13 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         :read_uncommitted -> 0
       end
 
-    parsed_data =
-      Enum.group_by(batch.data, fn {{t, _p}, _v} -> t end, fn {{_t, _p}, v} -> v end)
+    # Double shuffle is needed to avoid starvation of topic/partitions that always come last in the batch
+    # see: https://cwiki.apache.org/confluence/display/KAFKA/KIP-74%3A+Add+Fetch+Response+Size+Limit+in+Bytes
+    shuffled_batch_data =
+      batch.data
+      |> Enum.group_by(fn {{t, _p}, _v} -> t end, fn {{_t, _p}, v} -> v end)
+      |> Enum.map(fn {tid, items} -> {tid, Enum.shuffle(items)} end)
+      |> Enum.shuffle()
 
     %{
       replica_id: -1,
@@ -200,7 +205,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       session_id: 0,
       session_epoch: 0,
       topics:
-        Enum.map(parsed_data, fn {topic_id, items_list} ->
+        Enum.map(shuffled_batch_data, fn {topic_id, items_list} ->
           %{
             topic_id: topic_id,
             partitions:

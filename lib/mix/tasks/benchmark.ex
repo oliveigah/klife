@@ -71,10 +71,10 @@ if Mix.env() in [:dev] do
 
       Benchee.run(
         %{
-          "l10" => fn -> List.last(l10) end,
-          "l100" => fn -> List.last(l100) end,
-          "l1000" => fn -> List.last(l1000) end,
-          "l10000" => fn -> List.last(l10000) end
+          "l10" => fn -> Enum.shuffle(l10) end,
+          "l100" => fn -> Enum.shuffle(l100) end,
+          "l1000" => fn -> Enum.shuffle(l1000) end,
+          "l10000" => fn -> Enum.shuffle(l10000) end
         },
         time: 10,
         memory_time: 2,

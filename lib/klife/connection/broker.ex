@@ -279,7 +279,7 @@ defmodule Klife.Connection.Broker do
 
   defp get_broker_id(broker_id, _client_name), do: broker_id
 
-  defp get_connection(client_name, broker_id) do
+  def get_connection(client_name, broker_id) do
     case :persistent_term.get({__MODULE__, client_name, broker_id}, :not_found) do
       :not_found ->
         :ok = Controller.trigger_brokers_verification(client_name)
