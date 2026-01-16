@@ -44,7 +44,8 @@ defmodule Klife.Connection.SystemTest do
         ssl: false,
         connect_opts: [],
         socket_opts: [],
-        sasl_opts: []
+        sasl_opts: [],
+        connection_count: 1
       ]
       |> Map.new()
 
@@ -71,7 +72,8 @@ defmodule Klife.Connection.SystemTest do
         socket_opts: [
           delay_send: true
         ],
-        sasl_opts: []
+        sasl_opts: [],
+        connection_count: 1
       ]
       |> Map.new()
 
@@ -104,7 +106,8 @@ defmodule Klife.Connection.SystemTest do
             username: "klifeusr",
             password: "klifepwd"
           ]
-        ]
+        ],
+        connection_count: 1
       ]
       |> Map.new()
 
@@ -126,7 +129,8 @@ defmodule Klife.Connection.SystemTest do
         ssl: false,
         connect_opts: [],
         socket_opts: [],
-        sasl_opts: []
+        sasl_opts: [],
+        connection_count: 1
       ]
       |> Map.new()
 
@@ -144,7 +148,8 @@ defmodule Klife.Connection.SystemTest do
         socket_opts: [
           delay_send: true
         ],
-        sasl_opts: []
+        sasl_opts: [],
+        connection_count: 1
       ]
       |> Map.new()
 
@@ -157,7 +162,8 @@ defmodule Klife.Connection.SystemTest do
         ssl: false,
         connect_opts: [],
         socket_opts: [],
-        sasl_opts: []
+        sasl_opts: [],
+        connection_count: 1
       ]
       |> Map.new()
 
