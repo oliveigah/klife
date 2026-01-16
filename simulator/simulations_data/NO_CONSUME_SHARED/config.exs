@@ -596,10 +596,10 @@
       group_name: "SimulatorGroup5"
     ]
   ],
-  producer_max_rps: 50,
-  producer_concurrency: 5,
+  producer_max_rps: 400,
+  producer_concurrency: 15,
   producer_loop_interval_ms: 1000,
-  record_value_bytes: 10,
+  record_value_bytes: 1000,
   record_key_bytes: 64,
   invariants_check_interval_ms: 5000
 }

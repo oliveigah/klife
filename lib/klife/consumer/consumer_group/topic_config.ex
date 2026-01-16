@@ -33,7 +33,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       type: :non_neg_integer,
       doc: """
       The maximum number of record batches that the consumer can keep on its internal queue.
-      Defaults to 2 if `:handler_max_batch_size` is `:dynamic`, otherwise defaults to 10.
+      Defaults to 5 if `:handler_max_batch_size` is `:dynamic`, otherwise defaults to 20.
       """
     ],
     fetch_interval_ms: [
@@ -104,8 +104,8 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     |> Map.update!(:max_queue_size, fn v ->
       cond do
         v != nil -> v
-        base_tc.handler_max_batch_size == :dynamic -> 2
-        true -> 10
+        base_tc.handler_max_batch_size == :dynamic -> 5
+        true -> 20
       end
     end)
     |> Map.update!(:fetch_strategy, fn v ->

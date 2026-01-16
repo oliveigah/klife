@@ -392,7 +392,7 @@ defmodule Simulator.Engine do
               {:latest_timestamp, insert_time}
             )
 
-            true = :ets.insert_new(idempotency_table, {rec.offset, rec})
+            true = :ets.insert_new(idempotency_table, {rec.offset})
             :ok
 
           _ ->

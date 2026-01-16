@@ -32,7 +32,6 @@
            client_id: nil,
            isolation_level: :read_committed,
            max_bytes: 500_000,
-           min_bytes: 1,
            max_wait_ms: 0
          ]},
       rebalance_timeout_ms: 30000,
@@ -89,8 +88,7 @@
                request_timeout_ms: 5000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 250_000,
-               min_bytes: 1,
+               max_bytes_per_request: 250_000,
                max_wait_ms: 0
              ]},
           fetch_interval_ms: 10000,
@@ -129,8 +127,7 @@
                request_timeout_ms: 10000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 500_000,
-               min_bytes: 1,
+               max_bytes_per_request: 500_000,
                max_wait_ms: 0
              ]},
           fetch_interval_ms: 5000,
@@ -149,8 +146,7 @@
                request_timeout_ms: 5000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 250_000,
-               min_bytes: 1,
+               max_bytes_per_request: 250_000,
                max_wait_ms: 0
              ]},
           fetch_interval_ms: 2500,
@@ -184,7 +180,6 @@
            client_id: nil,
            isolation_level: :read_committed,
            max_bytes: 500_000,
-           min_bytes: 1,
            max_wait_ms: 0
          ]},
       rebalance_timeout_ms: 10000,
@@ -273,8 +268,7 @@
                request_timeout_ms: 5000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 250_000,
-               min_bytes: 1,
+               max_bytes_per_request: 250_000,
                max_wait_ms: 0
              ]},
           fetch_interval_ms: 5000,
@@ -320,7 +314,6 @@
            client_id: nil,
            isolation_level: :read_committed,
            max_bytes: 500_000,
-           min_bytes: 1,
            max_wait_ms: 0
          ]},
       rebalance_timeout_ms: 30000,
@@ -345,8 +338,7 @@
                request_timeout_ms: 5000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 100_000,
-               min_bytes: 1,
+               max_bytes_per_request: 100_000,
                max_wait_ms: 1000
              ]},
           fetch_interval_ms: 1000,
@@ -454,7 +446,6 @@
            client_id: nil,
            isolation_level: :read_committed,
            max_bytes: 1_000_000,
-           min_bytes: 1,
            max_wait_ms: 5000
          ]},
       rebalance_timeout_ms: 30000,
@@ -530,8 +521,7 @@
                request_timeout_ms: 5000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 5_000_000,
-               min_bytes: 1,
+               max_bytes_per_request: 5_000_000,
                max_wait_ms: 0
              ]},
           fetch_interval_ms: 1000,
@@ -586,7 +576,6 @@
            client_id: nil,
            isolation_level: :read_committed,
            max_bytes: 500_000,
-           min_bytes: 1,
            max_wait_ms: 0
          ]},
       rebalance_timeout_ms: 20000,
@@ -696,8 +685,7 @@
                request_timeout_ms: 10000,
                client_id: nil,
                isolation_level: :read_committed,
-               max_bytes: 500_000,
-               min_bytes: 1,
+               max_bytes_per_request: 500_000,
                max_wait_ms: 0
              ]},
           fetch_interval_ms: 5000,
@@ -711,10 +699,10 @@
       group_name: "SimulatorGroup5"
     ]
   ],
-  producer_max_rps: 50,
-  producer_concurrency: 5,
+  producer_max_rps: 200,
+  producer_concurrency: 20,
   producer_loop_interval_ms: 1000,
-  record_value_bytes: 10,
+  record_value_bytes: 100,
   record_key_bytes: 64,
   invariants_check_interval_ms: 5000
 }

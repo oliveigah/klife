@@ -59,7 +59,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         resp =
           batch.data
           |> Enum.map(fn {{t, p}, _item} ->
-            {{t, p}, {:conn_error, reason}}
+            {{t, p}, {:error, reason}}
           end)
           |> Map.new()
 

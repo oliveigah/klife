@@ -1,11 +1,12 @@
 import Config
 
-config :klife, metadata_check_interval_ms: 500
+config :klife, metadata_check_interval_ms: 2_000
 
 config :simulator, Simulator.NormalClient,
   connection: [
     bootstrap_servers: ["localhost:19092", "localhost:29092"],
-    ssl: false
+    ssl: false,
+    connection_count: 5
   ]
 
 config :simulator, Simulator.TLSClient,
@@ -22,5 +23,6 @@ config :simulator, Simulator.TLSClient,
     connect_opts: [
       verify: :verify_peer,
       cacertfile: Path.relative("../test/compose_files/ssl/ca.crt")
-    ]
+    ],
+    connection_count: 5
   ]

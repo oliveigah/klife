@@ -448,11 +448,11 @@ if Mix.env() in [:dev] do
                      Enum.map(topics, fn tname ->
                        [
                          name: tname,
-                         offset_reset_policy: :earliest
+                         offset_reset_policy: :earliest,
+                         fetch_strategy: {:exclusive, []}
                        ]
                      end),
-                   group_name: Base.encode64(:rand.bytes(10)),
-                   fetch_strategy: {:exclusive, []}
+                   group_name: Base.encode64(:rand.bytes(10))
                  ]}
               )
 

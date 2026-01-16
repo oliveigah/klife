@@ -10,10 +10,6 @@ defmodule Klife.Consumer.Fetcher do
 
   alias Klife.PubSub
 
-  alias Klife.Connection.Broker
-
-  alias KlifeProtocol.Messages, as: M
-
   @fetcher_opts [
     name: [
       type: {:or, [:atom, :string]},
@@ -22,6 +18,7 @@ defmodule Klife.Consumer.Fetcher do
     ],
     client_id: [
       type: :string,
+      required: false,
       doc:
         "String used on all requests. If not provided the following string is used: \"klife_fetcher.{client_name}.{fetcher_name}\""
     ],
@@ -38,10 +35,14 @@ defmodule Klife.Consumer.Fetcher do
     ],
     max_in_flight_requests: [
       type: :non_neg_integer,
-      default: 5,
+      default: 10,
       doc:
-        "The maximum number of fetch requests per broker the fetcher will send before waiting for responses."
+        "The maximum number of fetch requests per batcher the fetcher will send before waiting for responses."
     ],
+    # We must have more batchers here than for the producer
+    # because the message deserialization happens inside
+    # the batcher, and if the message is large (true for fetch)
+    # it may become a bottleneck!
     batchers_count: [
       type: :pos_integer,
       doc:
@@ -49,7 +50,7 @@ defmodule Klife.Consumer.Fetcher do
     ],
     request_timeout_ms: [
       type: :non_neg_integer,
-      default: :timer.seconds(5),
+      default: :timer.seconds(30),
       doc:
         "The maximum amount of time the fetcher will wait for a broker response to a request before considering it as failed."
     ],
@@ -118,65 +119,6 @@ defmodule Klife.Consumer.Fetcher do
     {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
     {:ok, _timeout} = Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
     :ok
-  end
-
-  def fetch_raw_async({t, p, o}, client, opts \\ []) do
-    {:ok,
-     %{
-       topic_id: t_id,
-       leader_id: broker
-     }} = MetadataCache.get_metadata(client, t, p)
-
-    data = %{
-      replica_id: opts[:replica_id] || -1,
-      max_wait_ms: opts[:max_wait_ms] || 0,
-      min_bytes: opts[:min_bytes] || 1,
-      max_bytes: opts[:max_bytes] || 500_000,
-      isolation_level:
-        case Keyword.get(opts, :isolation_level, :read_committed) do
-          :read_committed -> 1
-          :read_uncommitted -> 0
-        end,
-      session_id: opts[:session_id] || 0,
-      session_epoch: opts[:session_epoch] || 0,
-      topics: [
-        %{
-          topic_id: t_id,
-          partitions: [
-            %{
-              partition: p,
-              current_leader_epoch: opts[:current_leader_epoch] || -1,
-              fetch_offset: o,
-              last_fetched_epoch: opts[:last_fetched_epoch] || -1,
-              log_start_offset: opts[:log_start_offset] || -1,
-              partition_max_bytes: opts[:max_bytes] || 500_000
-            }
-          ]
-        }
-      ],
-      forgotten_topics_data: [],
-      rack_id: opts[:rack_id] || ""
-    }
-
-    req_opts = [
-      async: true,
-      callback_pid: self(),
-      callback_ref: opts[:callback_ref] || make_ref(),
-      timeout_ms: opts[:timeout_ms]
-    ]
-
-    headers = %{
-      client_id: opts[:client_id] || nil
-    }
-
-    Broker.send_message(
-      M.Fetch,
-      client,
-      broker,
-      data,
-      headers,
-      req_opts
-    )
   end
 
   defp tpo_to_batch_item(t, p, o, client, max_bytes, fetcher) do

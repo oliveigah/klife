@@ -36,6 +36,12 @@ defmodule Klife.Connection.Controller do
       default: false,
       doc: "Specify the underlying socket module. Use `:ssl` if true and `:gen_tcp` if false."
     ],
+    connection_count: [
+      type: :pos_integer,
+      required: false,
+      default: 1,
+      doc: "How many TCP connections the client will maintain for each broker."
+    ],
     connect_opts: [
       type: {:list, :any},
       required: false,
@@ -73,7 +79,8 @@ defmodule Klife.Connection.Controller do
     :ssl,
     :socket_opts,
     :sasl_opts,
-    :broker_supervisor
+    :broker_supervisor,
+    :connection_count
   ]
 
   def get_opts(), do: @connection_opts
@@ -112,7 +119,8 @@ defmodule Klife.Connection.Controller do
     :ets.new(get_in_flight_messages_table_name(client), [
       :set,
       :public,
-      :named_table
+      :named_table,
+      write_concurrency: true
     ])
 
     :persistent_term.put({:correlation_counter, client}, :atomics.new(1, signed: false))
@@ -128,10 +136,14 @@ defmodule Klife.Connection.Controller do
       check_cluster_timer_ref: nil,
       check_cluster_waiting_pids: [],
       sasl_opts: sasl_opts,
-      broker_supervisor: broker_sup_pid
+      broker_supervisor: broker_sup_pid,
+      connection_count: args.connection_count
     }
 
     new_state = do_init(state)
+
+    put_connection_count(state.client_name, state.connection_count)
+
     {:ok, new_state}
   end
 
@@ -257,6 +269,14 @@ defmodule Klife.Connection.Controller do
     |> List.first()
   end
 
+  def put_connection_count(client_name, counter) do
+    :persistent_term.put({__MODULE__, client_name, :connection_counter}, counter)
+  end
+
+  def get_connection_count(client_name) do
+    :persistent_term.get({__MODULE__, client_name, :connection_counter})
+  end
+
   def get_next_correlation_id(client_name) do
     # atomics wraps arround when overflowed
     # since atomics can only be int64 we use
@@ -373,31 +393,43 @@ defmodule Klife.Connection.Controller do
   ## PRIVATE FUNCTIONS
 
   defp handle_brokers(to_start, to_remove, %__MODULE__{} = state) do
-    Enum.each(to_start, fn {broker_id, url} ->
-      broker_opts = [
-        connect_opts: state.connect_opts,
-        client_name: state.client_name,
-        socket_opts: state.socket_opts,
-        sasl_opts: state.sasl_opts,
-        broker_id: broker_id,
-        url: url,
-        ssl: state.ssl
-      ]
-
-      spec = %{
-        id: {Broker, broker_id, state.client_name},
-        start: {Broker, :start_link, [broker_opts]},
-        type: :worker
-      }
-
-      case DynamicSupervisor.start_child(state.broker_supervisor, spec) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-      end
+    to_start
+    |> Enum.flat_map(fn {broker_id, url} ->
+      Enum.map(0..(state.connection_count - 1), fn idx ->
+        {broker_id, url, idx}
+      end)
     end)
+    |> Task.async_stream(
+      fn {broker_id, url, idx} ->
+        broker_opts = [
+          connect_opts: state.connect_opts,
+          client_name: state.client_name,
+          socket_opts: state.socket_opts,
+          sasl_opts: state.sasl_opts,
+          broker_id: broker_id,
+          url: url,
+          ssl: state.ssl,
+          broker_index: idx
+        ]
 
-    Enum.each(to_remove, fn {broker_id, _url} ->
-      case registry_lookup({Broker, broker_id, state.client_name}) do
+        spec = %{
+          id: {Broker, broker_id, state.client_name, idx},
+          start: {Broker, :start_link, [broker_opts]},
+          type: :worker
+        }
+
+        case DynamicSupervisor.start_child(state.broker_supervisor, spec) do
+          {:ok, _} -> :ok
+          {:error, {:already_started, _}} -> :ok
+        end
+      end,
+      timeout: 15_000
+    )
+    |> Enum.each(fn resp -> {:ok, :ok} = resp end)
+
+    for {broker_id, _url} <- to_remove,
+        idx <- 0..(state.connection_count - 1) do
+      case registry_lookup({Broker, broker_id, state.client_name, idx}) do
         [] ->
           :ok
 
@@ -407,7 +439,7 @@ defmodule Klife.Connection.Controller do
             pid
           )
       end
-    end)
+    end
 
     new_brokers =
       ((state.known_brokers ++ to_start) -- to_remove)

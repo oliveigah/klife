@@ -132,11 +132,10 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     consumer_opts = [
       topics: [
-        [name: "test_consumer_topic_1"],
-        [name: "test_consumer_topic_2"]
+        [name: "test_consumer_topic_1", fetch_strategy: {:exclusive, []}],
+        [name: "test_consumer_topic_2", fetch_strategy: {:exclusive, []}]
       ],
-      group_name: Base.encode64(:rand.bytes(10)),
-      fetch_strategy: {:exclusive, []}
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)
@@ -217,7 +216,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1"],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)
@@ -300,7 +299,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       topics: [
         [name: "test_consumer_topic_1"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)
@@ -406,7 +405,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       topics: [
         [name: "test_consumer_topic_1", fetch_max_bytes: 1]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)
@@ -519,7 +518,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: earliest_topic, offset_reset_policy: :earliest],
         [name: other_topic]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     :ok =
@@ -614,7 +613,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1"],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     cg_name = consumer_opts[:group_name]
@@ -758,7 +757,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1"],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     cg_pid = start_supervised!({mod_name, consumer_opts}, id: :cg)
@@ -802,8 +801,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       use CGTest, parent_pid: parent_pid
     end
 
-    cg1 = Base.encode64(:rand.bytes(10))
-    cg2 = Base.encode64(:rand.bytes(10))
+    cg1 = Base.encode16(:rand.bytes(10))
+    cg2 = Base.encode16(:rand.bytes(10))
 
     consumer_opts1 = [
       topics: [
@@ -857,7 +856,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1"],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
     ]
 
     cg_name = consumer_opts[:group_name]
@@ -910,7 +909,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
         [name: "test_consumer_topic_1", handler_max_batch_size: 3],
         [name: "test_consumer_topic_2"]
       ],
-      group_name: Base.encode64(:rand.bytes(10))
+      group_name: Base.encode16(:rand.bytes(10))
       # fetch_strategy: {:shared, MyClient.get_default_fetcher()}
     ]
 

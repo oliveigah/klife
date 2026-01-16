@@ -7,8 +7,6 @@ defmodule Klife.Connection.Broker do
 
   require Logger
 
-  alias KlifeProtocol.Messages
-
   alias Klife.Connection
   alias Klife.Connection.Controller
   alias Klife.Connection.MessageVersions
@@ -24,13 +22,18 @@ defmodule Klife.Connection.Broker do
     :socket_opts,
     :sasl_opts,
     :url,
-    :reconnect_attempts
+    :reconnect_attempts,
+    :broker_index
   ]
 
   def start_link(args) do
     broker_id = Keyword.fetch!(args, :broker_id)
     client_name = Keyword.fetch!(args, :client_name)
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, broker_id, client_name}))
+    count = Keyword.fetch!(args, :broker_index)
+
+    GenServer.start_link(__MODULE__, args,
+      name: via_tuple({__MODULE__, broker_id, client_name, count})
+    )
   end
 
   def init(args) do
@@ -41,6 +44,7 @@ defmodule Klife.Connection.Broker do
     ssl = Keyword.fetch!(args, :ssl)
     socket_opts = Keyword.fetch!(args, :socket_opts)
     sasl_opts = Keyword.fetch!(args, :sasl_opts)
+    bidx = Keyword.fetch!(args, :broker_index)
 
     state = %__MODULE__{
       broker_id: broker_id,
@@ -50,7 +54,8 @@ defmodule Klife.Connection.Broker do
       url: url,
       reconnect_attempts: 0,
       ssl: ssl,
-      sasl_opts: sasl_opts
+      sasl_opts: sasl_opts,
+      broker_index: bidx
     }
 
     # This is done here instead of `send(self(), :connect)` because
@@ -84,7 +89,7 @@ defmodule Klife.Connection.Broker do
   end
 
   def terminate(reason, %__MODULE__{} = state) do
-    :persistent_term.erase({__MODULE__, state.client_name, state.broker_id})
+    :persistent_term.erase({__MODULE__, state.client_name, state.broker_id, state.broker_index})
     reason
   end
 
@@ -109,14 +114,24 @@ defmodule Klife.Connection.Broker do
     if Keyword.get(opts, :async, false) do
       send_raw_async(data, message_mod, version, correlation_id, broker_id, client_name, opts)
     else
-      send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name)
+      send_raw_sync(data, message_mod, version, correlation_id, broker_id, client_name, opts)
     end
   end
 
-  def send_raw_sync(raw_data, message_mod, msg_version, correlation_id, broker_id, client_name) do
+  def send_raw_sync(
+        raw_data,
+        message_mod,
+        msg_version,
+        correlation_id,
+        broker_id,
+        client_name,
+        opts
+      ) do
     broker_id = get_broker_id(broker_id, client_name)
     conn = get_connection(client_name, broker_id)
     true = Controller.insert_in_flight(client_name, correlation_id)
+
+    timeout = Keyword.get(opts, :timeout_ms, conn.read_timeout)
 
     case Connection.write(raw_data, conn) do
       :ok ->
@@ -124,17 +139,19 @@ defmodule Klife.Connection.Broker do
           {:broker_response, response} ->
             message_mod.deserialize_response(response, msg_version)
         after
-          conn.read_timeout + 2000 ->
+          timeout ->
             Controller.take_from_in_flight(client_name, correlation_id)
 
             Logger.error("""
-            Timeout while waiting reponse from broker #{broker_id} on host #{conn.host}.
+            Timeout while waiting #{message_mod} reponse from broker #{broker_id} on host #{conn.host}.
             """)
 
             {:error, :timeout}
         end
 
       {:error, reason} = res ->
+        Controller.take_from_in_flight(client_name, correlation_id)
+
         Logger.error("""
         Error while sending message #{message_mod} to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
         """)
@@ -180,17 +197,14 @@ defmodule Klife.Connection.Broker do
         :ok
 
       {:error, reason} = res ->
+        Controller.take_from_in_flight(client_name, correlation_id)
+
         Logger.error("""
         Error while sending async message #{msg_mod} to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
         """)
 
         {:error, reason}
     end
-  end
-
-  def metadata(client_name) do
-    content = %{topics: nil}
-    send_message(Messages.Metadata, client_name, :controller, content)
   end
 
   defp reply_message(<<correlation_id::32-signed, _rest::binary>> = reply, client_name, conn) do
@@ -280,10 +294,15 @@ defmodule Klife.Connection.Broker do
   defp get_broker_id(broker_id, _client_name), do: broker_id
 
   def get_connection(client_name, broker_id) do
-    case :persistent_term.get({__MODULE__, client_name, broker_id}, :not_found) do
+    bidx = :erlang.phash2(self(), Controller.get_connection_count(client_name))
+    get_connection(client_name, broker_id, bidx)
+  end
+
+  def get_connection(client_name, broker_id, bidx) do
+    case :persistent_term.get({__MODULE__, client_name, broker_id, bidx}, :not_found) do
       :not_found ->
         :ok = Controller.trigger_brokers_verification(client_name)
-        :persistent_term.get({__MODULE__, client_name, broker_id})
+        :persistent_term.get({__MODULE__, client_name, broker_id, bidx})
 
       %Connection{} = conn ->
         conn
@@ -314,7 +333,12 @@ defmodule Klife.Connection.Broker do
         # The underlying socket is stateful, so that's why
         # we don't care about the return value of `socket_opts`.
         Connection.socket_opts(conn, active: :once)
-        :persistent_term.put({__MODULE__, state.client_name, state.broker_id}, conn)
+
+        :persistent_term.put(
+          {__MODULE__, state.client_name, state.broker_id, state.broker_index},
+          conn
+        )
+
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}
 
       {:error, _reason} = res ->

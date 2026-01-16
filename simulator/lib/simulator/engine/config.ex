@@ -1,5 +1,6 @@
 defmodule Simulator.EngineConfig do
   alias Klife.Consumer.ConsumerGroup
+  alias Klife.Consumer.Fetcher
 
   # TODO: Add random seeds in the config file as well!
   defstruct [
@@ -169,18 +170,27 @@ defmodule Simulator.EngineConfig do
     end)
   end
 
-  defp random_value(:exclusive_fetch, _config) do
-    opts = ConsumerGroup.get_exclusive_fetch_opts()
-    base_config = NimbleOptions.validate!([], opts)
+  defp random_value(:exclusive_fetcher, _config) do
+    opts = Fetcher.get_opts()
+    # Filter only the opts relevant for exclusive fetch (exclude name, client_id, etc.)
+    exclusive_opts =
+      Keyword.take(opts, [
+        :max_wait_ms,
+        :max_bytes_per_request,
+        :request_timeout_ms,
+        :isolation_level
+      ])
+
+    base_config = NimbleOptions.validate!([], exclusive_opts)
 
     Enum.map(base_config, fn {key, base_val} ->
-      {key, random_value({:exclusive_fetch, key}, base_val)}
+      {key, random_value({:exclusive_fetcher, key}, base_val)}
     end)
   end
 
   defp random_value(:fetch_strategy, _config) do
     weighted_random_opt([
-      {1, {:exclusive, random_value(:exclusive_fetch, nil)}},
+      {1, {:exclusive, random_value(:exclusive_fetcher, nil)}},
       {5, {:shared, :klife_default_fetcher}}
     ])
   end
@@ -246,7 +256,7 @@ defmodule Simulator.EngineConfig do
   defp random_value({:cg_topics, :fetch_strategy}, base_val) do
     weighted_random_opt([
       {5, base_val},
-      {1, {:exclusive, random_value(:exclusive_fetch, nil)}},
+      {1, {:exclusive, random_value(:exclusive_fetcher, nil)}},
       {1, {:shared, :klife_default_fetcher}}
     ])
   end
@@ -254,7 +264,7 @@ defmodule Simulator.EngineConfig do
   defp random_value({:consumer_group, :fetch_strategy}, base_val) do
     weighted_random_opt([
       {5, base_val},
-      {1, {:exclusive, random_value(:exclusive_fetch, nil)}},
+      {1, {:exclusive, random_value(:exclusive_fetcher, nil)}},
       {1, {:shared, :klife_default_fetcher}}
     ])
   end
@@ -271,24 +281,24 @@ defmodule Simulator.EngineConfig do
     weighted_random_opt([{5, base_val}, :read_committed, :read_uncommitted])
   end
 
-  defp random_value({:exclusive_fetch, :max_wait_ms}, base_val) do
+  defp random_value({:exclusive_fetcher, :max_wait_ms}, base_val) do
     weighted_random_opt([{5, base_val}, 0, 100, 500, 1000, 5000])
   end
 
-  defp random_value({:exclusive_fetch, :min_bytes}, base_val) do
-    weighted_random_opt([{5, base_val}, 10_000, 20_000, 50_000, 100_000])
-  end
-
-  defp random_value({:exclusive_fetch, :max_bytes}, base_val) do
+  defp random_value({:exclusive_fetcher, :max_bytes_per_request}, base_val) do
     weighted_random_opt([{5, base_val}, 100_000, 250_000, 500_000, 1_000_000, 5_000_000])
   end
 
-  defp random_value({:exclusive_fetch, :request_timeout_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 3_000, 5_000, 10_000, 30_000])
+  defp random_value({:exclusive_fetcher, :request_timeout_ms}, base_val) do
+    weighted_random_opt([{5, base_val}, 10_000, 20_000, 30_000, 60_000])
   end
 
-  defp random_value({:exclusive_fetch, :isolation_level}, base_val) do
+  defp random_value({:exclusive_fetcher, :isolation_level}, base_val) do
     weighted_random_opt([{5, base_val}, :read_committed, :read_uncommitted])
+  end
+
+  defp random_value({:exclusive_fetcher, :linger_ms}, base_val) do
+    weighted_random_opt([{5, base_val}, 500, 1000, 2000])
   end
 
   defp random_value({_context, _key}, base_val), do: base_val

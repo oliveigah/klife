@@ -21,7 +21,7 @@ defmodule Klife.Connection do
             port: port,
             ssl: ssl,
             # TODO: Should we expose this?
-            read_timeout: :timer.seconds(15)
+            read_timeout: :timer.seconds(60)
           }
 
         :ok = socket_opts(conn, socket_opts)

@@ -3,6 +3,7 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   require Logger
 
+  alias Klife.Consumer.Fetcher
   alias Klife.Connection.Broker
 
   alias Klife.Helpers
@@ -48,12 +49,10 @@ defmodule Klife.Consumer.ConsumerGroup do
       default: {:exclusive, []},
       doc: """
       Fetch strategy for this topic. Can be either:
-      - `{:exclusive, options}` - Will call the broker directly
-      - `{:shared, fetcher_name}` - Will use a shared fetcher that will batch requests for the same broker
+      - `{:exclusive, fetcher_options}` - Will create an exclusive fetcher to be used for this consumer group
+      - `{:shared, fetcher_name}` - Will use a pre existing fetcher that will batch requests from different sources
 
-      Defaults to `{:shared, default_fetcher}`
-
-      TODO: add tradeoffs
+      Defaults to `{:shared, Client.default_fetcher}`
       """
     ],
     committers_count: [
@@ -66,40 +65,6 @@ defmodule Klife.Consumer.ConsumerGroup do
       default: :read_committed,
       doc:
         "Define if the consumers of the consumer group will receive uncommitted transactional records"
-    ]
-  ]
-
-  @exclusive_fetch_opts [
-    max_wait_ms: [
-      type: :non_neg_integer,
-      default: 0,
-      doc: "The maximum time in milliseconds to wait for the fetch request"
-    ],
-    min_bytes: [
-      type: :pos_integer,
-      default: 1,
-      doc: "The minimum number of bytes the server should return for a fetch request"
-    ],
-    max_bytes: [
-      type: :pos_integer,
-      default: 500_000,
-      doc: "The maximum number of bytes the server should return for a fetch request"
-    ],
-    isolation_level: [
-      type: {:in, [:read_committed, :read_uncommitted]},
-      default: :read_committed,
-      doc: "The isolation level for reading messages"
-    ],
-    client_id: [
-      type: {:or, [:string, nil]},
-      default: nil,
-      doc: "Client ID to use in fetch requests"
-    ],
-    request_timeout_ms: [
-      type: :non_neg_integer,
-      default: :timer.seconds(5),
-      doc:
-        "The maximum amount of time the consumer will wait for a broker response to a request before considering it as failed."
     ]
   ]
 
@@ -178,14 +143,15 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   def get_opts(), do: @consumer_group_opts
 
-  def get_exclusive_fetch_opts, do: @exclusive_fetch_opts
-
   def validate_fetch_strategy({:shared, fetcher_name}) when is_atom(fetcher_name) do
     {:ok, {:shared, fetcher_name}}
   end
 
   def validate_fetch_strategy({:exclusive, options}) when is_list(options) do
-    case NimbleOptions.validate(options, @exclusive_fetch_opts) do
+    # Name will be replaced on the maybe_start_group_fetcher function
+    with_tmp_name = Keyword.put(options, :name, :tbd)
+
+    case NimbleOptions.validate(with_tmp_name, Fetcher.get_opts()) do
       {:ok, validated_opts} -> {:ok, {:exclusive, validated_opts}}
       {:error, error} -> {:error, error}
     end
@@ -263,12 +229,20 @@ defmodule Klife.Consumer.ConsumerGroup do
         committers_distribution: %{}
       }
       |> get_coordinator!()
+      |> maybe_start_group_fetcher()
 
     init_state = %{
       init_state
       | topics:
           args_map.topics
-          |> Enum.map(fn tc -> {tc.name, TopicConfig.from_map(tc, init_state)} end)
+          |> Enum.map(fn tc ->
+            final_tc =
+              tc
+              |> TopicConfig.from_map(init_state)
+              |> maybe_start_topic_fetcher(init_state)
+
+            {tc.name, final_tc}
+          end)
           |> Map.new()
     }
 
@@ -281,10 +255,6 @@ defmodule Klife.Consumer.ConsumerGroup do
     do: :"acked_topic_partitions.#{client_name}.#{cg_mod}.#{cg_name}"
 
   defp ack_topic_partition(client_name, cg_mod, topic_id, partition_idx, cg_name) do
-    if :persistent_term.get(:klife_after_ack, nil) == nil do
-      :persistent_term.put(:klife_after_ack, System.monotonic_time(:millisecond))
-    end
-
     client_name
     |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.insert({{topic_id, partition_idx}})
@@ -303,7 +273,9 @@ defmodule Klife.Consumer.ConsumerGroup do
     }
 
     fun = fn ->
-      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
+      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content, %{},
+             timeout_ms: 5000
+           ) do
         {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
           if state.coordinator_id != nil and state.coordinator_id != broker_id do
             Enum.each(state.committers_distribution, fn {commiter_id, _list} ->
@@ -322,12 +294,16 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         {:ok, %{content: %{coordinators: [%{error_code: ec}]}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.FindCoordinator)} call"
+            "Error code #{ec} returned from broker for group #{state.group_name} on #{inspect(M.FindCoordinator)} call"
           )
 
           :retry
 
-        _data ->
+        {:error, reason} ->
+          Logger.error(
+            "Unexpected error #{reason} on #{inspect(M.FindCoordinator)} call for group #{state.group_name}"
+          )
+
           :retry
       end
     end
@@ -382,10 +358,16 @@ defmodule Klife.Consumer.ConsumerGroup do
            M.ConsumerGroupHeartbeat,
            state.client_name,
            state.coordinator_id,
-           content
+           content,
+           %{},
+           timeout_ms: state.heartbeat_interval_ms + 1000
          ) do
-      {:error, _} ->
-        get_coordinator!(%__MODULE__{state | heartbeat_interval_ms: 1000})
+      {:error, error} ->
+        Logger.error("Error on heartbeat for #{state.group_name} error: #{error}")
+
+        state
+        |> get_coordinator!()
+        |> do_heartbeat()
 
       {:ok, %{content: %{error_code: 0} = resp}} ->
         new_state =
@@ -420,7 +402,9 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         cond do
           coordinator_error? ->
-            get_coordinator!(state)
+            state
+            |> get_coordinator!()
+            |> do_heartbeat()
 
           fence_error? ->
             # The easiest thing to do is restart the consumer group, because it guarantees
@@ -483,6 +467,47 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   defp maybe_start_committer(%__MODULE__{} = state) do
     state
+  end
+
+  defp maybe_start_group_fetcher(%__MODULE__{fetch_strategy: {:exclusive, opts}} = state)
+       when is_list(opts) do
+    name = Module.concat([__MODULE__, state.mod, state.group_name])
+
+    args =
+      opts
+      |> Keyword.put(:client_name, state.client_name)
+      |> Keyword.put(:name, name)
+      |> Map.new()
+
+    {:ok, _pid} = Fetcher.start_link(args)
+
+    %{state | fetch_strategy: {:exclusive, name}}
+  end
+
+  defp maybe_start_group_fetcher(%__MODULE__{} = state) do
+    state
+  end
+
+  defp maybe_start_topic_fetcher(
+         %TopicConfig{fetch_strategy: {:exclusive, opts}} = tc,
+         %__MODULE__{} = state
+       )
+       when is_list(opts) do
+    name = Module.concat([__MODULE__, state.mod, state.group_name, tc.name])
+
+    args =
+      opts
+      |> Keyword.put(:client_name, state.client_name)
+      |> Keyword.put(:name, name)
+      |> Map.new()
+
+    {:ok, _pid} = Fetcher.start_link(args)
+
+    %{tc | fetch_strategy: {:exclusive, name}}
+  end
+
+  defp maybe_start_topic_fetcher(%TopicConfig{} = tc, %__MODULE__{} = _state) do
+    tc
   end
 
   defp get_init_offsets(%__MODULE__{} = state, tid_p_list) do
@@ -618,12 +643,16 @@ defmodule Klife.Consumer.ConsumerGroup do
         stop_consumer(acc_state, topic_id, partition)
       end)
 
-    init_offsets_map = get_init_offsets(state, to_start)
-
     new_state =
-      Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
-        start_consumer(acc_state, topic_id, partition, init_offsets_map[{topic_id, partition}])
-      end)
+      if MapSet.size(to_start) != 0 do
+        init_offsets_map = get_init_offsets(state, to_start)
+
+        Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
+          start_consumer(acc_state, topic_id, partition, init_offsets_map[{topic_id, partition}])
+        end)
+      else
+        new_state
+      end
 
     if MapSet.size(to_stop) != 0 or MapSet.size(to_start) != 0 do
       %{new_state | heartbeat_interval_ms: 5}
