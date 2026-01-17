@@ -73,7 +73,8 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         {:async_broker_response, req_ref, binary_resp, M.Fetch = msg_mod, msg_version},
         %__MODULE__{} = state
       ) do
-    {:ok, %{content: %{responses: resp_list}}} =
+    # TODO: Handle other error codes
+    {:ok, %{content: %{error_code: 0, responses: resp_list}}} =
       msg_mod.deserialize_response(binary_resp, msg_version)
 
     req_data = state.requests[req_ref].data
@@ -93,7 +94,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
           0 ->
             first_aborted_offset =
               if state.fetcher_config.isolation_level == :read_committed do
-                Enum.map(at, fn %{first_offset: fo} -> fo end)
+                Enum.map(at || [], fn %{first_offset: fo} -> fo end)
                 |> Enum.min(fn -> :infinity end)
               else
                 :infinity

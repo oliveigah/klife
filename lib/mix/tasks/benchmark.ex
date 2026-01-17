@@ -64,21 +64,15 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
-      l10 = Enum.map(1..10, fn _i -> :rand.bytes(1000) end)
-      l100 = Enum.map(1..100, fn _i -> :rand.bytes(1000) end)
-      l1000 = Enum.map(1..1000, fn _i -> :rand.bytes(1000) end)
-      l10000 = Enum.map(1..10000, fn _i -> :rand.bytes(1000) end)
-
       Benchee.run(
         %{
-          "l10" => fn -> Enum.shuffle(l10) end,
-          "l100" => fn -> Enum.shuffle(l100) end,
-          "l1000" => fn -> Enum.shuffle(l1000) end,
-          "l10000" => fn -> Enum.shuffle(l10000) end
+          "phash2" => fn _ -> :erlang.phash2(self(), 100) end,
+          "pget" => fn _ -> Process.get(:my_key) end
         },
         time: 10,
         memory_time: 2,
-        parallel: parallel |> String.to_integer()
+        parallel: parallel |> String.to_integer(),
+        before_scenario: fn _ -> Process.put(:my_key, :rand.bytes(10)) end
       )
     end
 

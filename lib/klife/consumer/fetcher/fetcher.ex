@@ -35,13 +35,13 @@ defmodule Klife.Consumer.Fetcher do
     ],
     max_in_flight_requests: [
       type: :non_neg_integer,
-      default: 10,
+      default: 3,
       doc:
         "The maximum number of fetch requests per batcher the fetcher will send before waiting for responses."
     ],
     # We must have more batchers here than for the producer
     # because the message deserialization happens inside
-    # the batcher, and if the message is large (true for fetch)
+    # the batcher, and if the response is large (very likely for fetch)
     # it may become a bottleneck!
     batchers_count: [
       type: :pos_integer,

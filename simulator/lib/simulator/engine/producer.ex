@@ -6,6 +6,7 @@ defmodule Simulator.Engine.Producer do
   import Simulator.Engine.ProcessRegistry, only: [via_tuple: 1]
 
   alias Simulator.Engine
+  alias Simulator.EngineConfig
 
   defstruct [
     :client,
@@ -30,6 +31,16 @@ defmodule Simulator.Engine.Producer do
       record_key_bytes: init_args.record_key_bytes
     }
 
+    %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
+
+    seed =
+      Map.fetch!(
+        seeds_map,
+        {:producer, EngineConfig.parse_topic(state.topic), state.partition, init_args.index}
+      )
+
+    :rand.seed(:exsss, seed)
+
     send(self(), :produce_loop)
     {:ok, state}
   end
@@ -52,7 +63,8 @@ defmodule Simulator.Engine.Producer do
         %{state | allowed_to_produce?: allowed?}
       end
 
-    Process.send_after(self(), :produce_loop, state.loop_interval_ms)
+    jitter = Enum.random(50..150) / 100
+    Process.send_after(self(), :produce_loop, round(state.loop_interval_ms * jitter))
     {:noreply, new_state}
   end
 

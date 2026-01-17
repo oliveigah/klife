@@ -15,7 +15,8 @@ defmodule Simulator.EngineConfig do
     :record_value_bytes,
     :record_key_bytes,
     :invariants_check_interval_ms,
-    :lag_warning_multiplier
+    :root_seed,
+    :random_seeds_map
   ]
 
   def generate_config do
@@ -25,9 +26,14 @@ defmodule Simulator.EngineConfig do
     end
   end
 
+  def parse_topic(tname) do
+    String.split(tname, "_") |> List.first()
+  end
+
   defp generate_random do
     # Order is imporant here because some configs depends on others
     config_keys = [
+      :root_seed,
       :clients,
       :topics,
       :topics_replication_factor,
@@ -38,7 +44,8 @@ defmodule Simulator.EngineConfig do
       :producer_loop_interval_ms,
       :record_value_bytes,
       :record_key_bytes,
-      :invariants_check_interval_ms
+      :invariants_check_interval_ms,
+      :random_seeds_map
     ]
 
     Enum.reduce(config_keys, %__MODULE__{}, fn key, acc_config ->
@@ -81,13 +88,36 @@ defmodule Simulator.EngineConfig do
     [Simulator.NormalClient, Simulator.TLSClient]
   end
 
+  defp random_value(:root_seed, _config) do
+    <<a::32, b::32, c::32>> = :crypto.strong_rand_bytes(12)
+    {a, b, c}
+  end
+
+  defp random_value(:random_seeds_map, %__MODULE__{} = config) do
+    with_producer =
+      for %{topic: tname, partitions: pcount} <- config.topics,
+          pidx <- 0..pcount,
+          producer_idx <- 0..(config.producer_concurrency - 1),
+          into: %{} do
+        {{:producer, tname, pidx, producer_idx}, random_value(:root_seed, config)}
+      end
+
+    for %{topic: tname, partitions: pcount} <- config.topics,
+        pidx <- 0..pcount,
+        %{name: cgname, max_consumers: cgcount} <- config.consumer_groups,
+        cgidx <- 0..(cgcount - 1),
+        into: with_producer do
+      {{:consumer, tname, pidx, cgname, cgidx}, random_value(:root_seed, config)}
+    end
+  end
+
   defp random_value(:topics, _config) do
-    topic_count = weighted_random_opt([3, 5, 10, 15, 20])
+    topic_count = Enum.random(1..10)
 
     Enum.map(1..topic_count, fn _ ->
       %{
         topic: Base.encode16(:rand.bytes(30)),
-        partitions: weighted_random_opt([1, 5, 10, 15, 20, 25, 30])
+        partitions: Enum.random(1..12)
       }
     end)
   end
@@ -97,17 +127,17 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:consumer_groups, _config) do
-    cg_count = weighted_random_opt([3, 5, 10])
+    cg_count = Enum.random(1..5)
 
     Enum.map(1..cg_count, fn i ->
       # TODO: Fix the problem with multiple consumers that start producing before everyone is ready
-      %{name: "SimulatorGroup#{i}", max_consumers: weighted_random_opt([1])}
+      %{name: "SimulatorGroup#{i}", max_consumers: Enum.random(1..1)}
     end)
   end
 
   defp random_value(:consumer_group_configs, config) do
     for %{name: cg_name, max_consumers: mc} <- config.consumer_groups,
-        idx <- 1..mc do
+        idx <- 0..(mc - 1) do
       opts = random_value(:single_consumer_group, config)
 
       cg_mod =
@@ -196,32 +226,32 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:producer_max_rps, _config) do
-    weighted_random_opt([50, 80, 100])
+    Enum.random(10..100)
   end
 
   defp random_value(:producer_concurrency, _config) do
-    weighted_random_opt([5, 7, 10])
+    Enum.random(3..10)
   end
 
   defp random_value(:producer_loop_interval_ms, _config) do
-    weighted_random_opt([1000])
+    1000
   end
 
   defp random_value(:record_value_bytes, _config) do
-    weighted_random_opt([10, 100, 1000, 10_000])
+    Enum.random(10..10000)
   end
 
   defp random_value(:record_key_bytes, _config) do
-    weighted_random_opt([64, 128])
+    Enum.random(32..64)
   end
 
   defp random_value(:invariants_check_interval_ms, _config) do
-    weighted_random_opt([5_000])
+    5000
   end
 
   defp random_value({:cg_topics, :handler_max_unacked_commits}, _base_val) do
     # TODO: Think how to keep invariants even when not 0
-    weighted_random_opt([0])
+    0
   end
 
   defp random_value({:cg_topics, :handler_max_batch_size}, base_val) do
@@ -230,11 +260,11 @@ defmodule Simulator.EngineConfig do
 
   defp random_value({:cg_topics, :offset_reset_policy}, _base_val) do
     # TODO: Think how to keep invariants even when not latest
-    weighted_random_opt([:latest])
+    :latest
   end
 
   defp random_value({:cg_topics, :fetch_max_bytes}, base_val) do
-    weighted_random_opt([base_val, 100_000, 500_000, 2_000_000, 4_000_000])
+    weighted_random_opt([base_val, 100_000, 500_000, 1_000_000])
   end
 
   defp random_value({:cg_topics, :max_queue_size}, base_val) do
@@ -270,7 +300,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:consumer_group, :rebalance_timeout_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 10_000, 20_000, 60_000, 120_000])
+    weighted_random_opt([{5, base_val}, 20_000, 60_000, 120_000])
   end
 
   defp random_value({:consumer_group, :committers_count}, base_val) do

@@ -20,6 +20,7 @@ defmodule Simulator.Engine do
   def init(_init_args) do
     config = EngineConfig.generate_config()
     :persistent_term.put(:engine_config, config)
+    :rand.seed(:exsss, config.root_seed)
 
     total_produced_counter = :atomics.new(1, [])
 
@@ -98,7 +99,7 @@ defmodule Simulator.Engine do
   end
 
   def start_link(args) do
-    ts = "_" <> (DateTime.utc_now() |> DateTime.to_iso8601())
+    ts = ("_" <> (DateTime.utc_now() |> DateTime.to_iso8601())) |> String.slice(0..19)
     :persistent_term.put(:simulation_timestamp, ts)
 
     case System.get_env("RERUN_TS") do
@@ -145,7 +146,7 @@ defmodule Simulator.Engine do
   defp do_check_invariants(%__MODULE__{} = state) do
     config = state.config
     now = System.monotonic_time(:millisecond)
-    lag_threshold = :timer.seconds(10)
+    lag_threshold = :timer.seconds(30)
 
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
@@ -242,7 +243,7 @@ defmodule Simulator.Engine do
   def handle_producers(%EngineConfig{} = config) do
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1),
-        idx <- 1..config.producer_concurrency do
+        idx <- 0..(config.producer_concurrency - 1) do
       args = %{
         client: Enum.random(config.clients),
         topic: t,

@@ -220,7 +220,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         client_name: mod.klife_client(),
         member_id: args_map.member_id,
         epoch: 0,
-        heartbeat_interval_ms: 1000,
+        heartbeat_interval_ms: 5000,
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
         consumers_monitor_map: %{},
@@ -274,7 +274,7 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     fun = fn ->
       case Broker.send_message(M.FindCoordinator, state.client_name, :any, content, %{},
-             timeout_ms: 5000
+             timeout_ms: 15_000
            ) do
         {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
           if state.coordinator_id != nil and state.coordinator_id != broker_id do

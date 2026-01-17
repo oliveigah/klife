@@ -1,11 +1,13 @@
 defmodule Simulator.Engine.Consumer do
   alias Simulator.Engine
+  alias Simulator.EngineConfig
 
   # Need to create multiple modules because the consumer group register itself
   # using {cg_mod.klife_client(), cg_mod, validated_args.group_name}
   # so it is not possible to reuse the same module for the same group
-  for i <- 1..100 do
+  for i <- 0..100 do
     defmodule :"#{__MODULE__}.NormalClient#{i}" do
+      require Logger
       use Klife.Consumer.ConsumerGroup, client: Simulator.NormalClient
 
       def handle_record_batch(t, p, gn, r_list) do
@@ -19,12 +21,22 @@ defmodule Simulator.Engine.Consumer do
       end
 
       def handle_consumer_start(topic, partition, group_name) do
+        %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
+
+        seed =
+          Map.fetch!(
+            seeds_map,
+            {:consumer, EngineConfig.parse_topic(topic), partition, group_name, unquote(i)}
+          )
+
+        :rand.seed(:exsss, seed)
+
         :ok = Engine.set_consumer_ready(topic, partition, group_name)
       end
     end
   end
 
-  for i <- 1..100 do
+  for i <- 0..100 do
     defmodule :"#{__MODULE__}.TLSClient#{i}" do
       use Klife.Consumer.ConsumerGroup, client: Simulator.TLSClient
 
