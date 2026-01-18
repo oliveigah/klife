@@ -226,8 +226,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       true ->
         {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
 
-        # # To validate lag on simulation test
-        # Process.sleep(11_000)
+        # To validate lag on simulation test
+        # Process.sleep(31_000)
 
         # # To validate skip on simulation test
         # rec_batch =
@@ -236,7 +236,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         #   else
         #     rec_batch
         #   end
-        #
 
         # # To validate out of order on simulation test
         # rec_batch = Enum.reverse(rec_batch)

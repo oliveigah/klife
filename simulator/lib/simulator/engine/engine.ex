@@ -33,6 +33,7 @@ defmodule Simulator.Engine do
       |> Map.new()
 
     :persistent_term.put(:total_produced_counter, total_produced_counter)
+    :persistent_term.put(:simulation_start_ts, System.monotonic_time(:second))
 
     save_data(:"config.exs", inspect(config, limit: :infinity) |> Code.format_string!())
 
@@ -127,7 +128,24 @@ defmodule Simulator.Engine do
   def handle_info(:invariants_check_loop, %__MODULE__{} = state) do
     config = state.config
     total_produced_rec_count = :atomics.get(state.total_produced_counter, 1)
+    total_invariants = :ets.info(:invariants_violations, :size)
+    ts = :persistent_term.get(:simulation_timestamp)
+
+    :ok =
+      :ets.tab2file(
+        :invariants_violations,
+        Path.relative("simulations_data/#{ts}/invariants_violations.ets") |> to_charlist()
+      )
+
+    invariants_data =
+      :ets.tab2list(:invariants_violations)
+      |> Enum.map(fn e -> inspect(e) end)
+      |> Enum.join("\n")
+
+    save_data(:"invariants_violations.exs", invariants_data)
+
     Logger.info("Running invariants check!")
+    Logger.info("Total invariants violations: #{total_invariants}")
     Logger.info("Total produced records: #{total_produced_rec_count}")
 
     Enum.each(config.consumer_groups, fn %{name: cgname} ->
@@ -148,10 +166,24 @@ defmodule Simulator.Engine do
     now = System.monotonic_time(:millisecond)
     lag_threshold = :timer.seconds(30)
 
+    time_diff_from_start =
+      System.monotonic_time(:second) - :persistent_term.get(:simulation_start_ts)
+
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
       cg_latest_ts_map =
         Enum.map(config.consumer_groups, fn %{name: cgname} ->
+          consumed_recs = :ets.info(idempotency_table_name(t, p, cgname), :size)
+
+          if(consumed_recs == 0 and time_diff_from_start > 60) do
+            insert_violation(:no_produce, %{
+              topic: t,
+              partition: p
+            })
+          end
+
+          :ets.lookup(consumer_table_name(t, p, cgname), :latest_timestamp)
+
           [{_, latest_ts}] = :ets.lookup(consumer_table_name(t, p, cgname), :latest_timestamp)
           {cgname, latest_ts}
         end)
@@ -184,9 +216,13 @@ defmodule Simulator.Engine do
                   now - conf_ts
                 end)
 
-              Logger.warning(
-                "Skipped #{length(skipped)} records on #{cg} #{t} #{p}! oldest offset #{offset} oldest time diff #{now - conf_ts} ms"
-              )
+              insert_violation(:skipped_record, %{
+                consumer_group: cg,
+                topic: t,
+                partition: p,
+                oldest_offset: offset,
+                oldest_time_diff_ms: now - conf_ts
+              })
             end
 
             delayed =
@@ -201,9 +237,13 @@ defmodule Simulator.Engine do
                   now - conf_ts
                 end)
 
-              Logger.warning(
-                "Too much lag for #{cg} #{t} #{p}! Oldest offset #{offset} oldest time diff #{now - conf_ts} ms!"
-              )
+              insert_violation(:too_much_lag, %{
+                consumer_group: cg,
+                topic: t,
+                partition: p,
+                oldest_offset: offset,
+                oldest_time_diff_ms: now - conf_ts
+              })
             end
         end
       end
@@ -214,6 +254,7 @@ defmodule Simulator.Engine do
 
   def handle_tables(%EngineConfig{} = config) do
     :ets.new(:engine_support, [:set, :public, :named_table])
+    :ets.new(:invariants_violations, [:bag, :public, :named_table])
 
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
@@ -236,6 +277,19 @@ defmodule Simulator.Engine do
         :ets.new(idempotency_table_name(t, p, cg_name), [:set, :public, :named_table])
       end)
     end
+
+    :ok
+  end
+
+  def insert_violation(type, details) do
+    ts = System.monotonic_time(:second) - :persistent_term.get(:simulation_start_ts)
+    true = :ets.insert(:invariants_violations, {ts, type, details})
+
+    Logger.critical(%{
+      timestamp: ts,
+      invariant_type: type,
+      details: details
+    })
 
     :ok
   end
@@ -306,7 +360,6 @@ defmodule Simulator.Engine do
     lookup_resp = :ets.lookup(producer_table, to_take)
 
     duplicated_message? = :ets.member(idempotency_table, rec.offset)
-    not_produced_message? = lookup_resp == []
 
     expected_record? =
       case lookup_resp do
@@ -321,64 +374,29 @@ defmodule Simulator.Engine do
 
     cond do
       duplicated_message? ->
-        raise """
-        CONSUMED DUPLICATED MESSAGE!
-
-        TOPIC: #{rec.topic}
-        PARTITION: #{rec.partition}
-        GROUP NAME: #{cg_name}
-        DUPLICATED OFFSET: #{rec.offset}
-
-        CONSUMER GROUP CONFIG:
-
-        #{inspect(get_cg_config(cg_name, cg_mod))}
-        """
-
-      not_produced_message? ->
-        # TODO: This may be ok for the :earliest reset policy
-        raise """
-        CONSUMED NOT PRODUCED MESSAGE!
-
-        TOPIC: #{rec.topic}
-        PARTITION: #{rec.partition}
-        OFFSET: #{rec.offset}
-        GROUP NAME: #{cg_name}
-        RECORD: #{inspect(rec)}
-
-        CONSUMER GROUP CONFIG:
-
-        #{inspect(get_cg_config(cg_name, cg_mod))}
-        """
+        :ok =
+          insert_violation(:consumed_duplicate, %{
+            consumer_group: cg_name,
+            topic: rec.topic,
+            partition: rec.partition,
+            duplicated_offset: rec.offset
+          })
 
       not expected_record? ->
-        raise """
-        CONSUMED UNEXPECTED MESSAGE!
-
-        TOPIC: #{rec.topic}
-        PARTITION: #{rec.partition}
-        OFFSET: #{rec.offset}
-        GROUP NAME: #{cg_name}
-        RECORD: #{inspect(rec)}
-
-        CONSUMER GROUP CONFIG:
-
-        #{inspect(get_cg_config(cg_name, cg_mod))}
-        """
+        :ok =
+          insert_violation(:consumed_wrong_hash, %{
+            consumer_group: cg_name,
+            topic: rec.topic,
+            partition: rec.partition
+          })
 
       out_of_order? ->
-        raise """
-        CONSUMED OUT OF ORDER MESSAGE!
-
-        TOPIC: #{rec.topic}
-        PARTITION: #{rec.partition}
-        OFFSET: #{rec.offset}
-        GROUP NAME: #{cg_name}
-        RECORD: #{inspect(rec)}
-
-        CONSUMER GROUP CONFIG:
-
-        #{inspect(get_cg_config(cg_name, cg_mod))}
-        """
+        :ok =
+          insert_violation(:consumed_out_of_order, %{
+            consumer_group: cg_name,
+            topic: rec.topic,
+            partition: rec.partition
+          })
 
       true ->
         case :atomics.compare_exchange(counter, 1, latest_consummed_offset, rec.offset) do
