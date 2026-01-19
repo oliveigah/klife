@@ -49,8 +49,14 @@ defmodule Simulator.Engine do
 
     :ok = handle_consumers(config, consumer_sup_pid)
 
-    # Wait for consumers to stabilize
-    Process.sleep(30_000)
+    # TODO: Think about how to be sure that all consumers have stabilized
+    # probably wait for the first commit would be enough because after the
+    # first commit, all invariants must hold true.
+    #
+    # The problem happens only when we start producing records
+    # before the consumer has a proper offset to reset to
+    # otherwise it will reset using latest or earliest
+    # Process.sleep(30_000)
 
     :ok = handle_producers(config)
 
@@ -91,7 +97,6 @@ defmodule Simulator.Engine do
         content
       )
 
-    # TODO: Think about how to reuse the same topic!
     Enum.filter(topics_response, fn e -> e.error_code != 0 end)
     |> case do
       [] ->

@@ -626,15 +626,17 @@ defmodule Klife.Consumer.ConsumerGroup do
         {broker, content}
       end)
 
-    Task.async_stream(contents, fn {broker, content} ->
-      {:ok, %{content: %{topics: tdata}}} =
-        Broker.send_message(M.ListOffsets, client, broker, content)
+    Task.async_stream(
+      contents,
+      fn {broker, content} ->
+        {:ok, %{content: %{topics: tdata}}} =
+          Broker.send_message(M.ListOffsets, client, broker, content)
 
-      for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions do
-        # Need the -1 so we do not skip the first record
-        {{topic_resp.name, pdata.partition_index}, pdata.offset - 1}
-      end
-    end)
+        for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions do
+          # Need the -1 so we do not skip the first record
+          {{topic_resp.name, pdata.partition_index}, pdata.offset - 1}
+        end
+      end, timeout: 30_000)
     |> Enum.flat_map(fn {:ok, resp} -> resp end)
     |> Map.new()
   end

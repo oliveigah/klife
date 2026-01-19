@@ -123,15 +123,14 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:topics_replication_factor, _config) do
-    weighted_random_opt([1, 2, 3])
+    Enum.random(1..3)
   end
 
   defp random_value(:consumer_groups, _config) do
     cg_count = Enum.random(1..5)
 
     Enum.map(1..cg_count, fn i ->
-      # TODO: Fix the problem with multiple consumers that start producing before everyone is ready
-      %{name: "SimulatorGroup#{i}", max_consumers: 3}
+      %{name: "SimulatorGroup#{i}", max_consumers: Enum.random(1..5)}
     end)
   end
 
@@ -259,8 +258,20 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :offset_reset_policy}, _base_val) do
-    # TODO: Think how to keep invariants even when not latest
-    :latest
+    # TODO: Think how to keep invariants even when not earliest
+    # the problem is that we need to figure out how to wait for
+    # consumer group stabilization before start producing, otherwise
+    # a new consumer may be assigned to a partition after
+    # records production has started and before a previous commit
+    # by other consumer. This will lead to the new consumer reset
+    # the start offset using latest policy effectively skipping
+    # some records.
+    #
+    # Idea: We can have a single record be produced, consumed and committed
+    # and them delete it from the engine tables (so it does not count
+    # towards invariants validations) and start counting from it, this probaly
+    # solves the problem!
+    :earliest
   end
 
   defp random_value({:cg_topics, :fetch_max_bytes}, base_val) do
