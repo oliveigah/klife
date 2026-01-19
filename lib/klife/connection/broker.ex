@@ -131,7 +131,10 @@ defmodule Klife.Connection.Broker do
     conn = get_connection(client_name, broker_id)
     true = Controller.insert_in_flight(client_name, correlation_id)
 
-    timeout = Keyword.get(opts, :timeout_ms, conn.read_timeout)
+    # TODO: We probably should have a connection config
+    # called something like "default_timeout_ms" and reuse
+    # it as the default timeout
+    timeout = Keyword.get(opts, :timeout_ms, 30_000)
 
     case Connection.write(raw_data, conn) do
       :ok ->
@@ -225,13 +228,11 @@ defmodule Klife.Connection.Broker do
         if before_timeout? do
           send(callback_pid, {:async_broker_response, callback_ref, reply, msg_mod, msg_version})
         else
-          if Process.alive?(callback_pid) do
-            Logger.warning("""
-            Delivery confirmation arrived after timeout for message #{inspect(msg_mod)} on client #{inspect(client_name)}
+          Logger.warning("""
+          Delivery confirmation arrived after timeout for message #{inspect(msg_mod)} on client #{inspect(client_name)}
 
-            conn: #{inspect(conn)}
-            """)
-          end
+          conn: #{inspect(conn)}
+          """)
         end
 
       # async send with no callback and no timeout
@@ -254,14 +255,6 @@ defmodule Klife.Connection.Broker do
         # retry a delivery if there is enough time where the producing process
         # wont give up in the middle of a request. The rule is:
         # now + req_timeout - base_time < delivery_timeout - :timer.seconds(2)
-        #
-        Logger.warning("""
-        Unknown correlation id received from client #{inspect(client_name)}.
-
-        correlation_id: #{inspect(correlation_id)}
-
-        conn: #{inspect(conn)}
-        """)
 
         nil
     end

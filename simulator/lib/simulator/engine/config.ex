@@ -131,7 +131,7 @@ defmodule Simulator.EngineConfig do
 
     Enum.map(1..cg_count, fn i ->
       # TODO: Fix the problem with multiple consumers that start producing before everyone is ready
-      %{name: "SimulatorGroup#{i}", max_consumers: Enum.random(1..1)}
+      %{name: "SimulatorGroup#{i}", max_consumers: 3}
     end)
   end
 
@@ -300,7 +300,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:consumer_group, :rebalance_timeout_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 20_000, 60_000, 120_000])
+    weighted_random_opt([{5, base_val}, 20_000, 30_000])
   end
 
   defp random_value({:consumer_group, :committers_count}, base_val) do

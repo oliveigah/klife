@@ -220,7 +220,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         client_name: mod.klife_client(),
         member_id: args_map.member_id,
         epoch: 0,
-        heartbeat_interval_ms: 5000,
+        heartbeat_interval_ms: 1_000,
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
         consumers_monitor_map: %{},
@@ -264,6 +264,12 @@ defmodule Klife.Consumer.ConsumerGroup do
     client_name
     |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.delete({{topic_id, partition_idx}})
+  end
+
+  defp unack_all_topic_partitions(client_name, cg_mod, cg_name) do
+    client_name
+    |> get_acked_topic_partitions_table(cg_mod, cg_name)
+    |> :ets.delete_all_objects()
   end
 
   def get_coordinator!(%__MODULE__{} = state) do
@@ -360,9 +366,21 @@ defmodule Klife.Consumer.ConsumerGroup do
            state.coordinator_id,
            content,
            %{},
-           timeout_ms: state.heartbeat_interval_ms + 1000
+           timeout_ms: state.rebalance_timeout_ms
          ) do
+      {:error, :timeout} ->
+        raise "Timeout on heartbeat for client #{state.client_name} group #{state.group_name}. It is not safe to keep consuming records because consumers may be fenced!"
+
+      # Needs to unack all because this loop may cause problems when a consumer can not properly
+      # send/receive heartbeats. Because the consumer group will be stuck on
+      # this heartbeat -> coordinator -> heartbeat loop, and wont stop consumers.
+      #
+      # The comsumption will be re enabled after the next successfull heartbeat
+      #
+      # TODO: Should we raise after some timeout here?
       {:error, error} ->
+        true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
+
         Logger.error("Error on heartbeat for #{state.group_name} error: #{error}")
 
         state
@@ -688,6 +706,8 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def handle_terminate(%__MODULE__{} = state, _reason) do
+    true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
+
     # TODO: Maybe we should also use the termination reason to define leaving epoch
     leaving_epoch = if state.instance_id != nil, do: -2, else: -1
 

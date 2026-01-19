@@ -49,6 +49,9 @@ defmodule Simulator.Engine do
 
     :ok = handle_consumers(config, consumer_sup_pid)
 
+    # Wait for consumers to stabilize
+    Process.sleep(30_000)
+
     :ok = handle_producers(config)
 
     send(self(), :invariants_check_loop)

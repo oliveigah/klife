@@ -51,6 +51,16 @@ defmodule Simulator.Engine.Consumer do
       end
 
       def handle_consumer_start(topic, partition, group_name) do
+        %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
+
+        seed =
+          Map.fetch!(
+            seeds_map,
+            {:consumer, EngineConfig.parse_topic(topic), partition, group_name, unquote(i)}
+          )
+
+        :rand.seed(:exsss, seed)
+
         :ok = Engine.set_consumer_ready(topic, partition, group_name)
       end
     end
