@@ -229,7 +229,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:producer_concurrency, _config) do
-    Enum.random(3..10)
+    Enum.random(1..5)
   end
 
   defp random_value(:producer_loop_interval_ms, _config) do

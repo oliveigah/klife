@@ -1,0 +1,36 @@
+2026-01-20T21:30:33.112719-03:00 info: Running invariants check!
+2026-01-20T21:30:33.112860-03:00 info: Total invariants violations: 0
+2026-01-20T21:30:33.112905-03:00 info: Total produced records: 0
+2026-01-20T21:30:33.112931-03:00 info: Total consumed records for SimulatorGroup1: 0
+2026-01-20T21:30:38.113830-03:00 info: Running invariants check!
+2026-01-20T21:30:38.114091-03:00 info: Total invariants violations: 0
+2026-01-20T21:30:38.114155-03:00 info: Total produced records: 73446
+2026-01-20T21:30:38.114276-03:00 info: Total consumed records for SimulatorGroup1: 61078
+2026-01-20T21:30:43.116009-03:00 info: Running invariants check!
+2026-01-20T21:30:43.116442-03:00 info: Total invariants violations: 0
+2026-01-20T21:30:43.116647-03:00 info: Total produced records: 154510
+2026-01-20T21:30:43.116759-03:00 info: Total consumed records for SimulatorGroup1: 146185
+2026-01-20T21:30:48.117815-03:00 info: Running invariants check!
+2026-01-20T21:30:48.117928-03:00 info: Total invariants violations: 0
+2026-01-20T21:30:48.118106-03:00 info: Total produced records: 234724
+2026-01-20T21:30:48.118156-03:00 info: Total consumed records for SimulatorGroup1: 232088
+2026-01-20T21:30:53.119838-03:00 info: Running invariants check!
+2026-01-20T21:30:53.119978-03:00 info: Total invariants violations: 0
+2026-01-20T21:30:53.120008-03:00 info: Total produced records: 313750
+2026-01-20T21:30:53.120034-03:00 info: Total consumed records for SimulatorGroup1: 304005
+2026-01-20T21:30:57.533045-03:00 warning: Tried to fetch from offset 7561 for topic 2E80B966016539ACAF3158608745EAF3869C02012C0B5FAB2874099D4B79 partition 7 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:30:57.586042-03:00 warning: Tried to fetch from offset 7751 for topic 5333C7C3855A872BEF8F5812209D849A8336B78AB54D5A28AD298EF95107 partition 6 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:30:57.858067-03:00 warning: Tried to fetch from offset 7538 for topic 7EEAA041FCBFFCFB1DFE676EFA6CD64BC03784DF0C3326F1AB8451B97767 partition 9 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:30:57.884890-03:00 warning: Tried to fetch from offset 7354 for topic AFBBFA2030270377A2ECE63644380BEB3848C17B04B1DDFA7E4ACA98D62D partition 1 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:30:58.121419-03:00 info: Running invariants check!
+2026-01-20T21:30:58.121600-03:00 info: Total invariants violations: 0
+2026-01-20T21:30:58.121642-03:00 info: Total produced records: 392619
+2026-01-20T21:30:58.121925-03:00 info: Total consumed records for SimulatorGroup1: 387038
+2026-01-20T21:30:58.122955-03:00 critical: timestamp: 30, details: #{partition => 9,topic => <<"7EEAA041FCBFFCFB1DFE676EFA6CD64BC03784DF0C3326F1AB8451B97767">>,consumer_group => <<"SimulatorGroup1">>,oldest_offset => 7551,oldest_time_diff_ms => 475}, invariant_type: skipped_record
+2026-01-20T21:30:58.127999-03:00 critical: timestamp: 30, details: #{partition => 6,topic => <<"5333C7C3855A872BEF8F5812209D849A8336B78AB54D5A28AD298EF95107">>,consumer_group => <<"SimulatorGroup1">>,oldest_offset => 7753,oldest_time_diff_ms => 566}, invariant_type: skipped_record
+2026-01-20T21:30:58.128572-03:00 critical: timestamp: 30, details: #{partition => 7,topic => <<"2E80B966016539ACAF3158608745EAF3869C02012C0B5FAB2874099D4B79">>,consumer_group => <<"SimulatorGroup1">>,oldest_offset => 7566,oldest_time_diff_ms => 668}, invariant_type: skipped_record
+2026-01-20T21:30:58.131628-03:00 critical: timestamp: 30, details: #{partition => 1,topic => <<"AFBBFA2030270377A2ECE63644380BEB3848C17B04B1DDFA7E4ACA98D62D">>,consumer_group => <<"SimulatorGroup1">>,oldest_offset => 7432,oldest_time_diff_ms => 307}, invariant_type: skipped_record
+2026-01-20T21:30:59.519677-03:00 warning: Tried to fetch from offset 7170 for topic 935E08BA5C0045A4CA47E23A4679ADCCC6FEB6B6A8A2E79E3032AC9DCF4E partition 5 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:30:59.626669-03:00 warning: Tried to fetch from offset 7747 for topic 935E08BA5C0045A4CA47E23A4679ADCCC6FEB6B6A8A2E79E3032AC9DCF4E partition 1 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:30:59.674483-03:00 warning: Tried to fetch from offset 7408 for topic 935E08BA5C0045A4CA47E23A4679ADCCC6FEB6B6A8A2E79E3032AC9DCF4E partition 6 but offset was out of range (error code 1). Reseting offset...
+2026-01-20T21:31:03.118192-03:00 info: MultiRunner: Found 4 invariant violations, stopping run #2

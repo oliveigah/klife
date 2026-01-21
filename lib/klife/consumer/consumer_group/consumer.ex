@@ -91,13 +91,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
           )
       }
 
-    :ok =
-      ConsumerGroup.send_consumer_up(
-        state.cg_pid,
-        state.topic_id,
-        state.partition_idx
-      )
-
     send(self(), :poll_records)
 
     if function_exported?(state.cg_mod, :handle_consumer_start, 3) do
@@ -111,7 +104,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   def revoke_assignment(client_name, cg_mod, topic_id, partition, cg_name) do
     client_name
     |> get_process_name(cg_mod, topic_id, partition, cg_name)
-    |> GenServer.call(:assignment_revoked)
+    |> GenServer.call(:assignment_revoked, 15_000)
   end
 
   def revoke_assignment_async(client_name, cg_mod, topic_id, partition, cg_name) do
@@ -347,7 +340,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
       {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}
     else
-      Process.send_after(self(), {:assignment_revoked, waiting_pid}, 50)
+      Process.send_after(self(), {:assignment_revoked, waiting_pid}, 100)
       {:noreply, state}
     end
   end

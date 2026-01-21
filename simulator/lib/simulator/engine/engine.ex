@@ -7,7 +7,9 @@ defmodule Simulator.Engine do
   defstruct [
     :config,
     :total_produced_counter,
-    :total_consumed_counters
+    :total_consumed_counters,
+    :sup_pid,
+    :init_ts
   ]
 
   def get_config, do: :persistent_term.get(:engine_config)
@@ -45,27 +47,18 @@ defmodule Simulator.Engine do
     :ok = handle_tables(config)
 
     {:ok, _pid} = Simulator.Engine.ProcessRegistry.start_link()
-    {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
+    {:ok, sup_pid} = DynamicSupervisor.start_link([])
 
-    :ok = handle_consumers(config, consumer_sup_pid)
-
-    # TODO: Think about how to be sure that all consumers have stabilized
-    # probably wait for the first commit would be enough because after the
-    # first commit, all invariants must hold true.
-    #
-    # The problem happens only when we start producing records
-    # before the consumer has a proper offset to reset to
-    # otherwise it will reset using latest or earliest
-    # Process.sleep(30_000)
-
-    :ok = handle_producers(config)
+    :ok = handle_consumers(config, sup_pid)
+    :ok = handle_producers(config, sup_pid)
 
     send(self(), :invariants_check_loop)
 
     state = %__MODULE__{
       config: config,
       total_produced_counter: total_produced_counter,
-      total_consumed_counters: consumed_counters
+      total_consumed_counters: consumed_counters,
+      sup_pid: sup_pid
     }
 
     {:ok, state}
@@ -120,7 +113,7 @@ defmodule Simulator.Engine do
 
     :ok =
       :logger.add_handler(
-        :engine_log_file_handler,
+        :"engine_log_file_handler_#{ts}",
         :logger_std_h,
         %{
           config: %{
@@ -130,6 +123,42 @@ defmodule Simulator.Engine do
       )
 
     GenServer.start_link(__MODULE__, args, name: __MODULE__)
+  end
+
+  def terminate() do
+    GenServer.call(__MODULE__, :terminate, :infinity)
+  end
+
+  @impl true
+  def handle_call(:terminate, from, %__MODULE__{} = state) do
+    :ok = DynamicSupervisor.stop(state.sup_pid, :normal)
+    ts = :persistent_term.get(:simulation_timestamp)
+    :logger.remove_handler(:"engine_log_file_handler_#{ts}")
+
+    # Need a last pass on the invariants_check_loopp in order
+    # to guarantee that everything is properly save on files
+    {:noreply, _} = handle_info(:invariants_check_loop, state)
+
+    case :ets.tab2list(:invariants_violations) do
+      [] ->
+        :noop
+
+      error_list ->
+        old = Path.relative("simulations_data/#{ts}")
+
+        base_name =
+          error_list
+          |> Enum.map(fn {_ts, type, _details} -> type end)
+          |> Enum.uniq()
+          |> Enum.join("__")
+
+        new_name = base_name <> "__" <> Base.encode16(:rand.bytes(4))
+
+        File.rename(old, "simulations_data/#{new_name}")
+    end
+
+    GenServer.reply(from, :ok)
+    {:stop, :normal, state}
   end
 
   @impl true
@@ -302,22 +331,29 @@ defmodule Simulator.Engine do
     :ok
   end
 
-  def handle_producers(%EngineConfig{} = config) do
+  def handle_producers(%EngineConfig{} = config, sup_pid) do
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1),
         idx <- 0..(config.producer_concurrency - 1) do
-      args = %{
-        client: Enum.random(config.clients),
-        topic: t,
-        partition: p,
-        max_records: config.producer_max_rps,
-        loop_interval_ms: config.producer_loop_interval_ms,
-        record_value_bytes: config.record_value_bytes,
-        record_key_bytes: config.record_key_bytes,
-        index: idx
+      args =
+        %{
+          client: Enum.random(config.clients),
+          topic: t,
+          partition: p,
+          max_records: config.producer_max_rps,
+          loop_interval_ms: config.producer_loop_interval_ms,
+          record_value_bytes: config.record_value_bytes,
+          record_key_bytes: config.record_key_bytes,
+          index: idx
+        }
+
+      spec = %{
+        id: {:producer, t, p, idx},
+        start: {Simulator.Engine.Producer, :start_link, [args]},
+        type: :worker
       }
 
-      {:ok, _pid} = Simulator.Engine.Producer.start_link(args)
+      {:ok, _pid} = DynamicSupervisor.start_child(sup_pid, spec)
     end
 
     :ok

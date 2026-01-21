@@ -114,15 +114,6 @@ defmodule Klife.Consumer.ConsumerGroup do
         Klife.Consumer.ConsumerGroup.handle_heartbeat(state)
       end
 
-      def handle_cast({:consumer_up, {topic_id, partition, consumer_pid}}, state) do
-        Klife.Consumer.ConsumerGroup.handle_consumer_up(
-          state,
-          topic_id,
-          partition,
-          consumer_pid
-        )
-      end
-
       def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
         Klife.Consumer.ConsumerGroup.handle_consumer_down(state, ref, reason)
       end
@@ -189,10 +180,6 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   defp get_process_name(client_name, cg_mod, group_name) do
     via_tuple({__MODULE__, client_name, cg_mod, group_name})
-  end
-
-  def send_consumer_up(cg_pid, topic_id, partition) do
-    GenServer.cast(cg_pid, {:consumer_up, {topic_id, partition, self()}})
   end
 
   def get_member_epoch(cg_pid) do
@@ -636,7 +623,9 @@ defmodule Klife.Consumer.ConsumerGroup do
           # Need the -1 so we do not skip the first record
           {{topic_resp.name, pdata.partition_index}, pdata.offset - 1}
         end
-      end, timeout: 30_000)
+      end,
+      timeout: 30_000
+    )
     |> Enum.flat_map(fn {:ok, resp} -> resp end)
     |> Map.new()
   end
@@ -679,20 +668,6 @@ defmodule Klife.Consumer.ConsumerGroup do
     else
       new_state
     end
-  end
-
-  def handle_consumer_up(
-        %__MODULE__{consumers_monitor_map: c_map} = state,
-        topic_id,
-        partition,
-        consumer_pid
-      ) do
-    ref = Process.monitor(consumer_pid)
-
-    {
-      :noreply,
-      %__MODULE__{state | consumers_monitor_map: Map.put(c_map, ref, {topic_id, partition})}
-    }
   end
 
   def handle_consumer_down(%__MODULE__{consumers_monitor_map: cmap} = state, monitor_ref, reason) do
@@ -741,18 +716,15 @@ defmodule Klife.Consumer.ConsumerGroup do
         state.group_name
       )
 
-    committer_id =
-      find_committer_id_by_topic_partition(state.committers_distribution, topic_id, partition)
-
-    new_dist =
-      Map.update!(state.committers_distribution, committer_id, fn curr_ms ->
-        MapSet.delete(curr_ms, {topic_id, partition})
-      end)
-
-    %__MODULE__{state | committers_distribution: new_dist}
+    remove_entry_from_committers_map(state, topic_id, partition)
   end
 
-  defp start_consumer(%__MODULE__{} = state, topic_id, partition, init_offset) do
+  defp start_consumer(
+         %__MODULE__{consumers_monitor_map: cm_map} = state,
+         topic_id,
+         partition,
+         init_offset
+       ) do
     committer_id = get_next_committer_id(state.committers_distribution)
     topic_name = MetadataCache.get_topic_name_by_id(state.client_name, topic_id)
 
@@ -778,17 +750,24 @@ defmodule Klife.Consumer.ConsumerGroup do
       type: :worker
     }
 
-    case DynamicSupervisor.start_child(state.consumer_supervisor, spec) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
-    end
+    {:ok, pid} =
+      case DynamicSupervisor.start_child(state.consumer_supervisor, spec) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, {:already_started, pid}} -> {:ok, pid}
+      end
 
-    new_dist =
+    new_committer_dist =
       Map.update!(state.committers_distribution, committer_id, fn curr_ms ->
         MapSet.put(curr_ms, {topic_id, partition})
       end)
 
-    %__MODULE__{state | committers_distribution: new_dist}
+    ref = Process.monitor(pid)
+
+    %__MODULE__{
+      state
+      | committers_distribution: new_committer_dist,
+        consumers_monitor_map: Map.put(cm_map, ref, {topic_id, partition})
+    }
   end
 
   defp get_next_committer_id(committer_distribution_map) do
@@ -798,9 +777,18 @@ defmodule Klife.Consumer.ConsumerGroup do
     |> elem(0)
   end
 
-  defp find_committer_id_by_topic_partition(committer_distribution_map, topic, partition) do
-    committer_distribution_map
+  defp remove_entry_from_committers_map(%__MODULE__{} = state, topic, partition) do
+    state.committers_distribution
     |> Enum.find(fn {_committer_id, tp_ms} -> MapSet.member?(tp_ms, {topic, partition}) end)
-    |> elem(0)
+    |> case do
+      nil ->
+        state
+
+      {committer_id, ms} ->
+        new_ms = MapSet.delete(ms, {topic, partition})
+        new_commiter_map = Map.replace!(state.committers_distribution, committer_id, new_ms)
+
+        %{state | committers_distribution: new_commiter_map}
+    end
   end
 end

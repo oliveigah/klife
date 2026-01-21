@@ -7,12 +7,15 @@ defmodule Simulator.Application do
 
   @impl true
   def start(_type, _args) do
+    engine_child =
+      if System.get_env("MULTI_RUN") == "true",
+        do: Simulator.MultiRunner,
+        else: Simulator.Engine
+
     children = [
       Simulator.NormalClient,
       Simulator.TLSClient,
-      Simulator.Engine
-      # Starts a worker by calling: Simulator.Worker.start_link(arg)
-      # {Simulator.Worker, arg}
+      engine_child
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
