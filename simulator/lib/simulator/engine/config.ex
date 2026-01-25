@@ -237,7 +237,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:record_value_bytes, _config) do
-    Enum.random(10..10000)
+    Enum.random(10..2_000)
   end
 
   defp random_value(:record_key_bytes, _config) do
@@ -283,7 +283,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :fetch_interval_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 1000, 2500, 5000, 10_000, 30_000])
+    weighted_random_opt([{5, base_val}, 1000, 2500, 5000, 10_000])
   end
 
   defp random_value({:cg_topics, :handler_cooldown_ms}, base_val) do

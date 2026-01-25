@@ -21,6 +21,14 @@ defmodule Simulator.Engine.Consumer do
       end
 
       def handle_consumer_start(topic, partition, group_name) do
+        Logger.info(
+          event: "consumer_start",
+          topic: topic,
+          partition: partition,
+          group: group_name,
+          mod: __MODULE__
+        )
+
         %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
 
         seed =
@@ -33,11 +41,23 @@ defmodule Simulator.Engine.Consumer do
 
         :ok = Engine.set_consumer_ready(topic, partition, group_name)
       end
+
+      def handle_consumer_stop(topic, partition, group_name, reason) do
+        Logger.info(
+          event: "consumer_stop",
+          topic: topic,
+          partition: partition,
+          group: group_name,
+          mod: __MODULE__,
+          reason: reason
+        )
+      end
     end
   end
 
   for i <- 0..100 do
     defmodule :"#{__MODULE__}.TLSClient#{i}" do
+      require Logger
       use Klife.Consumer.ConsumerGroup, client: Simulator.TLSClient
 
       def handle_record_batch(t, p, gn, r_list) do
@@ -51,6 +71,14 @@ defmodule Simulator.Engine.Consumer do
       end
 
       def handle_consumer_start(topic, partition, group_name) do
+        Logger.info(
+          event: "consumer_start",
+          topic: topic,
+          partition: partition,
+          group: group_name,
+          mod: __MODULE__
+        )
+
         %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
 
         seed =
@@ -63,12 +91,23 @@ defmodule Simulator.Engine.Consumer do
 
         :ok = Engine.set_consumer_ready(topic, partition, group_name)
       end
+
+      def handle_consumer_stop(topic, partition, group_name, reason) do
+        Logger.info(
+          event: "consumer_stop",
+          topic: topic,
+          partition: partition,
+          group: group_name,
+          mod: __MODULE__,
+          reason: reason
+        )
+      end
     end
   end
 
   def handle_record_batch(_t, _p, gn, recs, cg_mod) do
     # TODO: Add failure rate to the engine config
-    should_fail_some? = :rand.uniform() >= 0.9
+    should_fail_some? = :rand.uniform() >= 0.99
 
     to_fail =
       if should_fail_some?,

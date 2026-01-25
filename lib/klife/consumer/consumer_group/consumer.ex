@@ -300,7 +300,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             do: records_batch_queue_count - 1,
             else: records_batch_queue_count
 
-        if new_queue_size <= 1 do
+        if new_queue_size <= 3 do
           Process.send_after(self(), :poll_records, 0)
         end
 

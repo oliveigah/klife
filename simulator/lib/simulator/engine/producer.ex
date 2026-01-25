@@ -63,7 +63,7 @@ defmodule Simulator.Engine.Producer do
         %{state | allowed_to_produce?: allowed?}
       end
 
-    jitter = Enum.random(50..150) / 100
+    jitter = Enum.random(1..1000) / 100
     Process.send_after(self(), :produce_loop, round(state.loop_interval_ms * jitter))
     {:noreply, new_state}
   end
@@ -94,17 +94,24 @@ defmodule Simulator.Engine.Producer do
         apply(state.client, :produce_batch, [chunk])
       end)
 
-    for result <- produce_results,
-        {status, %Klife.Record{} = rec} <- result do
-      case status do
-        :ok ->
-          :ok = Engine.confirm_produced_record(rec)
-          :ok
+    recs =
+      for result <- produce_results,
+          {status, %Klife.Record{} = rec} <- result do
+        case status do
+          :ok ->
+            :ok = Engine.confirm_produced_record(rec)
+            rec
 
-        :error ->
-          Engine.rollback_produced_record(rec)
-          Logger.error("Error on producer: error_code #{rec.error_code}")
+          :error ->
+            Engine.rollback_produced_record(rec)
+            Logger.error("Error on producer: error_code #{rec.error_code}")
+        end
       end
+
+    if :persistent_term.get({state.topic, state.partition}, false) do
+      Logger.info(
+        "Latest produced for #{state.topic} #{state.partition} offset #{List.last(recs).offset}"
+      )
     end
 
     state

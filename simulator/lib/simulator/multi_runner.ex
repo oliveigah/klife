@@ -2,8 +2,8 @@ defmodule Simulator.MultiRunner do
   use GenServer, restart: :transient
   require Logger
 
-  @run_timeout_ms :timer.minutes(15)
-  @total_timeout_ms :timer.hours(10)
+  @run_timeout_ms :timer.minutes(10)
+  @total_timeout_ms :timer.hours(15)
   @check_interval_ms :timer.seconds(5)
 
   defstruct [
@@ -85,12 +85,18 @@ defmodule Simulator.MultiRunner do
   def handle_info(:check_status, %__MODULE__{} = state) do
     run_elapsed = System.monotonic_time(:millisecond) - state.run_start_time
     violations_count = get_violations_count()
+    cpu_usage = get_cpu_usage()
+
+    Logger.info("MultiRunner: CPU usage: #{cpu_usage}%")
 
     cond do
       violations_count > 0 ->
         Logger.info(
           "MultiRunner: Found #{violations_count} invariant violations, stopping run ##{state.run_count}"
         )
+
+        # Give some time to have more error datapoints
+        Process.sleep(15_000)
 
         :ok = Simulator.Engine.terminate()
 
@@ -113,6 +119,13 @@ defmodule Simulator.MultiRunner do
     case :ets.whereis(:invariants_violations) do
       :undefined -> 0
       _ref -> :ets.info(:invariants_violations, :size)
+    end
+  end
+
+  defp get_cpu_usage do
+    case apply(:cpu_sup, :util, []) do
+      {:error, _reason} -> "N/A"
+      usage when is_number(usage) -> Float.round(usage, 1)
     end
   end
 end
