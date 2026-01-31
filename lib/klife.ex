@@ -11,6 +11,7 @@ defmodule Klife do
 
   alias Klife.Record
   alias Klife.Producer
+  alias Klife.Consumer.Fetcher
   alias Klife.TxnProducerPool
   alias Klife.Connection.Controller, as: ConnController
 
@@ -130,6 +131,22 @@ defmodule Klife do
     end
 
     TxnProducerPool.run_txn(client, get_txn_pool(client, opts), fun)
+  end
+
+  def fetch_one(topic, partition, offset, client, opts \\ []) do
+    case fetch(topic, partition, offset, client, Keyword.put(opts, :max_bytes, 1)) do
+      {:ok, list_of_recs} -> List.first(list_of_recs)
+      err -> err
+    end
+  end
+
+  def fetch(topic, partition, offset, client, opts \\ []) do
+    tpo = {topic, partition, offset}
+    Fetcher.fetch(tpo, client, opts)
+  end
+
+  def fetch(tpo_list, client, opts) when is_list(tpo_list) do
+    Fetcher.fetch(tpo_list, client, opts)
   end
 
   defp get_txn_pool(client, opts) do

@@ -118,24 +118,28 @@ defmodule Klife.Record do
 
   def filter_records(rec_list, opts \\ []) do
     base_offset = opts[:base_offset] || -1
-    include_control = opts[:include_control] || false
-    include_aborted = opts[:include_aborted] || false
+    exclude_control = opts[:exclude_control] || false
+    exclude_aborted = opts[:exclude_aborted] || false
 
-    Enum.reject(rec_list, fn %__MODULE__{} = r ->
-      cond do
-        r.offset < base_offset ->
-          true
+    base_filtered =
+      Enum.drop_while(rec_list, fn %__MODULE__{} = rec -> rec.offset < base_offset end)
 
-        not include_control and r.batch_attributes.is_control_batch ->
-          true
+    if Enum.any?([exclude_control, exclude_aborted]) do
+      Enum.reject(base_filtered, fn %__MODULE__{} = r ->
+        cond do
+          exclude_control and r.batch_attributes.is_control_batch ->
+            true
 
-        not include_aborted and r.is_aborted and r.batch_attributes.is_transactional ->
-          true
+          exclude_aborted and r.is_aborted and r.batch_attributes.is_transactional ->
+            true
 
-        true ->
-          false
-      end
-    end)
+          true ->
+            false
+        end
+      end)
+    else
+      base_filtered
+    end
   end
 
   defp get_size(nil), do: 0

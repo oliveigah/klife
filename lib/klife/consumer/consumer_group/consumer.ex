@@ -416,8 +416,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     filter_rec_opts =
       [
         base_offset: base_offset,
-        include_control: false,
-        include_aborted: state.topic_config.isolation_level == :read_uncommitted
+        exclude_control: true,
+        exclude_aborted: state.topic_config.isolation_level == :read_committed
       ]
 
     base_last_fetched_offset = List.last(base_recs).offset

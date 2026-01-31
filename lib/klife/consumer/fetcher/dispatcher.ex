@@ -92,19 +92,36 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
         case ec do
           0 ->
-            first_aborted_offset =
-              if state.fetcher_config.isolation_level == :read_committed do
-                Enum.map(at || [], fn %{first_offset: fo} -> fo end)
-                |> Enum.min(fn -> :infinity end)
-              else
-                :infinity
-              end
+            aborted_offsets =
+              Enum.group_by(at, fn d -> d.producer_id end, fn d -> d.first_offset end)
 
-            val =
-              Enum.flat_map(rec_batch_list, fn rec_batch ->
-                Record.parse_from_protocol(req_data[key].topic_name, p, rec_batch,
-                  first_aborted_offset: first_aborted_offset
-                )
+            {val, _aborted_offsets} =
+              Enum.flat_map_reduce(rec_batch_list, aborted_offsets, fn rec_batch, acc_abo ->
+                aborted_offsets = acc_abo[rec_batch.producer_id] || []
+                first_aborted_offset = List.first(aborted_offsets) || :infinity
+
+                recs =
+                  Record.parse_from_protocol(req_data[key].topic_name, p, rec_batch,
+                    first_aborted_offset: first_aborted_offset
+                  )
+
+                if first_aborted_offset == :infinity do
+                  {recs, acc_abo}
+                else
+                  end_abort? =
+                    Enum.any?(recs, fn %Record{} = rec ->
+                      rec.batch_attributes.is_control_batch == true and
+                        rec.batch_attributes.is_transactional == true and
+                        rec.key == <<0, 0, 0, 0>>
+                    end)
+
+                  if end_abort? do
+                    [_head | rest] = aborted_offsets
+                    {recs, Map.put(acc_abo, rec_batch.producer_id, rest)}
+                  else
+                    {recs, acc_abo}
+                  end
+                end
               end)
 
             {key, {:ok, val}}

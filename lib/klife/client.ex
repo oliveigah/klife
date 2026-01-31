@@ -494,6 +494,16 @@ defmodule Klife.Client do
 
       @spec transaction(function(), opts :: list() | nil) :: any()
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
+
+      # TODO: Add spec
+      def fetch_one(topic, partition, offset, opts \\ []),
+        do: Klife.fetch_one(topic, partition, offset, __MODULE__, opts)
+
+      def fetch(topic, partition, offset, opts \\ []),
+        do: Klife.fetch(topic, partition, offset, __MODULE__, opts)
+
+      def fetch(tpo_list, opts \\ []),
+        do: Klife.fetch(tpo_list, __MODULE__, opts)
     end
   end
 
