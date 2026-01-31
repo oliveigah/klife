@@ -105,22 +105,22 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
                     first_aborted_offset: first_aborted_offset
                   )
 
-                if first_aborted_offset == :infinity do
-                  {recs, acc_abo}
-                else
-                  end_abort? =
-                    Enum.any?(recs, fn %Record{} = rec ->
+                is_abort_batch? =
+                  case recs do
+                    [rec] ->
                       rec.batch_attributes.is_control_batch == true and
                         rec.batch_attributes.is_transactional == true and
                         rec.key == <<0, 0, 0, 0>>
-                    end)
 
-                  if end_abort? do
-                    [_head | rest] = aborted_offsets
-                    {recs, Map.put(acc_abo, rec_batch.producer_id, rest)}
-                  else
-                    {recs, acc_abo}
+                    _ ->
+                      false
                   end
+
+                if is_abort_batch? do
+                  [_head | rest] = aborted_offsets
+                  {recs, Map.put(acc_abo, rec_batch.producer_id, rest)}
+                else
+                  {recs, acc_abo}
                 end
               end)
 
