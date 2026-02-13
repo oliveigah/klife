@@ -457,7 +457,7 @@ defmodule Klife.Producer.Batcher do
   end
 
   defp add_record_to_partition_data(batch, %Record{} = record) do
-    now = DateTime.to_unix(DateTime.utc_now())
+    now = DateTime.to_unix(DateTime.utc_now(), :millisecond)
 
     new_offset_delta = batch.last_offset_delta + 1
     timestamp_delta = if batch.base_timestamp == nil, do: 0, else: now - batch.base_timestamp
