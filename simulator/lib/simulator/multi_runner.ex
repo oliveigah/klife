@@ -3,7 +3,7 @@ defmodule Simulator.MultiRunner do
   require Logger
 
   @run_timeout_ms :timer.minutes(10)
-  @total_timeout_ms :timer.hours(15)
+  @total_timeout_ms :timer.hours(24)
   @check_interval_ms :timer.seconds(5)
 
   defstruct [
@@ -56,7 +56,7 @@ defmodule Simulator.MultiRunner do
       {:stop, :normal, state}
     else
       run_count = state.run_count + 1
-      Logger.info("MultiRunner: Starting run ##{run_count}")
+      Logger.info("MultiRunner run #{run_count}: Starting run ##{run_count}")
 
       spec = %{
         id: :simulation,
@@ -87,12 +87,12 @@ defmodule Simulator.MultiRunner do
     violations_count = get_violations_count()
     cpu_usage = get_cpu_usage()
 
-    Logger.info("MultiRunner: CPU usage: #{cpu_usage}%")
+    Logger.info("MultiRunner run #{state.run_count}: CPU usage: #{cpu_usage}%")
 
     cond do
       violations_count > 0 ->
         Logger.info(
-          "MultiRunner: Found #{violations_count} invariant violations, stopping run ##{state.run_count}"
+          "MultiRunner run #{state.run_count}: Found #{violations_count} invariant violations, stopping run ##{state.run_count}"
         )
 
         # Give some time to have more error datapoints
@@ -103,7 +103,7 @@ defmodule Simulator.MultiRunner do
         {:noreply, state}
 
       run_elapsed >= @run_timeout_ms ->
-        Logger.info("MultiRunner: Run timeout reached, stopping run ##{state.run_count}")
+        Logger.info("MultiRunner run #{state.run_count}: Run timeout reached, stopping run ##{state.run_count}")
 
         :ok = Simulator.Engine.terminate()
 

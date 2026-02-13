@@ -315,15 +315,18 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def handle_heartbeat(%__MODULE__{} = state) do
-    new_state =
-      state
-      |> do_heartbeat()
-      |> maybe_start_committer()
-      |> handle_assignment()
+    case do_heartbeat(state) do
+      {:ok, new_state} ->
+        new_state = new_state |> maybe_start_committer() |> handle_assignment()
 
-    Process.send_after(self(), :heartbeat, new_state.heartbeat_interval_ms)
+        Process.send_after(self(), :heartbeat, new_state.heartbeat_interval_ms)
 
-    {:noreply, new_state}
+        {:noreply, new_state}
+
+      {:error, reason} ->
+        true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
+        {:stop, reason, state}
+    end
   end
 
   defp do_heartbeat(%__MODULE__{} = state) do
@@ -356,7 +359,11 @@ defmodule Klife.Consumer.ConsumerGroup do
            timeout_ms: state.rebalance_timeout_ms
          ) do
       {:error, :timeout} ->
-        raise "Timeout on heartbeat for client #{state.client_name} group #{state.group_name}. It is not safe to keep consuming records because consumers may be fenced!"
+        Logger.error(
+          "Timeout on heartbeat for client #{state.client_name} group #{state.group_name}. It is not safe to keep consuming records because consumers may be fenced!"
+        )
+
+        {:error, :timeout}
 
       # Needs to unack all because this loop may cause problems when a consumer can not properly
       # send/receive heartbeats. Because the consumer group will be stuck on
@@ -375,6 +382,19 @@ defmodule Klife.Consumer.ConsumerGroup do
         |> do_heartbeat()
 
       {:ok, %{content: %{error_code: 0} = resp}} ->
+        if state.coordinator_id != nil and resp.member_epoch != state.epoch do
+          Enum.each(state.committers_distribution, fn {commiter_id, _list} ->
+            :ok =
+              Committer.update_epoch(
+                resp.member_epoch,
+                state.client_name,
+                state.mod,
+                state.group_name,
+                commiter_id
+              )
+          end)
+        end
+
         new_state =
           %__MODULE__{
             state
@@ -394,15 +414,14 @@ defmodule Klife.Consumer.ConsumerGroup do
             )
         end)
 
-        new_state
+        {:ok, new_state}
 
       {:ok, %{content: %{error_code: ec, error_message: em}}} ->
         Logger.error(
-          "Heartbeat error on consumer group #{state.group_name} for module #{state.mod}. Error Code: #{ec} Error Message: #{em}"
+          "Heartbeat error on consumer group #{state.group_name} for consumer group module #{state.mod}. Error Code: #{ec} Error Message: #{em}"
         )
 
         coordinator_error? = ec in [14, 15, 16]
-        fence_error? = ec in [25, 110]
         static_membership_error? = ec in [111]
 
         cond do
@@ -411,17 +430,17 @@ defmodule Klife.Consumer.ConsumerGroup do
             |> get_coordinator!()
             |> do_heartbeat()
 
-          fence_error? ->
-            # The easiest thing to do is restart the consumer group, because it guarantees
-            # that all consumers/committers will be forcefully stopped
-            raise "Fence error on heartbeat. Error Code: #{ec} Error Message: #{em}"
-
           # This should happen only when the previous instance is leaving the group
+          # so we can keep going and this should resolve eventually!
           static_membership_error? ->
             state
 
           true ->
-            raise "Unrecoverable error on heartbeat. Error Code: #{ec} Error Message: #{em}"
+            Logger.error(
+              "Unrecoverable error on heartbeat consumer group will be restarted! Error Code: #{ec} Error Message: #{em}"
+            )
+
+            {:error, ec}
         end
     end
   end
@@ -516,7 +535,6 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   defp get_init_offsets(%__MODULE__{} = state, tid_p_list) do
-    # TODO: Think how to handle errors on specific topics/partitions
     tname_map =
       tid_p_list
       |> Enum.map(fn {tid, _p} -> tid end)
@@ -547,12 +565,14 @@ defmodule Klife.Consumer.ConsumerGroup do
             end)
         }
       ],
+      # TODO: should this always be true?
       require_stable: true
     }
 
     offset_fetch_result =
       case Broker.send_message(M.OffsetFetch, state.client_name, state.coordinator_id, content) do
         {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
+          # TODO: Think how to handle errors on specific topics/partitions
           for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions, into: %{} do
             {{topic_resp.name, pdata.partition_index}, pdata.committed_offset}
           end
@@ -700,7 +720,8 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
 
-    do_heartbeat(exit_state)
+    {:ok, exit_state} = do_heartbeat(exit_state)
+    exit_state
   end
 
   defp stop_consumer(%__MODULE__{} = state, topic_id, partition) do
@@ -746,7 +767,12 @@ defmodule Klife.Consumer.ConsumerGroup do
     spec = %{
       id: {topic_id, partition},
       start: {Consumer, :start_link, [consumer_args]},
-      restart: :transient,
+      # I think temporary behaviour is the best approach here
+      # because the consumer group process is in charge of restarts
+      # and the dynamic supervisor may not have proper state to
+      # automatically restart the consumer (ie. init_offset may
+      # have been moved forward and auto restart might lead to double consume)
+      restart: :temporary,
       type: :worker
     }
 

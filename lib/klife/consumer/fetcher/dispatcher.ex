@@ -93,7 +93,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         case ec do
           0 ->
             aborted_offsets =
-              Enum.group_by(at, fn d -> d.producer_id end, fn d -> d.first_offset end)
+              Enum.group_by(at || [], fn d -> d.producer_id end, fn d -> d.first_offset end)
 
             {val, _aborted_offsets} =
               Enum.flat_map_reduce(rec_batch_list, aborted_offsets, fn rec_batch, acc_abo ->

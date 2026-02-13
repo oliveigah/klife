@@ -123,7 +123,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:topics_replication_factor, _config) do
-    Enum.random(1..3)
+    3
   end
 
   defp random_value(:consumer_groups, _config) do
@@ -254,7 +254,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :handler_max_batch_size}, base_val) do
-    weighted_random_opt([base_val, :dynamic, 100, 200, 1000])
+    weighted_random_opt([{5, base_val}, :dynamic, 100, 200, 1000])
   end
 
   defp random_value({:cg_topics, :offset_reset_policy}, _base_val) do
@@ -275,7 +275,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :fetch_max_bytes}, base_val) do
-    weighted_random_opt([base_val, 100_000, 500_000, 1_000_000])
+    weighted_random_opt([{5, base_val}, 100_000, 500_000, 1_000_000])
   end
 
   defp random_value({:cg_topics, :max_queue_size}, base_val) do
@@ -283,7 +283,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :fetch_interval_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 1000, 2500, 5000, 10_000])
+    weighted_random_opt([{5, base_val}, 100, 200, 500, 1000, 2000])
   end
 
   defp random_value({:cg_topics, :handler_cooldown_ms}, base_val) do

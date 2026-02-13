@@ -38,7 +38,7 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     ],
     fetch_interval_ms: [
       type: :non_neg_integer,
-      default: 5000,
+      default: 1000,
       doc: """
       Time in milliseconds that the consumer will wait before trying to fetch new data from the broker after it runs out of records to process.
 

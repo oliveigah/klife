@@ -64,6 +64,12 @@ defmodule Klife.Consumer.Committer do
     |> GenServer.call({:update_coordinator, new_coordinator})
   end
 
+  def update_epoch(new_epoch, client, cg_mod, cg_name, batcher_id) do
+    client
+    |> get_process_name(cg_mod, cg_name, batcher_id)
+    |> GenServer.call({:update_member_epoch, new_epoch})
+  end
+
   defp get_process_name(client, cg_mod, cg_name, batcher_id) do
     via_tuple({__MODULE__, client, cg_mod, cg_name, batcher_id})
   end
@@ -198,10 +204,6 @@ defmodule Klife.Consumer.Committer do
           0 ->
             send(batch_item.callback_pid, {:offset_committed, batch_item.offset_to_commit})
 
-          113 ->
-            send(self(), :update_member_epoch)
-            {:retry, batch_item}
-
           # TODO: Handle specific errors
           _err ->
             {:retry, batch_item}
@@ -223,17 +225,6 @@ defmodule Klife.Consumer.Committer do
   end
 
   @impl true
-  def handle_info(
-        :update_member_epoch,
-        %GenBatcher{user_state: %__MODULE__{} = state} = batcher_state
-      ) do
-    new_epoch = Klife.Consumer.ConsumerGroup.get_member_epoch(state.cg_pid)
-
-    {:noreply,
-     %GenBatcher{batcher_state | user_state: %__MODULE__{state | member_epoch: new_epoch}}}
-  end
-
-  @impl true
   def handle_call(
         {:update_coordinator, new_coordinator},
         _from,
@@ -241,5 +232,15 @@ defmodule Klife.Consumer.Committer do
       ) do
     {:reply, :ok,
      %GenBatcher{batcher_state | user_state: %__MODULE__{state | broker_id: new_coordinator}}}
+  end
+
+  @impl true
+  def handle_call(
+        {:update_member_epoch, new_epoch},
+        _from,
+        %GenBatcher{user_state: %__MODULE__{} = state} = batcher_state
+      ) do
+    {:reply, :ok,
+     %GenBatcher{batcher_state | user_state: %__MODULE__{state | member_epoch: new_epoch}}}
   end
 end

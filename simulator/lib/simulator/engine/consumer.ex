@@ -16,7 +16,8 @@ defmodule Simulator.Engine.Consumer do
           p,
           gn,
           r_list,
-          __MODULE__
+          __MODULE__,
+          unquote(i)
         )
       end
 
@@ -29,15 +30,7 @@ defmodule Simulator.Engine.Consumer do
           mod: __MODULE__
         )
 
-        %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
-
-        seed =
-          Map.fetch!(
-            seeds_map,
-            {:consumer, EngineConfig.parse_topic(topic), partition, group_name, unquote(i)}
-          )
-
-        :rand.seed(:exsss, seed)
+        Simulator.Engine.Consumer.seed_rand(topic, partition, group_name, unquote(i))
 
         :ok = Engine.set_consumer_ready(topic, partition, group_name)
       end
@@ -66,7 +59,8 @@ defmodule Simulator.Engine.Consumer do
           p,
           gn,
           r_list,
-          __MODULE__
+          __MODULE__,
+          unquote(i)
         )
       end
 
@@ -79,15 +73,7 @@ defmodule Simulator.Engine.Consumer do
           mod: __MODULE__
         )
 
-        %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
-
-        seed =
-          Map.fetch!(
-            seeds_map,
-            {:consumer, EngineConfig.parse_topic(topic), partition, group_name, unquote(i)}
-          )
-
-        :rand.seed(:exsss, seed)
+        Simulator.Engine.Consumer.seed_rand(topic, partition, group_name, unquote(i))
 
         :ok = Engine.set_consumer_ready(topic, partition, group_name)
       end
@@ -105,9 +91,40 @@ defmodule Simulator.Engine.Consumer do
     end
   end
 
-  def handle_record_batch(_t, _p, gn, recs, cg_mod) do
+  defp rand_state_key(topic, partition, group_name, consumer_idx) do
+    {:rand_state, EngineConfig.parse_topic(topic), partition, group_name, consumer_idx}
+  end
+
+  def seed_rand(topic, partition, group_name, consumer_idx) do
+    key = rand_state_key(topic, partition, group_name, consumer_idx)
+
+    case :ets.lookup(:engine_support, key) do
+      [{^key, exported_state}] ->
+        :rand.seed(exported_state)
+
+      [] ->
+        %EngineConfig{random_seeds_map: seeds_map} = Engine.get_config()
+
+        seed =
+          Map.fetch!(
+            seeds_map,
+            {:consumer, EngineConfig.parse_topic(topic), partition, group_name, consumer_idx}
+          )
+
+        :rand.seed(:exsss, seed)
+    end
+  end
+
+  def handle_record_batch(t, p, gn, recs, cg_mod, consumer_idx) do
     # TODO: Add failure rate to the engine config
     should_fail_some? = :rand.uniform() >= 0.99
+    should_raise? = :rand.uniform() >= 0.999
+
+    if should_raise? do
+      key = rand_state_key(t, p, gn, consumer_idx)
+      true = :ets.insert(:engine_support, {key, :rand.export_seed()})
+      raise "User raise for #{t} #{p} #{gn} #{cg_mod}"
+    end
 
     to_fail =
       if should_fail_some?,

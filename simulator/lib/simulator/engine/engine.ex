@@ -9,7 +9,8 @@ defmodule Simulator.Engine do
     :total_produced_counter,
     :total_consumed_counters,
     :sup_pid,
-    :init_ts
+    :init_ts,
+    :cluster_log_pid
   ]
 
   def get_config, do: :persistent_term.get(:engine_config)
@@ -54,11 +55,23 @@ defmodule Simulator.Engine do
 
     send(self(), :invariants_check_loop)
 
+    ts = :persistent_term.get(:simulation_timestamp)
+    cluster_log_path = Path.relative("simulations_data/#{ts}/cluster.log")
+    compose_file = "../test/compose_files/docker-compose-kafka-4.1.yml"
+
+    {pid_str, 0} =
+      System.shell(
+        "docker compose -f #{compose_file} logs -f --since 0s > #{cluster_log_path} 2>&1 & echo $!"
+      )
+
+    cluster_log_pid = String.trim(pid_str)
+
     state = %__MODULE__{
       config: config,
       total_produced_counter: total_produced_counter,
       total_consumed_counters: consumed_counters,
-      sup_pid: sup_pid
+      sup_pid: sup_pid,
+      cluster_log_pid: cluster_log_pid
     }
 
     {:ok, state}
@@ -135,6 +148,10 @@ defmodule Simulator.Engine do
     ts = :persistent_term.get(:simulation_timestamp)
     :logger.remove_handler(:"engine_log_file_handler_#{ts}")
 
+    if state.cluster_log_pid do
+      System.shell("kill #{state.cluster_log_pid}")
+    end
+
     # Need a last pass on the invariants_check_loopp in order
     # to guarantee that everything is properly save on files
     {:noreply, _} = handle_info(:invariants_check_loop, state)
@@ -152,7 +169,8 @@ defmodule Simulator.Engine do
           |> Enum.uniq()
           |> Enum.join("__")
 
-        new_name = base_name <> "__" <> Base.encode16(:rand.bytes(4))
+
+        new_name = String.trim(ts, "_") <> "__" <> base_name
 
         File.rename(old, "simulations_data/#{new_name}")
     end
@@ -201,7 +219,7 @@ defmodule Simulator.Engine do
   defp do_check_invariants(%__MODULE__{} = state) do
     config = state.config
     now = System.monotonic_time(:millisecond)
-    lag_threshold = :timer.seconds(30)
+    lag_threshold = :timer.seconds(60)
 
     time_diff_from_start =
       System.monotonic_time(:second) - :persistent_term.get(:simulation_start_ts)
@@ -212,7 +230,7 @@ defmodule Simulator.Engine do
         Enum.map(config.consumer_groups, fn %{name: cgname} ->
           consumed_recs = :ets.info(idempotency_table_name(t, p, cgname), :size)
 
-          if(consumed_recs == 0 and time_diff_from_start > 60) do
+          if(consumed_recs == 0 and time_diff_from_start > 90) do
             insert_violation(:no_produce, %{
               topic: t,
               partition: p

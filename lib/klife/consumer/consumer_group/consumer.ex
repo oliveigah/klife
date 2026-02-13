@@ -1,5 +1,5 @@
 defmodule Klife.Consumer.ConsumerGroup.Consumer do
-  use GenServer, restart: :transient
+  use GenServer
 
   import Klife.ProcessRegistry
 
@@ -219,20 +219,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       true ->
         {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
 
-        # To validate lag on simulation test
-        # Process.sleep(31_000)
-
-        # # To validate skip on simulation test
-        # rec_batch =
-        #   if length(rec_batch) >= 2 do
-        #     List.delete_at(rec_batch, 0)
-        #   else
-        #     rec_batch
-        #   end
-
-        # # To validate out of order on simulation test
-        # rec_batch = Enum.reverse(rec_batch)
-
+        # TODO: There is a bug when user's callback raises, because
+        # it is not guarantee that the new consumer will be started
+        # only after the commit happens.
+        # Ideally we should wait for the commits before fully removing
+        # this consumer from the consumer group, but it is not clear
+        # how to proper implement it right now
         {parsed_user_result, usr_opts} =
           case cg_mod.handle_record_batch(topic_name, partition_idx, cg_name, rec_batch) do
             [_ | _] = result -> {result, []}
@@ -250,14 +242,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
         to_commit_recs = groupped_recs[:commit] || []
         to_retry_recs = groupped_recs[:retry] || []
-
-        # # To validate duplicate records on simulation test
-        # to_retry_recs =
-        #   if to_commit_recs != [] do
-        #     [List.first(to_commit_recs)] ++ to_retry_recs
-        #   else
-        #     to_retry_recs
-        #   end
 
         new_queue =
           to_retry_recs
@@ -359,10 +343,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   def handle_fetch_error!(%__MODULE__{} = state, 1, {t, p, o}) do
-    Logger.warning(
-      "Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reseting offset..."
-    )
-
     reset_offset_map =
       ConsumerGroup.get_reset_offset(
         [{state.topic_name, state.partition_idx}],
@@ -374,7 +354,10 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     reset_offset = Map.fetch!(reset_offset_map, {state.topic_name, state.partition_idx})
 
+    Logger.warning("Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reset offset is: #{reset_offset}")
+
     send(self(), :poll_records)
+
     %__MODULE__{state | latest_fetched_offset: reset_offset, fetch_ref: nil}
   end
 
@@ -436,7 +419,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             :dynamic ->
               new_queue = :queue.in(recs, state.records_batch_queue)
               new_queue_size = state.records_batch_queue_count + 1
-              {new_queue, new_queue_size, min(base_last_fetched_offset, List.last(recs).offset)}
+              {new_queue, new_queue_size, List.last(recs).offset}
 
             batch_size ->
               {new_queue, new_size} =
@@ -452,7 +435,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
                 end)
 
               {:value, last_batch} = :queue.peek_r(new_queue)
-              {new_queue, new_size, min(base_last_fetched_offset, List.last(last_batch).offset)}
+              {new_queue, new_size, List.last(last_batch).offset}
           end
       end
 
@@ -462,7 +445,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       state
       | records_batch_queue: new_queue,
         records_batch_queue_count: new_queue_size,
-        latest_fetched_offset: last_fetched_offset,
+        latest_fetched_offset: min(base_last_fetched_offset, last_fetched_offset),
         empty_fetch_results_count: 0,
         fetch_ref: nil
     }

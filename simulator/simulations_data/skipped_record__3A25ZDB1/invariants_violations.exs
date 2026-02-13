@@ -1,4 +1,0 @@
-{30, :skipped_record, %{partition: 9, topic: "7EEAA041FCBFFCFB1DFE676EFA6CD64BC03784DF0C3326F1AB8451B97767", consumer_group: "SimulatorGroup1", oldest_offset: 7551, oldest_time_diff_ms: 475}}
-{30, :skipped_record, %{partition: 6, topic: "5333C7C3855A872BEF8F5812209D849A8336B78AB54D5A28AD298EF95107", consumer_group: "SimulatorGroup1", oldest_offset: 7753, oldest_time_diff_ms: 566}}
-{30, :skipped_record, %{partition: 7, topic: "2E80B966016539ACAF3158608745EAF3869C02012C0B5FAB2874099D4B79", consumer_group: "SimulatorGroup1", oldest_offset: 7566, oldest_time_diff_ms: 668}}
-{30, :skipped_record, %{partition: 1, topic: "AFBBFA2030270377A2ECE63644380BEB3848C17B04B1DDFA7E4ACA98D62D", consumer_group: "SimulatorGroup1", oldest_offset: 7432, oldest_time_diff_ms: 307}}
