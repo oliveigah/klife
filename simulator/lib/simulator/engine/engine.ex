@@ -169,7 +169,6 @@ defmodule Simulator.Engine do
           |> Enum.uniq()
           |> Enum.join("__")
 
-
         new_name = String.trim(ts, "_") <> "__" <> base_name
 
         File.rename(old, "simulations_data/#{new_name}")
@@ -436,13 +435,20 @@ defmodule Simulator.Engine do
 
     cond do
       duplicated_message? ->
-        :ok =
-          insert_violation(:consumed_duplicate, %{
-            consumer_group: cg_name,
-            topic: rec.topic,
-            partition: rec.partition,
-            duplicated_offset: rec.offset
-          })
+        # It is not possible to guarantee that wont have any duplicated records
+        # during failure scenarios. So lets just log it now, and not include it
+        # as an invariant violation!
+        #
+        # :ok =
+        #   insert_violation(:consumed_duplicate, %{
+        #     consumer_group: cg_name,
+        #     topic: rec.topic,
+        #     partition: rec.partition,
+        #     duplicated_offset: rec.offset
+        #   })
+        Logger.warning(
+          "Duplicated record offset #{rec.offset} consumed by group #{cg_name} for topic #{rec.topic} partition #{rec.partition}"
+        )
 
       not expected_record? ->
         :ok =
