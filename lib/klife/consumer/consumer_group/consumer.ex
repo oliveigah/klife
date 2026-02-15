@@ -37,6 +37,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :records_batch_queue_count,
     :empty_fetch_results_count,
     :fetch_ref,
+    :fetch_batcher_monitor_ref,
     :leader_epoch
   ]
 
@@ -138,9 +139,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       max_bytes: topic_config.fetch_max_bytes
     ]
 
-    :ok = Fetcher.fetch_async(tpo, state.client_name, opts)
+    {:ok, batcher_pid} = Fetcher.fetch_async(tpo, state.client_name, opts)
 
-    {:noreply, %__MODULE__{state | fetch_ref: ref}}
+    batcher_monitor = Process.monitor(batcher_pid)
+
+    {:noreply, %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor}}
   end
 
   def handle_info(:poll_records, %__MODULE__{} = state) do
@@ -149,6 +152,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o} = tpo, {:ok, recs}}, %__MODULE__{} = state) do
+    state = demonitor_batcher(state)
     {:noreply, handle_fetch_response(state, recs, tpo)}
   end
 
@@ -157,6 +161,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         {:klife_fetch_response, {_t, _p, _o} = tpo, {:error, reason}},
         %__MODULE__{} = state
       ) do
+    state = demonitor_batcher(state)
     {:noreply, handle_fetch_error!(state, reason, tpo)}
   end
 
@@ -169,6 +174,16 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
        state
        | latest_committed_offset: max(state.latest_committed_offset, committed_offset)
      }}
+  end
+
+  @impl true
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %__MODULE__{fetch_batcher_monitor_ref: ref, fetch_ref: {_ref, tpo}} = state
+      )
+      when ref != nil do
+    state = %__MODULE__{state | fetch_batcher_monitor_ref: nil}
+    {:noreply, handle_fetch_error!(state, :batcher_down, tpo)}
   end
 
   @impl true
@@ -342,6 +357,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     end
   end
 
+  defp demonitor_batcher(%__MODULE__{fetch_batcher_monitor_ref: nil} = state), do: state
+
+  defp demonitor_batcher(%__MODULE__{fetch_batcher_monitor_ref: ref} = state) do
+    Process.demonitor(ref, [:flush])
+    %__MODULE__{state | fetch_batcher_monitor_ref: nil}
+  end
+
   def handle_fetch_error!(%__MODULE__{} = state, 1, {t, p, o}) do
     reset_offset_map =
       ConsumerGroup.get_reset_offset(
@@ -354,7 +376,9 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     reset_offset = Map.fetch!(reset_offset_map, {state.topic_name, state.partition_idx})
 
-    Logger.warning("Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reset offset is: #{reset_offset}")
+    Logger.warning(
+      "Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reset offset is: #{reset_offset}"
+    )
 
     send(self(), :poll_records)
 
@@ -363,6 +387,20 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   def handle_fetch_error!(%__MODULE__{} = state, :timeout, {t, p, o}) do
     Logger.warning("Timeout on fetch from offset #{o} for topic #{t} partition #{p}. Retrying...")
+
+    Process.send_after(
+      self(),
+      :poll_records,
+      Enum.random(0..state.topic_config.fetch_interval_ms)
+    )
+
+    %__MODULE__{state | fetch_ref: nil}
+  end
+
+  def handle_fetch_error!(%__MODULE__{} = state, :batcher_down, {t, p, o}) do
+    Logger.warning(
+      "Fetch batcher went down while fetching offset #{o} for topic #{t} partition #{p}. Retrying..."
+    )
 
     Process.send_after(
       self(),

@@ -49,6 +49,10 @@ defmodule Klife.Consumer.Fetcher.Batcher do
     |> GenBatcher.insert_call(reqs)
   end
 
+  def request_data(reqs, batcher_pid) when is_pid(batcher_pid) do
+    GenBatcher.insert_call(batcher_pid, reqs)
+  end
+
   def start_link(args) do
     fetcher_config = Keyword.fetch!(args, :fetcher_config)
     fetcher_name = fetcher_config.name

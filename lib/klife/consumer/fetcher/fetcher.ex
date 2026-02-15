@@ -1,7 +1,7 @@
 defmodule Klife.Consumer.Fetcher do
   use GenServer
 
-  import Klife.ProcessRegistry, only: [via_tuple: 1]
+  import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]
 
   alias Klife.Connection.Controller, as: ConnController
   alias Klife.Consumer.Fetcher.Batcher
@@ -114,11 +114,19 @@ defmodule Klife.Consumer.Fetcher do
   def fetch_async({t, p, o}, client, opts \\ []) do
     fetcher = opts[:fetcher] || client.get_default_fetcher()
     iso_level = opts[:isolation_level] || :read_committed
-    max_bytes = opts[:max_bytes] || 100_000
+    max_bytes = opts[:max_bytes] || 500_000
 
     {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
-    {:ok, _timeout} = Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
-    :ok
+
+    batcher_pid =
+      case registry_lookup({Batcher, client, fetcher, broker, batcher_id, iso_level}) do
+        [{pid, _}] -> pid
+        [] -> nil
+      end
+
+    {:ok, _timeout} = Batcher.request_data([item], batcher_pid)
+
+    {:ok, batcher_pid}
   end
 
   defp tpo_to_batch_item(t, p, o, client, max_bytes, fetcher) do
