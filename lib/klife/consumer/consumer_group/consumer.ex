@@ -114,7 +114,31 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     |> GenServer.cast(:assignment_revoked)
   end
 
+  # This timeout is used as a sanity check of the consumer loop liveness
+  # if no message is received by the consumer during the timeout period
+  # it will shutdown automatically triggering a restart! This should never
+  # be triggered, but is a safety mechanism to ensure that no consumer will
+  # become stale.
+  #
+  # This is especially important because the consumer main loop depends on
+  # multiple other process colaborate properly (fetcher, batcher, dispatcher, commiter)
+  # any unexpected error on them may cause the consumer be forever waiting
+  # for a message that may never arrive!
+  #
+  # TODO: Make this a config and do sanity checks against other configs
+  # especially fetch_interval_ms and request timeouts
+  defp get_timeout(%__MODULE__{} = _state) do
+    :timer.minutes(2)
+  end
+
   @impl true
+  def handle_info(:timeout, %__MODULE__{} = state) do
+    Logger.error(
+      "Consumer liveness timeout for #{state.topic_name}:#{state.partition_idx} on group #{state.cg_name}. Restarting."
+    )
+
+    {:stop, {:shutdown, :liveness_timeout}, state}
+  end
 
   def handle_info(:poll_records, %__MODULE__{fetch_ref: nil} = state) do
     offset_to_fetch =
@@ -143,17 +167,18 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
     batcher_monitor = Process.monitor(batcher_pid)
 
-    {:noreply, %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor}}
+    {:noreply, %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor},
+     get_timeout(state)}
   end
 
   def handle_info(:poll_records, %__MODULE__{} = state) do
-    {:noreply, state}
+    {:noreply, state, get_timeout(state)}
   end
 
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o} = tpo, {:ok, recs}}, %__MODULE__{} = state) do
     state = demonitor_batcher(state)
-    {:noreply, handle_fetch_response(state, recs, tpo)}
+    {:noreply, handle_fetch_response(state, recs, tpo), get_timeout(state)}
   end
 
   @impl true
@@ -162,7 +187,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         %__MODULE__{} = state
       ) do
     state = demonitor_batcher(state)
-    {:noreply, handle_fetch_error!(state, reason, tpo)}
+    {:noreply, handle_fetch_error!(state, reason, tpo), get_timeout(state)}
   end
 
   @impl true
@@ -173,7 +198,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
      %__MODULE__{
        state
        | latest_committed_offset: max(state.latest_committed_offset, committed_offset)
-     }}
+     }, get_timeout(state)}
   end
 
   @impl true
@@ -183,7 +208,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       )
       when ref != nil do
     state = %__MODULE__{state | fetch_batcher_monitor_ref: nil}
-    {:noreply, handle_fetch_error!(state, :batcher_down, tpo)}
+    {:noreply, handle_fetch_error!(state, :batcher_down, tpo), get_timeout(state)}
   end
 
   @impl true
@@ -219,17 +244,17 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     cond do
       not processing_allowed? ->
         Process.send_after(self(), :handle_records, 100)
-        {:noreply, state}
+        {:noreply, state, get_timeout(state)}
 
       not has_records_to_process? ->
         if state.fetch_ref == nil do
           Process.send_after(self(), :poll_records, 0)
         end
 
-        {:noreply, state}
+        {:noreply, state, get_timeout(state)}
 
       curr_unacked > max_unacked ->
-        {:noreply, state}
+        {:noreply, state, get_timeout(state)}
 
       true ->
         {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
@@ -314,7 +339,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         next_handle_delay = Keyword.get(usr_opts, :handler_cooldown_ms, 0)
         Process.send_after(self(), :handle_records, next_handle_delay)
 
-        {:noreply, new_state}
+        {:noreply, new_state, get_timeout(state)}
     end
   end
 
@@ -340,12 +365,18 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}
     else
       Process.send_after(self(), {:assignment_revoked, waiting_pid}, 100)
-      {:noreply, state}
+      {:noreply, state, get_timeout(state)}
     end
   end
 
   @impl true
   def terminate(reason, %__MODULE__{} = state) do
+    if state.latest_committed_offset == state.latest_processed_offset do
+      Logger.warning(
+        "Consumer for topic #{state.topic_name} partition #{state.partition_idx} on group #{state.cg_name} terminated with unacked commits!"
+      )
+    end
+
     if function_exported?(state.cg_mod, :handle_consumer_stop, 4) do
       :ok =
         state.cg_mod.handle_consumer_stop(

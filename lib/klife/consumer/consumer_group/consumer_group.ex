@@ -702,7 +702,8 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
-  def handle_terminate(%__MODULE__{} = state, _reason) do
+  def handle_terminate(%__MODULE__{} = state, reason) do
+    Logger.info("Terminating consumer group #{state.group_name} because of error #{reason}")
     true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
 
     # TODO: Maybe we should also use the termination reason to define leaving epoch
