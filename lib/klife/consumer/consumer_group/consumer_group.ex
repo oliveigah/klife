@@ -287,14 +287,20 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         {:ok, %{content: %{coordinators: [%{error_code: ec}]}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for group #{state.group_name} on #{inspect(M.FindCoordinator)} call"
+            "#{inspect(M.FindCoordinator)} failed with error code #{ec} (client=#{inspect(state.client_name)}, group=#{state.group_name})",
+            client: state.client_name,
+            group: state.group_name,
+            error_code: ec
           )
 
           :retry
 
         {:error, reason} ->
           Logger.error(
-            "Unexpected error #{reason} on #{inspect(M.FindCoordinator)} call for group #{state.group_name}"
+            "#{inspect(M.FindCoordinator)} failed unexpectedly: #{inspect(reason)} (client=#{inspect(state.client_name)}, group=#{state.group_name})",
+            client: state.client_name,
+            group: state.group_name,
+            reason: inspect(reason)
           )
 
           :retry
@@ -360,7 +366,10 @@ defmodule Klife.Consumer.ConsumerGroup do
          ) do
       {:error, :timeout} ->
         Logger.error(
-          "Timeout on heartbeat for client #{state.client_name} group #{state.group_name}. It is not safe to keep consuming records because consumers may be fenced!"
+          "Heartbeat timeout for group #{state.group_name}. Consumers may be fenced, stopping consumption (client=#{inspect(state.client_name)})",
+          client: state.client_name,
+          group: state.group_name,
+          coordinator_id: state.coordinator_id
         )
 
         {:error, :timeout}
@@ -375,7 +384,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       {:error, error} ->
         true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
 
-        Logger.error("Error on heartbeat for #{state.group_name} error: #{error}")
+        Logger.error(
+          "Heartbeat error for group #{state.group_name}: #{inspect(error)} (client=#{inspect(state.client_name)})",
+          client: state.client_name,
+          group: state.group_name,
+          reason: inspect(error)
+        )
 
         state
         |> get_coordinator!()
@@ -418,7 +432,12 @@ defmodule Klife.Consumer.ConsumerGroup do
 
       {:ok, %{content: %{error_code: ec, error_message: em}}} ->
         Logger.error(
-          "Heartbeat error on consumer group #{state.group_name} for consumer group module #{state.mod}. Error Code: #{ec} Error Message: #{em}"
+          "Heartbeat error for group #{state.group_name}: error_code=#{ec} error_message=#{em} (client=#{inspect(state.client_name)})",
+          client: state.client_name,
+          group: state.group_name,
+          consumer_group_mod: state.mod,
+          error_code: ec,
+          error_message: em
         )
 
         coordinator_error? = ec in [14, 15, 16]
@@ -437,7 +456,11 @@ defmodule Klife.Consumer.ConsumerGroup do
 
           true ->
             Logger.error(
-              "Unrecoverable error on heartbeat consumer group will be restarted! Error Code: #{ec} Error Message: #{em}"
+              "Unrecoverable heartbeat error for group #{state.group_name}, restarting: error_code=#{ec} error_message=#{em} (client=#{inspect(state.client_name)})",
+              client: state.client_name,
+              group: state.group_name,
+              error_code: ec,
+              error_message: em
             )
 
             {:error, ec}
@@ -578,7 +601,7 @@ defmodule Klife.Consumer.ConsumerGroup do
           end
 
         {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
-          raise "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.OffsetFetch)} call"
+          raise "#{inspect(M.OffsetFetch)} failed with error code #{ec} (client=#{inspect(state.client_name)}, group=#{state.group_name})"
       end
 
     missing_resp_tp =
@@ -693,7 +716,13 @@ defmodule Klife.Consumer.ConsumerGroup do
   def handle_consumer_down(%__MODULE__{consumers_monitor_map: cmap} = state, monitor_ref, reason) do
     case Map.get(cmap, monitor_ref) do
       nil ->
-        Logger.error("Unexpected consumer down message received!")
+        Logger.error(
+          "Unexpected consumer DOWN message received (client=#{inspect(state.client_name)}, group=#{state.group_name})",
+          client: state.client_name,
+          group: state.group_name,
+          reason: inspect(reason)
+        )
+
         {:stop, reason, state}
 
       {_topic_id, _partition} ->
@@ -703,7 +732,13 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def handle_terminate(%__MODULE__{} = state, reason) do
-    Logger.info("Terminating consumer group #{state.group_name} because of error #{reason}")
+    Logger.info(
+      "Terminating consumer group #{state.group_name}: #{inspect(reason)} (client=#{inspect(state.client_name)})",
+      client: state.client_name,
+      group: state.group_name,
+      reason: inspect(reason)
+    )
+
     true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
 
     # TODO: Maybe we should also use the termination reason to define leaving epoch

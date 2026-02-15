@@ -177,7 +177,7 @@ defmodule Klife.Consumer.Fetcher do
       # This should never happen, because the Dispacher already
       # tracks requests timeouts and send it as response
       deadline - now ->
-        raise "Unexpected timeout while waiting for fetch response"
+        raise "Unexpected timeout while waiting for fetch response (received=#{counter}/#{max_resps})"
     end
   end
 

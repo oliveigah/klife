@@ -86,7 +86,7 @@ defmodule Klife.Record do
   def verify_batch!(produce_resps) do
     case verify_batch(produce_resps) do
       {:ok, resp} -> resp
-      {:error, errors} -> raise "Error on batch verification. #{inspect(errors)}"
+      {:error, errors} -> raise "Batch verification failed: #{inspect(errors)}"
     end
   end
 

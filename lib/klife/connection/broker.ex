@@ -145,19 +145,28 @@ defmodule Klife.Connection.Broker do
           timeout ->
             Controller.take_from_in_flight(client_name, correlation_id)
 
-            Logger.error("""
-            Timeout while waiting #{message_mod} reponse from broker #{broker_id} on host #{conn.host}.
-            """)
+            Logger.error(
+              "Timeout waiting for #{inspect(message_mod)} response from broker #{broker_id} (client=#{inspect(client_name)})",
+              client: client_name,
+              broker_id: broker_id,
+              host: conn.host,
+              message: inspect(message_mod)
+            )
 
             {:error, :timeout}
         end
 
-      {:error, reason} = res ->
+      {:error, reason} ->
         Controller.take_from_in_flight(client_name, correlation_id)
 
-        Logger.error("""
-        Error while sending message #{message_mod} to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
-        """)
+        Logger.error(
+          "Error sending #{inspect(message_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)})",
+          client: client_name,
+          broker_id: broker_id,
+          host: conn.host,
+          message: inspect(message_mod),
+          reason: inspect(reason)
+        )
 
         {:error, reason}
     end
@@ -199,12 +208,17 @@ defmodule Klife.Connection.Broker do
       :ok ->
         :ok
 
-      {:error, reason} = res ->
+      {:error, reason} ->
         Controller.take_from_in_flight(client_name, correlation_id)
 
-        Logger.error("""
-        Error while sending async message #{msg_mod} to broker #{broker_id} on host #{conn.host}. Reason: #{inspect(res)}
-        """)
+        Logger.error(
+          "Error sending async #{inspect(msg_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)})",
+          client: client_name,
+          broker_id: broker_id,
+          host: conn.host,
+          message: inspect(msg_mod),
+          reason: inspect(reason)
+        )
 
         {:error, reason}
     end
@@ -228,11 +242,12 @@ defmodule Klife.Connection.Broker do
         if before_timeout? do
           send(callback_pid, {:async_broker_response, callback_ref, reply, msg_mod, msg_version})
         else
-          Logger.warning("""
-          Delivery confirmation arrived after timeout for message #{inspect(msg_mod)} on client #{inspect(client_name)}
-
-          conn: #{inspect(conn)}
-          """)
+          Logger.warning(
+            "Delivery confirmation arrived after timeout for #{inspect(msg_mod)} (client=#{inspect(client_name)})",
+            client: client_name,
+            broker_id: conn.host,
+            message: inspect(msg_mod)
+          )
         end
 
       # async send with no callback and no timeout
@@ -263,11 +278,11 @@ defmodule Klife.Connection.Broker do
   end
 
   defp reply_message(_, client_name, conn) do
-    Logger.warning("""
-    Unkown message received from client #{inspect(client_name)}.
-
-    conn: #{inspect(conn)}
-    """)
+    Logger.warning(
+      "Unknown message received (missing correlation ID) (client=#{inspect(client_name)})",
+      client: client_name,
+      host: conn.host
+    )
 
     :ok
   end
@@ -335,9 +350,13 @@ defmodule Klife.Connection.Broker do
         %__MODULE__{state | conn: conn, reconnect_attempts: 0}
 
       {:error, _reason} = res ->
-        Logger.error("""
-        Error while connecting client #{state.client_name} to broker #{state.broker_id} on host #{state.url}. Reason: #{inspect(res)}
-        """)
+        Logger.error(
+          "Error connecting to broker #{state.broker_id} on host #{state.url}: #{inspect(res)} (client=#{inspect(state.client_name)})",
+          client: state.client_name,
+          broker_id: state.broker_id,
+          host: state.url,
+          reason: inspect(res)
+        )
 
         :ok = Controller.trigger_brokers_verification_async(state.client_name)
 

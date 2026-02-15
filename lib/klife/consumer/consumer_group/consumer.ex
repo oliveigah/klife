@@ -134,7 +134,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def handle_info(:timeout, %__MODULE__{} = state) do
     Logger.error(
-      "Consumer liveness timeout for #{state.topic_name}:#{state.partition_idx} on group #{state.cg_name}. Restarting."
+      "Consumer liveness timeout for #{state.topic_name}:#{state.partition_idx} on group #{state.cg_name}, restarting (client=#{inspect(state.client_name)})",
+      client: state.client_name,
+      group: state.cg_name,
+      topic: state.topic_name,
+      partition: state.partition_idx
     )
 
     {:stop, {:shutdown, :liveness_timeout}, state}
@@ -371,9 +375,15 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
 
   @impl true
   def terminate(reason, %__MODULE__{} = state) do
-    if state.latest_committed_offset == state.latest_processed_offset do
+    if state.latest_committed_offset < state.latest_processed_offset do
       Logger.warning(
-        "Consumer for topic #{state.topic_name} partition #{state.partition_idx} on group #{state.cg_name} terminated with unacked commits!"
+        "Consumer for #{state.topic_name}:#{state.partition_idx} on group #{state.cg_name} terminated with unacked commits (client=#{inspect(state.client_name)})",
+        client: state.client_name,
+        group: state.cg_name,
+        topic: state.topic_name,
+        partition: state.partition_idx,
+        latest_committed_offset: state.latest_committed_offset,
+        latest_processed_offset: state.latest_processed_offset
       )
     end
 
@@ -408,7 +418,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     reset_offset = Map.fetch!(reset_offset_map, {state.topic_name, state.partition_idx})
 
     Logger.warning(
-      "Tried to fetch from offset #{o} for topic #{t} partition #{p} but offset was out of range (error code 1). Reset offset is: #{reset_offset}"
+      "Offset out of range for #{t}:#{p} at offset #{o}, resetting to #{reset_offset} (client=#{inspect(state.client_name)}, group=#{state.cg_name})",
+      client: state.client_name,
+      group: state.cg_name,
+      topic: t,
+      partition: p,
+      requested_offset: o,
+      reset_offset: reset_offset
     )
 
     send(self(), :poll_records)
@@ -435,7 +451,13 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   def handle_fetch_error!(%__MODULE__{} = state, error, {t, p, o})
       when error in @retryable_errors do
     Logger.warning(
-      "Error #{error} on fetch from offset #{o} for topic #{t} partition #{p} on group #{state.cg_name}. Retrying..."
+      "Fetch error on #{t}:#{p} at offset #{o}, retrying: #{inspect(error)} (client=#{inspect(state.client_name)}, group=#{state.cg_name})",
+      client: state.client_name,
+      group: state.cg_name,
+      topic: t,
+      partition: p,
+      offset: o,
+      error: inspect(error)
     )
 
     Process.send_after(
@@ -448,8 +470,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   # TODO: Should handle more error codes?
-  def handle_fetch_error!(%__MODULE__{} = _state, error_code, {t, _p, _o}) do
-    raise "Unexpected error on consumer fetch for topic #{t}. error code: #{inspect(error_code)}"
+  def handle_fetch_error!(%__MODULE__{} = state, error_code, {t, p, _o}) do
+    raise "Unexpected fetch error on #{t}:#{p} (error_code=#{inspect(error_code)}, client=#{inspect(state.client_name)}, group=#{state.cg_name})"
   end
 
   def handle_fetch_response(%__MODULE__{} = state, [], {_t, _p, _o}) do

@@ -377,10 +377,7 @@ defmodule Klife.Producer do
 
   defp set_producer_id(%__MODULE__{enable_idempotence: true} = state) do
     if ConnController.disabled_feature?(state.client_name, :producer_idempotence) do
-      raise """
-        Producer idempotence feature is disabled but producer #{state.name} has idempotence enabled.
-        Please check for API versions problems or disable idempotence on this producer.
-      """
+      raise "Producer idempotence feature is disabled but producer #{state.name} has idempotence enabled. Please check for API versions problems or disable idempotence on this producer (client=#{inspect(state.client_name)}, producer=#{state.name})"
     end
 
     broker = maybe_find_coordinator(state)
@@ -397,7 +394,11 @@ defmodule Klife.Producer do
 
         {:ok, %{content: %{error_code: ec}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.InitProducerId)} call"
+            "#{inspect(M.InitProducerId)} failed with error code #{ec} (client=#{inspect(state.client_name)}, producer=#{state.name})",
+            client: state.client_name,
+            producer: state.name,
+            error_code: ec,
+            broker_id: broker
           )
 
           :retry
@@ -441,7 +442,11 @@ defmodule Klife.Producer do
 
         {:ok, %{content: %{error_code: ec}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.FindCoordinator)} call"
+            "#{inspect(M.FindCoordinator)} failed with error code #{ec} (client=#{inspect(state.client_name)}, producer=#{state.name})",
+            client: state.client_name,
+            producer: state.name,
+            txn_id: txn_id,
+            error_code: ec
           )
 
           :retry
@@ -452,7 +457,11 @@ defmodule Klife.Producer do
 
         {:ok, %{content: %{coordinators: [%{error_code: ec}]}}} ->
           Logger.error(
-            "Error code #{ec} returned from broker for client #{inspect(state.client_name)} on #{inspect(M.FindCoordinator)} call"
+            "#{inspect(M.FindCoordinator)} failed with error code #{ec} (client=#{inspect(state.client_name)}, producer=#{state.name})",
+            client: state.client_name,
+            producer: state.name,
+            txn_id: txn_id,
+            error_code: ec
           )
 
           :retry

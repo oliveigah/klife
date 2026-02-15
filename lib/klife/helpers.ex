@@ -15,7 +15,7 @@ defmodule Klife.Helpers do
           val
       end
     else
-      raise "timeout while waiting for broker response"
+      raise "Timeout while waiting for broker response"
     end
   end
 

@@ -117,7 +117,11 @@ defmodule Klife.Producer.Dispatcher do
         {:noreply, state}
 
       _ ->
-        Logger.warning("Timeout message received for an unknown request ref!")
+        Logger.warning(
+          "Timeout message received for an unknown request ref",
+          broker_id: state.broker_id
+        )
+
         {:noreply, state}
     end
   end
@@ -187,31 +191,27 @@ defmodule Klife.Producer.Dispatcher do
     grouped_errors =
       Enum.group_by(failure_list, fn {topic, partition, error_code, _base_offset} ->
         if error_code in @delivery_discard_codes do
-          Logger.warning("""
-          Non retryable error while producing message. Message will be discarded!
-
-          topic: #{topic}
-          partition: #{partition}
-          error_code: #{error_code}
-
-          client: #{inspect(client_name)}
-          broker_id: #{broker_id}
-          producer_name: #{producer_name}
-          """)
+          Logger.warning(
+            "Non-retryable produce error on #{topic}:#{partition}, message discarded (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
+            client: client_name,
+            producer: producer_name,
+            broker_id: broker_id,
+            topic: topic,
+            partition: partition,
+            error_code: error_code
+          )
 
           :discard
         else
-          Logger.warning("""
-          Error while producing message. Message will be retried!
-
-          topic: #{topic}
-          partition: #{partition}
-          error_code: #{error_code}
-
-          client: #{client_name}
-          broker_id: #{broker_id}
-          producer_name: #{producer_name}
-          """)
+          Logger.warning(
+            "Produce error on #{topic}:#{partition}, message will be retried (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
+            client: client_name,
+            producer: producer_name,
+            broker_id: broker_id,
+            topic: topic,
+            partition: partition,
+            error_code: error_code
+          )
 
           :retry
         end

@@ -26,7 +26,11 @@ defmodule Klife.Connection.MessageVersions do
       _err ->
         Enum.each(client_data.required_for, fn feature ->
           Logger.warning(
-            "The feature #{feature} will be disabled because could not agree on API version for #{inspect(mod)} api_key #{api_key} for client #{client_name}."
+            "Feature #{feature} disabled: could not agree on API version for #{inspect(mod)} (api_key=#{api_key}) (client=#{inspect(client_name)})",
+            client: client_name,
+            feature: feature,
+            message: inspect(mod),
+            api_key: api_key
           )
 
           Controller.disable_feature(feature, client_name)

@@ -69,9 +69,7 @@ defmodule Klife do
       TxnProducerPool.produce(records, client, opts)
     else
       if ConnController.disabled_feature?(client, :producer) do
-        raise """
-        You have tried to call the Produce API, but the producer feature is disabled. Check logs for details.
-        """
+        raise "Produce API called but producer feature is disabled (client=#{inspect(client)}). Check logs for details."
       end
 
       Producer.produce(records, client, opts)
@@ -81,9 +79,7 @@ defmodule Klife do
   @doc false
   def produce_async(%Record{} = record, client, opts \\ []) do
     if ConnController.disabled_feature?(client, :producer) do
-      raise """
-      You have tried to call the Produce API, but the producer feature is disabled. Check logs for details.
-      """
+      raise "Produce API called but producer feature is disabled (client=#{inspect(client)}). Check logs for details."
     end
 
     prepared_rec = prepare_records(record, client, opts)
@@ -93,9 +89,7 @@ defmodule Klife do
   @doc false
   def produce_batch_async([%Record{} | _] = records, client, opts \\ []) do
     if ConnController.disabled_feature?(client, :producer) do
-      raise """
-      You have tried to call the Produce API, but the producer feature is disabled. Check logs for details.
-      """
+      raise "Produce API called but producer feature is disabled (client=#{inspect(client)}). Check logs for details."
     end
 
     case opts[:callback] do
@@ -125,9 +119,7 @@ defmodule Klife do
   @doc false
   def transaction(fun, client, opts \\ []) do
     if ConnController.disabled_feature?(client, :txn_producer) do
-      raise """
-      You have tried to call the Transaction API, but the txn_producer feature is disabled. Check logs for details.
-      """
+      raise "Transaction API called but txn_producer feature is disabled (client=#{inspect(client)}). Check logs for details."
     end
 
     TxnProducerPool.run_txn(client, get_txn_pool(client, opts), fun)

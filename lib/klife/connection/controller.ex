@@ -334,55 +334,45 @@ defmodule Klife.Connection.Controller do
   end
 
   def disable_feature(:connection, client_name) do
-    raise "Could not agree on a required message for the connection system on client #{inspect(client_name)} . Check logs for details."
+    raise "Could not agree on a required message for the connection system. Check logs for details (client=#{inspect(client_name)})"
   end
 
   def disable_feature(:producer = feature, client_name) do
-    Logger.warning("""
-    Producer feature will be disabled for client #{inspect(client_name)}.
-
-    This may happen because of:
-    - API version negotiation failures
-    - Client configuration
-
-    """)
+    Logger.warning(
+      "Producer feature disabled due to API version negotiation failure or client configuration (client=#{inspect(client_name)})",
+      client: client_name,
+      feature: feature
+    )
 
     :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
   end
 
   def disable_feature(:txn_producer = feature, client_name) do
-    Logger.warning("""
-    Transactions feature will be disabled for client #{inspect(client_name)}.
-
-    This may happen because of:
-    - API version negotiation failures
-    - Client configuration
-
-    """)
+    Logger.warning(
+      "Transactions feature disabled due to API version negotiation failure or client configuration (client=#{inspect(client_name)})",
+      client: client_name,
+      feature: feature
+    )
 
     :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
   end
 
   def disable_feature(:producer_idempotence = feature, client_name) do
-    Logger.warning("""
-    Producer idempotence feature will be disabled for client #{inspect(client_name)}.
-
-    This may happen because of:
-    - API version negotiation failures
-
-    """)
+    Logger.warning(
+      "Producer idempotence feature disabled due to API version negotiation failure (client=#{inspect(client_name)})",
+      client: client_name,
+      feature: feature
+    )
 
     :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
   end
 
   def disable_feature(:sasl = feature, client_name) do
-    Logger.warning("""
-    SASL feature will be disabled for client #{inspect(client_name)}.
-
-    This may happen because of:
-    - API version negotiation failures
-
-    """)
+    Logger.warning(
+      "SASL feature disabled due to API version negotiation failure (client=#{inspect(client_name)})",
+      client: client_name,
+      feature: feature
+    )
 
     :persistent_term.put({__MODULE__, client_name, feature, :disabled?}, true)
   end

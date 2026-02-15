@@ -21,7 +21,7 @@ defmodule Klife.Utils do
         now = System.monotonic_time(:millisecond)
 
         if now - init_time > :timer.seconds(15) do
-          raise "Timeout while creating topics"
+          raise "Timeout while creating topics (exceeded 15s)"
         else
           do_create_topics(init_time)
         end
@@ -168,11 +168,7 @@ defmodule Klife.Utils do
         end
 
       err ->
-        raise "
-            Unexpected error while creating topics:
-
-            #{inspect(err)}
-            "
+        raise "Unexpected error while creating topics: #{inspect(err)}"
     end
   end
 end

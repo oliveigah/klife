@@ -158,7 +158,11 @@ defmodule Klife.TxnProducerPool do
         catch
           _kind, reason ->
             Logger.error(
-              "Failed kafka transaction reason #{inspect(reason)}. #{inspect({__STACKTRACE__})}"
+              "Kafka transaction failed: #{inspect(reason)} (client=#{inspect(client_name)}, pool=#{pool_name})",
+              client: client_name,
+              pool: pool_name,
+              reason: inspect(reason),
+              stacktrace: inspect(__STACKTRACE__)
             )
 
             {:error, reason}
@@ -310,7 +314,7 @@ defmodule Klife.TxnProducerPool do
           do_add_partitions_to_txn(deadline, client_name, coordinator_id, content)
       end
     else
-      raise "timeout while adding partition to txn"
+      raise "Timeout while adding partition to txn (client=#{inspect(client_name)}, coordinator=#{coordinator_id})"
     end
   end
 

@@ -241,7 +241,13 @@ defmodule Klife.Consumer.Committer do
               # TODO: Handle specific errors
               ec ->
                 Logger.warning(
-                  "Commit request error #{ec} for topic #{t} parition #{p} offset #{batch_item.offset_to_commit} on group #{state.group_id}! Retrying..."
+                  "Commit error on #{t}:#{p} at offset #{batch_item.offset_to_commit} on group #{state.group_id}, retrying (error_code=#{ec}) (client=#{inspect(state.client_name)})",
+                  client: state.client_name,
+                  group: state.group_id,
+                  topic: t,
+                  partition: p,
+                  offset: batch_item.offset_to_commit,
+                  error_code: ec
                 )
 
                 {:retry, batch_item}
