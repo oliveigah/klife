@@ -229,7 +229,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:producer_concurrency, _config) do
-    Enum.random(1..5)
+    Enum.random(1..3)
   end
 
   defp random_value(:producer_loop_interval_ms, _config) do
@@ -237,7 +237,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:record_value_bytes, _config) do
-    Enum.random(10..2_000)
+    Enum.random(10..1_500)
   end
 
   defp random_value(:record_key_bytes, _config) do
@@ -254,7 +254,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :handler_max_batch_size}, base_val) do
-    weighted_random_opt([{5, base_val}, :dynamic, 100, 200, 1000])
+    weighted_random_opt([{5, base_val}, :dynamic, 200, 1000])
   end
 
   defp random_value({:cg_topics, :offset_reset_policy}, _base_val) do
@@ -275,7 +275,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :fetch_max_bytes}, base_val) do
-    weighted_random_opt([{5, base_val}, 100_000, 500_000, 1_000_000])
+    weighted_random_opt([{5, base_val}, 500_000, 1_000_000])
   end
 
   defp random_value({:cg_topics, :max_queue_size}, base_val) do
@@ -327,7 +327,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:exclusive_fetcher, :max_bytes_per_request}, base_val) do
-    weighted_random_opt([{5, base_val}, 100_000, 250_000, 500_000, 1_000_000, 5_000_000])
+    weighted_random_opt([{5, base_val}, 500_000, 1_000_000, 5_000_000])
   end
 
   defp random_value({:exclusive_fetcher, :request_timeout_ms}, base_val) do
@@ -339,7 +339,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:exclusive_fetcher, :linger_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 500, 1000, 2000])
+    weighted_random_opt([{5, base_val}, 500, 1000])
   end
 
   defp random_value({_context, _key}, base_val), do: base_val
@@ -369,9 +369,5 @@ defmodule Simulator.EngineConfig do
       {m, f, a} -> apply(m, f, a)
       v -> v
     end
-  end
-
-  def lag_warning_threshold(%__MODULE__{} = config) do
-    20 * config.producer_max_rps * config.producer_concurrency
   end
 end
