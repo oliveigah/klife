@@ -15,6 +15,7 @@ defmodule Klife.Consumer.Committer do
 
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
+  require Logger
   alias Klife.GenBatcher
 
   alias Klife.Connection.Broker
@@ -238,7 +239,11 @@ defmodule Klife.Consumer.Committer do
                 send(batch_item.callback_pid, {:offset_committed, batch_item.offset_to_commit})
 
               # TODO: Handle specific errors
-              _err ->
+              ec ->
+                Logger.warning(
+                  "Commit request error #{ec} for topic #{t} parition #{p} offset #{batch_item.offset_to_commit} on group #{state.group_id}! Retrying..."
+                )
+
                 {:retry, batch_item}
             end
           end

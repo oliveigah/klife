@@ -385,21 +385,26 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     %__MODULE__{state | latest_fetched_offset: reset_offset, fetch_ref: nil}
   end
 
-  def handle_fetch_error!(%__MODULE__{} = state, :timeout, {t, p, o}) do
-    Logger.warning("Timeout on fetch from offset #{o} for topic #{t} partition #{p}. Retrying...")
-
-    Process.send_after(
-      self(),
-      :poll_records,
-      Enum.random(0..state.topic_config.fetch_interval_ms)
-    )
-
-    %__MODULE__{state | fetch_ref: nil}
-  end
-
-  def handle_fetch_error!(%__MODULE__{} = state, :batcher_down, {t, p, o}) do
+  @retryable_errors [
+    :timeout,
+    :batcher_down,
+    -1,
+    3,
+    5,
+    6,
+    7,
+    9,
+    56,
+    74,
+    75,
+    78,
+    100,
+    103
+  ]
+  def handle_fetch_error!(%__MODULE__{} = state, error, {t, p, o})
+      when error in @retryable_errors do
     Logger.warning(
-      "Fetch batcher went down while fetching offset #{o} for topic #{t} partition #{p}. Retrying..."
+      "Error #{error} on fetch from offset #{o} for topic #{t} partition #{p} on group #{state.cg_name}. Retrying..."
     )
 
     Process.send_after(
