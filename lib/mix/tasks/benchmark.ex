@@ -1,4 +1,4 @@
-if Mix.env() in [:dev] do
+if Mix.env() in [:dev] and Code.ensure_loaded?(Benchee) do
   defmodule Mix.Tasks.Benchmark do
     use Mix.Task
 
