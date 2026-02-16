@@ -160,6 +160,34 @@ defmodule Klife do
     end
   end
 
+  def log_metadata do
+    [
+      :client,
+      :broker_id,
+      :host,
+      :topic,
+      :partition,
+      :offset,
+      :group,
+      :producer,
+      :pool,
+      :consumer_group_mod,
+      :coordinator_id,
+      :error_code,
+      :error_message,
+      :error,
+      :reason,
+      :message,
+      :feature,
+      :api_key,
+      :requested_offset,
+      :reset_offset,
+      :latest_committed_offset,
+      :latest_processed_offset,
+      :stacktrace
+    ]
+  end
+
   defp prepare_records(%Record{} = rec, client, opts) do
     [new_rec] = prepare_records([rec], client, opts)
     new_rec
