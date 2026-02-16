@@ -1,7 +1,6 @@
 defmodule Simulator do
   @clients [Simulator.NormalClient, Simulator.TLSClient]
   def start_metrics() do
-    # TODO: Enhance metrics!
     spawn(fn ->
       :ets.new(:support_metrics, [:set, :public, :named_table])
 

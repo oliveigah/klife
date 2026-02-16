@@ -6,9 +6,6 @@ defmodule Klife do
   but instead use them through a module that uses `Klife.Client`.
   """
 
-  # TODO: Standardize error messages and raises
-  # TODO: Standardize timeouts
-
   alias Klife.Record
   alias Klife.Producer
   alias Klife.Consumer.Fetcher

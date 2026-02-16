@@ -38,7 +38,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :empty_fetch_results_count,
     :fetch_ref,
     :fetch_batcher_monitor_ref,
-    :leader_epoch
+    :leader_epoch,
+    :idle_timeout
   ]
 
   def start_link(args) do
@@ -99,7 +100,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         state.cg_mod.handle_consumer_start(state.topic_name, state.partition_idx, state.cg_name)
     end
 
-    {:ok, state}
+    {:ok, %{state | idle_timeout: get_idle_timeout(state)}}
   end
 
   def revoke_assignment(client_name, cg_mod, topic_id, partition, cg_name) do
@@ -124,11 +125,10 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   # multiple other process colaborate properly (fetcher, batcher, dispatcher, commiter)
   # any unexpected error on them may cause the consumer be forever waiting
   # for a message that may never arrive!
-  #
-  # TODO: Make this a config and do sanity checks against other configs
-  # especially fetch_interval_ms and request timeouts
-  defp get_timeout(%__MODULE__{} = _state) do
-    :timer.minutes(2)
+  defp get_idle_timeout(%__MODULE__{} = state) do
+    # TODO: Use fetcher and commiter request timeout here instead of the client default
+    3 *
+      (state.topic_config.fetch_interval_ms + state.client_name.get_default_request_timeout_ms())
   end
 
   @impl true
@@ -172,17 +172,17 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     batcher_monitor = Process.monitor(batcher_pid)
 
     {:noreply, %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor},
-     get_timeout(state)}
+     state.idle_timeout}
   end
 
   def handle_info(:poll_records, %__MODULE__{} = state) do
-    {:noreply, state, get_timeout(state)}
+    {:noreply, state, state.idle_timeout}
   end
 
   @impl true
   def handle_info({:klife_fetch_response, {_t, _p, _o} = tpo, {:ok, recs}}, %__MODULE__{} = state) do
     state = demonitor_batcher(state)
-    {:noreply, handle_fetch_response(state, recs, tpo), get_timeout(state)}
+    {:noreply, handle_fetch_response(state, recs, tpo), state.idle_timeout}
   end
 
   @impl true
@@ -191,7 +191,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         %__MODULE__{} = state
       ) do
     state = demonitor_batcher(state)
-    {:noreply, handle_fetch_error!(state, reason, tpo), get_timeout(state)}
+    {:noreply, handle_fetch_error!(state, reason, tpo), state.idle_timeout}
   end
 
   @impl true
@@ -202,7 +202,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
      %__MODULE__{
        state
        | latest_committed_offset: max(state.latest_committed_offset, committed_offset)
-     }, get_timeout(state)}
+     }, state.idle_timeout}
   end
 
   @impl true
@@ -212,7 +212,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       )
       when ref != nil do
     state = %__MODULE__{state | fetch_batcher_monitor_ref: nil}
-    {:noreply, handle_fetch_error!(state, :batcher_down, tpo), get_timeout(state)}
+    {:noreply, handle_fetch_error!(state, :batcher_down, tpo), state.idle_timeout}
   end
 
   @impl true
@@ -248,17 +248,17 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     cond do
       not processing_allowed? ->
         Process.send_after(self(), :handle_records, 100)
-        {:noreply, state, get_timeout(state)}
+        {:noreply, state, state.idle_timeout}
 
       not has_records_to_process? ->
         if state.fetch_ref == nil do
           Process.send_after(self(), :poll_records, 0)
         end
 
-        {:noreply, state, get_timeout(state)}
+        {:noreply, state, state.idle_timeout}
 
       curr_unacked > max_unacked ->
-        {:noreply, state, get_timeout(state)}
+        {:noreply, state, state.idle_timeout}
 
       true ->
         {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
@@ -343,7 +343,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         next_handle_delay = Keyword.get(usr_opts, :handler_cooldown_ms, 0)
         Process.send_after(self(), :handle_records, next_handle_delay)
 
-        {:noreply, new_state, get_timeout(state)}
+        {:noreply, new_state, state.idle_timeout}
     end
   end
 
@@ -369,7 +369,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}
     else
       Process.send_after(self(), {:assignment_revoked, waiting_pid}, 100)
-      {:noreply, state, get_timeout(state)}
+      {:noreply, state, state.idle_timeout}
     end
   end
 

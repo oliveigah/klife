@@ -2,7 +2,6 @@ defmodule Simulator.EngineConfig do
   alias Klife.Consumer.ConsumerGroup
   alias Klife.Consumer.Fetcher
 
-  # TODO: Add random seeds in the config file as well!
   defstruct [
     :clients,
     :topics,
@@ -249,7 +248,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:cg_topics, :handler_max_unacked_commits}, _base_val) do
-    # TODO: Think how to keep invariants even when not 0
+    # Can not ensure invariants if not 0
     0
   end
 

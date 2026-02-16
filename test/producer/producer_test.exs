@@ -1201,7 +1201,6 @@ defmodule Klife.ProducerTest do
     TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :committed)
   end
 
-  # TODO: How to assert transactional behaviour here?
   test "txn produce batch txn" do
     rec1 = %Record{
       value: :rand.bytes(10),
