@@ -78,6 +78,7 @@ defmodule Klife.Consumer.ConsumerGroup do
                 :heartbeat_interval_ms,
                 :assigned_topic_partitions,
                 :consumer_supervisor,
+                :internal_supervisor,
                 :consumers_monitor_map,
                 :committers_distribution
               ]
@@ -210,30 +211,43 @@ defmodule Klife.Consumer.ConsumerGroup do
         heartbeat_interval_ms: 1_000,
         assigned_topic_partitions: [],
         consumer_supervisor: consumer_sup_pid,
+        internal_supervisor: nil,
         consumers_monitor_map: %{},
         fetch_strategy: args_map.fetch_strategy,
         committers_count: args_map.committers_count,
         committers_distribution: %{}
       }
       |> get_coordinator!()
-      |> maybe_start_group_fetcher()
 
-    init_state = %{
-      init_state
-      | topics:
-          args_map.topics
-          |> Enum.map(fn tc ->
-            final_tc =
-              tc
-              |> TopicConfig.from_map(init_state)
-              |> maybe_start_topic_fetcher(init_state)
+    {init_state, group_fetcher_specs} = build_group_fetcher_specs(init_state)
 
-            {tc.name, final_tc}
-          end)
-          |> Map.new()
-    }
+    {topics, topic_fetcher_specs} =
+      args_map.topics
+      |> Enum.map_reduce([], fn tc, acc_specs ->
+        final_tc = TopicConfig.from_map(tc, init_state)
+        {final_tc, specs} = build_topic_fetcher_specs(final_tc, init_state)
+        {{tc.name, final_tc}, acc_specs ++ specs}
+      end)
+
+    init_state = %{init_state | topics: Map.new(topics)}
+
+    {committers_distribution, committer_specs} = build_committer_specs(init_state)
+    init_state = %{init_state | committers_distribution: committers_distribution}
+
+    internal_children = group_fetcher_specs ++ topic_fetcher_specs ++ committer_specs
+
+    {:ok, internal_sup_pid} =
+      Supervisor.start_link(internal_children, strategy: :one_for_one)
+
+    init_state = %{init_state | internal_supervisor: internal_sup_pid}
 
     send(self(), :heartbeat)
+
+    Logger.info(
+      "Starting consumer group #{init_state.group_name}: (client=#{inspect(init_state.client_name)}, mod=#{init_state.mod})",
+      client: init_state.client_name,
+      group: init_state.group_name
+    )
 
     {:ok, init_state}
   end
@@ -321,14 +335,13 @@ defmodule Klife.Consumer.ConsumerGroup do
   def handle_heartbeat(%__MODULE__{} = state) do
     case do_heartbeat(state) do
       {:ok, new_state} ->
-        new_state = new_state |> maybe_start_committer() |> handle_assignment()
+        new_state = handle_assignment(new_state)
 
         Process.send_after(self(), :heartbeat, new_state.heartbeat_interval_ms)
 
         {:noreply, new_state}
 
       {:error, reason} ->
-        true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
         {:stop, reason, state}
     end
   end
@@ -466,55 +479,52 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
-  defp maybe_start_committer(%__MODULE__{} = state)
-       when map_size(state.committers_distribution) == 0 do
+  defp build_committer_specs(%__MODULE__{} = state) do
     # TODO: Handle coordinator changes on committer
-    new_dist =
-      1..state.committers_count
-      |> Enum.map(fn committer_id ->
-        committer_args = [
-          group_id: state.group_name,
-          broker_id: state.coordinator_id,
-          batcher_id: committer_id,
-          member_id: state.member_id,
-          member_epoch: state.epoch,
-          client_name: state.client_name,
-          consumer_group_mod: state.mod,
-          group_intance_id: state.instance_id,
-          cg_pid: self(),
-          # TODO: Make config
-          batcher_config: [
-            {:batch_wait_time_ms, 0},
-            # To have max_in_flight greater than 1, must think about
-            # how to prevent lower offset values to override
-            # higher ones on retries.
-            #
-            # Eg:
-            # req 1 commit 10 (fail)
-            # req 2 commit 20 (success)
-            # req 1 retry, commit 10 (success)
-            #
-            # With max_in_flight 1 this is not a problem
-            # because failed commits will be merged on
-            # the waiting batch using the higher value
-            {:max_in_flight, 1}
-          ]
+    1..state.committers_count
+    |> Enum.map_reduce([], fn committer_id, acc_specs ->
+      committer_args = [
+        group_id: state.group_name,
+        broker_id: state.coordinator_id,
+        batcher_id: committer_id,
+        member_id: state.member_id,
+        member_epoch: state.epoch,
+        client_name: state.client_name,
+        consumer_group_mod: state.mod,
+        group_intance_id: state.instance_id,
+        cg_pid: self(),
+        # TODO: Make config
+        batcher_config: [
+          {:batch_wait_time_ms, 0},
+          # To have max_in_flight greater than 1, must think about
+          # how to prevent lower offset values to override
+          # higher ones on retries.
+          #
+          # Eg:
+          # req 1 commit 10 (fail)
+          # req 2 commit 20 (success)
+          # req 1 retry, commit 10 (success)
+          #
+          # With max_in_flight 1 this is not a problem
+          # because failed commits will be merged on
+          # the waiting batch using the higher value
+          {:max_in_flight, 1}
         ]
+      ]
 
-        {:ok, _pid} = Committer.start_link(committer_args)
+      spec = %{
+        id: {Committer, committer_id},
+        start: {Committer, :start_link, [committer_args]},
+        restart: :permanent,
+        type: :worker
+      }
 
-        {committer_id, MapSet.new()}
-      end)
-      |> Map.new()
-
-    %__MODULE__{state | committers_distribution: new_dist}
+      {{committer_id, MapSet.new()}, acc_specs ++ [spec]}
+    end)
+    |> then(fn {dist_list, specs} -> {Map.new(dist_list), specs} end)
   end
 
-  defp maybe_start_committer(%__MODULE__{} = state) do
-    state
-  end
-
-  defp maybe_start_group_fetcher(%__MODULE__{fetch_strategy: {:exclusive, opts}} = state)
+  defp build_group_fetcher_specs(%__MODULE__{fetch_strategy: {:exclusive, opts}} = state)
        when is_list(opts) do
     name = Module.concat([__MODULE__, state.mod, state.group_name])
 
@@ -524,16 +534,21 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Keyword.put(:name, name)
       |> Map.new()
 
-    {:ok, _pid} = Fetcher.start_link(args)
+    spec = %{
+      id: {Fetcher, :group, name},
+      start: {Fetcher, :start_link, [args]},
+      restart: :permanent,
+      type: :worker
+    }
 
-    %{state | fetch_strategy: {:exclusive, name}}
+    {%{state | fetch_strategy: {:exclusive, name}}, [spec]}
   end
 
-  defp maybe_start_group_fetcher(%__MODULE__{} = state) do
-    state
+  defp build_group_fetcher_specs(%__MODULE__{} = state) do
+    {state, []}
   end
 
-  defp maybe_start_topic_fetcher(
+  defp build_topic_fetcher_specs(
          %TopicConfig{fetch_strategy: {:exclusive, opts}} = tc,
          %__MODULE__{} = state
        )
@@ -546,13 +561,18 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Keyword.put(:name, name)
       |> Map.new()
 
-    {:ok, _pid} = Fetcher.start_link(args)
+    spec = %{
+      id: {Fetcher, :topic, name},
+      start: {Fetcher, :start_link, [args]},
+      restart: :permanent,
+      type: :worker
+    }
 
-    %{tc | fetch_strategy: {:exclusive, name}}
+    {%{tc | fetch_strategy: {:exclusive, name}}, [spec]}
   end
 
-  defp maybe_start_topic_fetcher(%TopicConfig{} = tc, %__MODULE__{} = _state) do
-    tc
+  defp build_topic_fetcher_specs(%TopicConfig{} = tc, %__MODULE__{} = _state) do
+    {tc, []}
   end
 
   defp get_init_offsets(%__MODULE__{} = state, tid_p_list) do
