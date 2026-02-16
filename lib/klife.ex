@@ -142,7 +142,7 @@ defmodule Klife do
     Keyword.get(opts, :pool_name) || client.get_default_txn_pool()
   end
 
-  defp maybe_add_partition(%Record{} = record, client, opts) do
+  def add_partition(%Record{} = record, client, opts \\ []) do
     case record do
       %Record{partition: nil, topic: topic} ->
         {:ok,
@@ -200,7 +200,7 @@ defmodule Klife do
       rec
       |> Map.replace!(:__estimated_size, Record.estimate_size(rec))
       |> Map.replace!(:__batch_index, idx)
-      |> maybe_add_partition(client, opts)
+      |> add_partition(client, opts)
     end)
   end
 end

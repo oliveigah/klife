@@ -11,8 +11,6 @@ defmodule Simulator.Engine.Producer do
   defstruct [
     :client,
     :topic,
-    :partition,
-    :allowed_to_produce?,
     :max_records,
     :loop_interval_ms,
     :record_value_bytes,
@@ -24,7 +22,6 @@ defmodule Simulator.Engine.Producer do
     state = %__MODULE__{
       client: init_args.client,
       topic: init_args.topic,
-      partition: init_args.partition,
       max_records: init_args.max_records,
       loop_interval_ms: init_args.loop_interval_ms,
       record_value_bytes: init_args.record_value_bytes,
@@ -36,7 +33,7 @@ defmodule Simulator.Engine.Producer do
     seed =
       Map.fetch!(
         seeds_map,
-        {:producer, EngineConfig.parse_topic(state.topic), state.partition, init_args.index}
+        {:producer, EngineConfig.parse_topic(state.topic), init_args.index}
       )
 
     :rand.seed(:exsss, seed)
@@ -47,22 +44,14 @@ defmodule Simulator.Engine.Producer do
 
   def start_link(args) do
     t = args.topic
-    p = args.partition
     c = args.client
     idx = args.index
-    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, c, t, p, idx}))
+    GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, c, t, idx}))
   end
 
   @impl true
   def handle_info(:produce_loop, %__MODULE__{} = state) do
-    new_state =
-      if state.allowed_to_produce? do
-        do_produce(state)
-      else
-        allowed? = Engine.allowed_to_produce?(state.topic, state.partition)
-        %{state | allowed_to_produce?: allowed?}
-      end
-
+    new_state = do_produce(state)
     jitter = Enum.random(1..1000) / 100
     Process.send_after(self(), :produce_loop, round(state.loop_interval_ms * jitter))
     {:noreply, new_state}
@@ -75,12 +64,13 @@ defmodule Simulator.Engine.Producer do
 
     to_produce =
       Enum.map(1..rec_count, fn _i ->
-        rec = %Klife.Record{
-          topic: state.topic,
-          partition: state.partition,
-          value: :rand.bytes(state.record_value_bytes),
-          key: :crypto.strong_rand_bytes(state.record_key_bytes) |> Base.encode16()
-        }
+        rec =
+          %Klife.Record{
+            topic: state.topic,
+            value: :rand.bytes(state.record_value_bytes),
+            key: :crypto.strong_rand_bytes(state.record_key_bytes) |> Base.encode16()
+          }
+          |> Klife.add_partition(state.client)
 
         :ok = Engine.insert_produced_record(rec)
 
@@ -94,24 +84,17 @@ defmodule Simulator.Engine.Producer do
         apply(state.client, :produce_batch, [chunk])
       end)
 
-    recs =
-      for result <- produce_results,
-          {status, %Klife.Record{} = rec} <- result do
-        case status do
-          :ok ->
-            :ok = Engine.confirm_produced_record(rec)
-            rec
+    for result <- produce_results,
+        {status, %Klife.Record{} = rec} <- result do
+      case status do
+        :ok ->
+          :ok = Engine.confirm_produced_record(rec)
+          rec
 
-          :error ->
-            Engine.rollback_produced_record(rec)
-            Logger.error("Error on producer: error_code #{rec.error_code}")
-        end
+        :error ->
+          Engine.rollback_produced_record(rec)
+          Logger.error("Error on producer: error_code #{rec.error_code}")
       end
-
-    if :persistent_term.get({state.topic, state.partition}, false) do
-      Logger.info(
-        "Latest produced for #{state.topic} #{state.partition} offset #{List.last(recs).offset}"
-      )
     end
 
     state

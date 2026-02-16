@@ -52,6 +52,7 @@ defmodule Simulator.Engine do
 
     :ok = handle_consumers(config, sup_pid)
     :ok = handle_producers(config, sup_pid)
+    :ok = handle_event_executor(sup_pid)
 
     send(self(), :invariants_check_loop)
 
@@ -143,6 +144,12 @@ defmodule Simulator.Engine do
   end
 
   @impl true
+  def handle_call({:init_consumer_group, opts}, _from, %__MODULE__{} = state) do
+    result = start_consumer_group(opts, state.sup_pid)
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_call(:terminate, from, %__MODULE__{} = state) do
     :ok = DynamicSupervisor.stop(state.sup_pid, :normal)
     ts = :persistent_term.get(:simulation_timestamp)
@@ -218,7 +225,7 @@ defmodule Simulator.Engine do
   defp do_check_invariants(%__MODULE__{} = state) do
     config = state.config
     now = System.monotonic_time(:millisecond)
-    lag_threshold = :timer.seconds(60)
+    lag_threshold = :timer.seconds(90)
 
     time_diff_from_start =
       System.monotonic_time(:second) - :persistent_term.get(:simulation_start_ts)
@@ -349,14 +356,12 @@ defmodule Simulator.Engine do
   end
 
   def handle_producers(%EngineConfig{} = config, sup_pid) do
-    for %{topic: t, partitions: pcount} <- config.topics,
-        p <- 0..(pcount - 1),
+    for %{topic: t} <- config.topics,
         idx <- 0..(config.producer_concurrency - 1) do
       args =
         %{
           client: Enum.random(config.clients),
           topic: t,
-          partition: p,
           max_records: config.producer_max_rps,
           loop_interval_ms: config.producer_loop_interval_ms,
           record_value_bytes: config.record_value_bytes,
@@ -365,13 +370,29 @@ defmodule Simulator.Engine do
         }
 
       spec = %{
-        id: {:producer, t, p, idx},
+        id: {:producer, t, idx},
         start: {Simulator.Engine.Producer, :start_link, [args]},
         type: :worker
       }
 
       {:ok, _pid} = DynamicSupervisor.start_child(sup_pid, spec)
     end
+
+    :ok
+  end
+
+  def init_consumer_group(opts) do
+    GenServer.call(__MODULE__, {:init_consumer_group, opts})
+  end
+
+  def handle_event_executor(sup_pid) do
+    spec = %{
+      id: :event_executor,
+      start: {Simulator.Engine.EventExecutor, :start_link, [[]]},
+      type: :worker
+    }
+
+    {:ok, _pid} = DynamicSupervisor.start_child(sup_pid, spec)
 
     :ok
   end
@@ -391,19 +412,22 @@ defmodule Simulator.Engine do
 
   def handle_consumers(%EngineConfig{} = config, sup_pid) do
     Enum.map(config.consumer_group_configs, fn opts ->
-      spec = %{
-        id: {opts[:group_name], opts[:cg_mod]},
-        start: {opts[:cg_mod], :start_link, [Keyword.delete(opts, :cg_mod)]},
-        restart: :transient,
-        type: :worker
-      }
-
       :ets.insert(:engine_support, {{opts[:group_name], opts[:cg_mod]}, opts})
-
-      {:ok, _pid} = DynamicSupervisor.start_child(sup_pid, spec)
+      {:ok, _pid} = start_consumer_group(opts, sup_pid)
     end)
 
     :ok
+  end
+
+  defp start_consumer_group(opts, sup_pid) do
+    spec = %{
+      id: {opts[:group_name], opts[:cg_mod]},
+      start: {opts[:cg_mod], :start_link, [Keyword.delete(opts, :cg_mod)]},
+      restart: :temporary,
+      type: :worker
+    }
+
+    DynamicSupervisor.start_child(sup_pid, spec)
   end
 
   def save_data(type, val) do
@@ -419,6 +443,8 @@ defmodule Simulator.Engine do
 
     to_take = {rec.key, cg_name}
     lookup_resp = :ets.lookup(producer_table, to_take)
+
+    :ok = set_consumer_ready(rec.topic, rec.partition, cg_name)
 
     duplicated_message? = :ets.member(idempotency_table, rec.offset)
 
@@ -471,13 +497,16 @@ defmodule Simulator.Engine do
           :ok ->
             :persistent_term.get({:total_consumed_counter, cg_name}) |> :atomics.add(1, 1)
 
-            [{_key, _hash, insert_time, _offset, _confirmation_ts}] =
-              :ets.take(producer_table, to_take)
+            case :ets.take(producer_table, to_take) do
+              [{_key, _hash, insert_time, _offset, _confirmation_ts}] ->
+                :ets.insert(
+                  consumer_table_name(rec.topic, rec.partition, cg_name),
+                  {:latest_timestamp, insert_time}
+                )
 
-            :ets.insert(
-              consumer_table_name(rec.topic, rec.partition, cg_name),
-              {:latest_timestamp, insert_time}
-            )
+              [] ->
+                :noop
+            end
 
             true = :ets.insert_new(idempotency_table, {rec.offset})
             :ok
@@ -512,17 +541,28 @@ defmodule Simulator.Engine do
 
   def insert_produced_record(%Klife.Record{} = rec) do
     config = get_config()
-    table = producer_table_name(rec.topic, rec.partition)
-    hash_data = hash_record(rec)
 
-    to_insert =
-      Enum.map(config.consumer_groups, fn %{name: cg_name} ->
-        {{rec.key, cg_name}, hash_data, System.monotonic_time(:millisecond), nil, nil}
+    all_ready? =
+      Enum.map(config.consumer_groups, fn %{name: cg} ->
+        consumer_ready?(rec.topic, rec.partition, cg)
       end)
+      |> Enum.all?()
 
-    true = :ets.insert_new(table, to_insert)
-    :persistent_term.get(:total_produced_counter) |> :atomics.add(1, 1)
-    :ok
+    if all_ready? do
+      table = producer_table_name(rec.topic, rec.partition)
+      hash_data = hash_record(rec)
+
+      to_insert =
+        Enum.map(config.consumer_groups, fn %{name: cg_name} ->
+          {{rec.key, cg_name}, hash_data, System.monotonic_time(:millisecond), nil, nil}
+        end)
+
+      true = :ets.insert_new(table, to_insert)
+      :persistent_term.get(:total_produced_counter) |> :atomics.add(1, 1)
+      :ok
+    else
+      :ok
+    end
   end
 
   def confirm_produced_record(%Klife.Record{} = rec) do
@@ -562,15 +602,10 @@ defmodule Simulator.Engine do
     :ok
   end
 
-  def allowed_to_produce?(topic, partition) do
-    config = get_config()
-
-    Enum.map(config.consumer_groups, fn %{name: cg} ->
-      case :ets.lookup(:engine_support, {:consumer_ready, topic, partition, cg}) do
-        [{_key, val}] -> val
-        [] -> false
-      end
-    end)
-    |> Enum.all?()
+  def consumer_ready?(topic, partition, cg_name) do
+    case :ets.lookup(:engine_support, {:consumer_ready, topic, partition, cg_name}) do
+      [{_key, val}] -> val
+      [] -> false
+    end
   end
 end

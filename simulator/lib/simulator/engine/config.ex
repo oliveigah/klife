@@ -94,20 +94,22 @@ defmodule Simulator.EngineConfig do
 
   defp random_value(:random_seeds_map, %__MODULE__{} = config) do
     with_producer =
-      for %{topic: tname, partitions: pcount} <- config.topics,
-          pidx <- 0..pcount,
+      for %{topic: tname} <- config.topics,
           producer_idx <- 0..(config.producer_concurrency - 1),
           into: %{} do
-        {{:producer, tname, pidx, producer_idx}, random_value(:root_seed, config)}
+        {{:producer, tname, producer_idx}, random_value(:root_seed, config)}
       end
 
-    for %{topic: tname, partitions: pcount} <- config.topics,
-        pidx <- 0..pcount,
-        %{name: cgname, max_consumers: cgcount} <- config.consumer_groups,
-        cgidx <- 0..(cgcount - 1),
-        into: with_producer do
-      {{:consumer, tname, pidx, cgname, cgidx}, random_value(:root_seed, config)}
-    end
+    with_consumer =
+      for %{topic: tname, partitions: pcount} <- config.topics,
+          pidx <- 0..pcount,
+          %{name: cgname, max_consumers: cgcount} <- config.consumer_groups,
+          cgidx <- 0..(cgcount - 1),
+          into: with_producer do
+        {{:consumer, tname, pidx, cgname, cgidx}, random_value(:root_seed, config)}
+      end
+
+    Map.put(with_consumer, :event_executor, random_value(:root_seed, config))
   end
 
   defp random_value(:topics, _config) do
@@ -129,7 +131,7 @@ defmodule Simulator.EngineConfig do
     cg_count = Enum.random(1..5)
 
     Enum.map(1..cg_count, fn i ->
-      %{name: "SimulatorGroup#{i}", max_consumers: Enum.random(1..5)}
+      %{name: "SimulatorGroup#{i}", max_consumers: Enum.random(3..6)}
     end)
   end
 
@@ -228,7 +230,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:producer_concurrency, _config) do
-    Enum.random(1..3)
+    Enum.random(5..20)
   end
 
   defp random_value(:producer_loop_interval_ms, _config) do
@@ -330,7 +332,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:exclusive_fetcher, :request_timeout_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 10_000, 20_000, 30_000, 60_000])
+    weighted_random_opt([{5, base_val}, 10_000, 20_000, 30_000])
   end
 
   defp random_value({:exclusive_fetcher, :isolation_level}, base_val) do
