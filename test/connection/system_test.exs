@@ -45,7 +45,8 @@ defmodule Klife.Connection.SystemTest do
         connect_opts: [],
         socket_opts: [],
         sasl_opts: [],
-        connection_count: 1
+        connection_count: 1,
+        default_request_timeout_ms: 30_000
       ]
       |> Map.new()
 
@@ -73,7 +74,8 @@ defmodule Klife.Connection.SystemTest do
           delay_send: true
         ],
         sasl_opts: [],
-        connection_count: 1
+        connection_count: 1,
+        default_request_timeout_ms: 30_000
       ]
       |> Map.new()
 
@@ -107,7 +109,8 @@ defmodule Klife.Connection.SystemTest do
             password: "klifepwd"
           ]
         ],
-        connection_count: 1
+        connection_count: 1,
+        default_request_timeout_ms: 30_000
       ]
       |> Map.new()
 
@@ -130,7 +133,8 @@ defmodule Klife.Connection.SystemTest do
         connect_opts: [],
         socket_opts: [],
         sasl_opts: [],
-        connection_count: 1
+        connection_count: 1,
+        default_request_timeout_ms: 30_000
       ]
       |> Map.new()
 
@@ -149,7 +153,8 @@ defmodule Klife.Connection.SystemTest do
           delay_send: true
         ],
         sasl_opts: [],
-        connection_count: 1
+        connection_count: 1,
+        default_request_timeout_ms: 30_000
       ]
       |> Map.new()
 
@@ -163,7 +168,8 @@ defmodule Klife.Connection.SystemTest do
         connect_opts: [],
         socket_opts: [],
         sasl_opts: [],
-        connection_count: 1
+        connection_count: 1,
+        default_request_timeout_ms: 30_000
       ]
       |> Map.new()
 

@@ -319,11 +319,7 @@ defmodule Klife.Producer.Dispatcher do
       async: true,
       callback_pid: self(),
       callback_ref: req_ref,
-      # Need to add some seconds to give some room for the request come
-      # back from the server. Otherwise, in extreme cases the dispatcher
-      # will retry while the broker already answred but message is
-      # in transit
-      timeout_ms: req_timeout + 5_000
+      timeout_ms: req_timeout
     ]
 
     Broker.send_message(M.Produce, client_name, broker_id, content, headers, opts)

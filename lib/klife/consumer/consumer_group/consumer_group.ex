@@ -266,9 +266,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     }
 
     fun = fn ->
-      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content, %{},
-             timeout_ms: 15_000
-           ) do
+      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
         {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
           if state.coordinator_id != nil and state.coordinator_id != broker_id do
             Enum.each(state.committers_distribution, fn {commiter_id, _list} ->

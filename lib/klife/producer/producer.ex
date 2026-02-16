@@ -60,7 +60,7 @@ defmodule Klife.Producer do
     ],
     request_timeout_ms: [
       type: :non_neg_integer,
-      default: :timer.seconds(15),
+      default: :timer.seconds(30),
       doc:
         "The maximum amount of time the producer will wait for a broker response to a request before considering it as failed."
     ],

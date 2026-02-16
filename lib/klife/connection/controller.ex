@@ -65,6 +65,13 @@ defmodule Klife.Connection.Controller do
       default: [],
       doc:
         "Options to configure SASL authentication, see SASL section for supported mechanisms and examples."
+    ],
+    default_request_timeout_ms: [
+      type: :pos_integer,
+      required: false,
+      default: :timer.seconds(30),
+      doc:
+        "The default request timeout ms to be used on all requests to brokers. Some other options may override this value in specific scenarios"
     ]
   ]
   @derive {Inspect, except: [:sasl_opts]}
@@ -80,7 +87,8 @@ defmodule Klife.Connection.Controller do
     :socket_opts,
     :sasl_opts,
     :broker_supervisor,
-    :connection_count
+    :connection_count,
+    :default_request_timeout_ms
   ]
 
   def get_opts(), do: @connection_opts
@@ -125,6 +133,9 @@ defmodule Klife.Connection.Controller do
 
     :persistent_term.put({:correlation_counter, client}, :atomics.new(1, signed: false))
 
+    default_request_timeout_ms = args.default_request_timeout_ms
+    put_default_request_timeout_ms(client, default_request_timeout_ms)
+
     state = %__MODULE__{
       bootstrap_servers: bootstrap_servers,
       client_name: client,
@@ -137,6 +148,7 @@ defmodule Klife.Connection.Controller do
       check_cluster_waiting_pids: [],
       sasl_opts: sasl_opts,
       broker_supervisor: broker_sup_pid,
+      default_request_timeout_ms: default_request_timeout_ms,
       connection_count: args.connection_count
     }
 
@@ -275,6 +287,14 @@ defmodule Klife.Connection.Controller do
 
   def get_connection_count(client_name) do
     :persistent_term.get({__MODULE__, client_name, :connection_counter})
+  end
+
+  def put_default_request_timeout_ms(client_name, timeout_ms) do
+    :persistent_term.put({__MODULE__, client_name, :default_request_timeout_ms}, timeout_ms)
+  end
+
+  def get_default_request_timeout_ms(client_name) do
+    :persistent_term.get({__MODULE__, client_name, :default_request_timeout_ms})
   end
 
   def get_next_correlation_id(client_name) do

@@ -188,8 +188,7 @@ defmodule Klife.Consumer.Committer do
     opts = [
       async: true,
       callback_pid: batcher_pid,
-      callback_ref: to_dispatch.dispatch_ref,
-      timeout_ms: :timer.seconds(30)
+      callback_ref: to_dispatch.dispatch_ref
     ]
 
     case Broker.send_message(

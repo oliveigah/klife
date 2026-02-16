@@ -459,6 +459,9 @@ defmodule Klife.Client do
       def get_default_partitioner(), do: :persistent_term.get(default_partitioner_key())
       def get_default_fetcher(), do: :persistent_term.get(default_fetcher_key())
 
+      def get_default_request_timeout_ms(),
+        do: Klife.Connection.Controller.get_default_request_timeout_ms(__MODULE__)
+
       @doc false
       @impl Supervisor
       def init(_args) do

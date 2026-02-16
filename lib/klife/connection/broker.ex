@@ -131,10 +131,8 @@ defmodule Klife.Connection.Broker do
     conn = get_connection(client_name, broker_id)
     true = Controller.insert_in_flight(client_name, correlation_id)
 
-    # TODO: We probably should have a connection config
-    # called something like "default_timeout_ms" and reuse
-    # it as the default timeout
-    timeout = Keyword.get(opts, :timeout_ms, 30_000)
+    timeout =
+      Keyword.get(opts, :timeout_ms, Controller.get_default_request_timeout_ms(client_name))
 
     case Connection.write(raw_data, conn) do
       :ok ->
@@ -186,10 +184,12 @@ defmodule Klife.Connection.Broker do
 
     callback_pid = Keyword.get(opts, :callback_pid)
     callback_ref = Keyword.get(opts, :callback_ref)
-    timeout_ms = Keyword.get(opts, :timeout_ms)
+
+    timeout_ms =
+      Keyword.get(opts, :timeout_ms, Controller.get_default_request_timeout_ms(client_name))
 
     timeout_ref =
-      if timeout_ms != nil and callback_pid != nil do
+      if callback_pid != nil do
         Process.send_after(
           callback_pid,
           {:async_broker_response, callback_ref, :timeout},
