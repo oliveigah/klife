@@ -1,4 +1,4 @@
-if Mix.env() in [:dev] and Code.ensure_loaded?(Benchee) do
+if Mix.env() in [:dev] do
   defmodule Klife.TestUtils.AsyncProducerBenchmark do
     require Logger
 

@@ -230,7 +230,8 @@ defmodule Klife.Producer do
                 :client_name,
                 :txn_id,
                 :txn_timeout_ms,
-                :batcher_supervisor
+                :batcher_supervisor,
+                :latest_metadata_sync_ts
               ]
 
   @doc false
@@ -249,6 +250,7 @@ defmodule Klife.Producer do
   defp get_process_name(client, producer), do: {__MODULE__, client, producer}
 
   @doc false
+  @impl true
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
     {:ok, batcher_sup_pid} = DynamicSupervisor.start_link([])
@@ -301,6 +303,14 @@ defmodule Klife.Producer do
     |> List.first()
   end
 
+  defp sync_metadata_cache(client, producer) do
+    client
+    |> get_process_name(producer)
+    |> via_tuple()
+    |> GenServer.call({:sync_metadata_cache, System.monotonic_time()})
+  end
+
+  @impl true
   def handle_info(
         {{:metadata_updated, client_name}, _event_data, _callback_data},
         %__MODULE__{client_name: client_name} = state
@@ -326,7 +336,22 @@ defmodule Klife.Producer do
       {:stop, {:shutdown, {:coordinator_change, state.coordinator_id}}, state}
     else
       :ok = handle_batchers(state)
-      {:noreply, state}
+      {:noreply, %{state | latest_metadata_sync_ts: System.monotonic_time()}}
+    end
+  end
+
+  @impl true
+  def handle_call({:sync_metadata_cache, ts}, _from, %__MODULE__{} = state) do
+    if ts < state.latest_metadata_sync_ts do
+      {:reply, :ok, state}
+    else
+      case handle_cluster_or_metadata_changes(state) do
+        {:noreply, state} ->
+          {:reply, :ok, state}
+
+        resp ->
+          resp
+      end
     end
   end
 
@@ -670,6 +695,17 @@ defmodule Klife.Producer do
   def get_batcher_id(client_name, producer_name, topic, partition) do
     {__MODULE__, client_name, producer_name}
     |> :persistent_term.get()
-    |> Map.fetch!({topic, partition})
+    |> Map.get({topic, partition})
+    |> case do
+      nil ->
+        :ok = sync_metadata_cache(client_name, producer_name)
+
+        {__MODULE__, client_name, producer_name}
+        |> :persistent_term.get()
+        |> Map.fetch!({topic, partition})
+
+      data ->
+        data
+    end
   end
 end

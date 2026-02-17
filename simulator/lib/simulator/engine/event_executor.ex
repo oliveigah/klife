@@ -12,10 +12,14 @@ defmodule Simulator.Engine.EventExecutor do
 
   @rollback_min_ms :timer.seconds(30)
   @rollback_max_ms :timer.seconds(180)
+  @event_threshold 0.7
+
+  @max_partitions 50
 
   @actions [
     :kill_consumer_group,
-    :stop_consumer_group
+    :stop_consumer_group,
+    :add_partitions
   ]
 
   defstruct pending_rollbacks: []
@@ -59,7 +63,7 @@ defmodule Simulator.Engine.EventExecutor do
     # somehting like no kill broker event if another broker is already
     # dead, and so on
     state =
-      if :rand.uniform() >= 0.8 and length(state.pending_rollbacks) < 2 do
+      if :rand.uniform() >= @event_threshold and length(state.pending_rollbacks) < 2 do
         action = Enum.random(@actions)
         execute_action(action, state)
       else
@@ -145,6 +149,76 @@ defmodule Simulator.Engine.EventExecutor do
         GenServer.stop(pid, :normal)
         log_event(:action, :stop_consumer_group, %{cg_mod: cg_mod, group_name: group_name})
         schedule_rollback(state, :restart_consumer_group, chosen)
+    end
+  end
+
+  defp execute_action(:add_partitions, %__MODULE__{} = state) do
+    %EngineConfig{topics: topics, clients: clients} = Engine.get_config()
+
+    %{topic: topic} = Enum.random(topics)
+    current_count = Engine.get_partition_count(topic)
+    new_count = current_count + Enum.random(1..3)
+
+    if new_count > @max_partitions do
+      Logger.info(
+        "EventExecutor: add_partitions - #{topic} already at #{current_count} partitions (max #{@max_partitions}), skipping"
+      )
+
+      state
+    else
+      client = Enum.random(clients)
+
+      content = %{
+        topics: [
+          %{
+            name: topic,
+            count: new_count,
+            assignments: nil
+          }
+        ],
+        timeout_ms: 15_000,
+        validate_only: false
+      }
+
+      # Create engine resources before the Kafka request so that
+      # producers/consumers don't hit missing tables if Kafka creates
+      # the partitions before update_partition_count completes.
+      :ok = Engine.update_partition_count(topic, new_count)
+
+      case Klife.Connection.Broker.send_message(
+             KlifeProtocol.Messages.CreatePartitions,
+             client,
+             :controller,
+             content
+           ) do
+        {:ok, %{content: %{results: [%{error_code: 0}]}}} ->
+          Logger.info(
+            "EventExecutor: add_partitions - #{topic} from #{current_count} to #{new_count} partitions"
+          )
+
+          log_event(:action, :add_partitions, %{
+            topic: topic,
+            old_count: current_count,
+            new_count: new_count
+          })
+
+        {:ok, %{content: %{results: [%{error_code: code, error_message: msg}]}}} ->
+          Logger.warning(
+            "EventExecutor: add_partitions - failed for #{topic}: error_code=#{code} message=#{msg}"
+          )
+
+          log_event(:action, :add_partitions, %{
+            topic: topic,
+            result: {:error, code, msg}
+          })
+
+        {:error, reason} ->
+          Logger.warning(
+            "EventExecutor: add_partitions - request failed for #{topic}: #{inspect(reason)}"
+          )
+      end
+
+      state
     end
   end
 

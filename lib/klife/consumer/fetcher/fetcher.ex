@@ -68,7 +68,8 @@ defmodule Klife.Consumer.Fetcher do
     ]
   ]
 
-  defstruct Keyword.keys(@fetcher_opts) ++ [:client_name, :batcher_supervisor]
+  defstruct Keyword.keys(@fetcher_opts) ++
+              [:client_name, :batcher_supervisor, :latest_metadata_sync_ts]
 
   def get_opts, do: @fetcher_opts
 
@@ -219,6 +220,22 @@ defmodule Klife.Consumer.Fetcher do
     {:ok, state}
   end
 
+  defp sync_metadata_cache(client, fetcher) do
+    client
+    |> get_process_name(fetcher)
+    |> GenServer.call({:sync_metadata_cache, System.monotonic_time()})
+  end
+
+  @impl true
+  def handle_call({:sync_metadata_cache, ts}, _from, %__MODULE__{} = state) do
+    if ts < state.latest_metadata_sync_ts do
+      {:reply, :ok, state}
+    else
+      {:noreply, state} = handle_cluster_or_metadata_changes(state)
+      {:reply, :ok, state}
+    end
+  end
+
   @impl true
   def handle_info(
         {{:metadata_updated, client_name}, _event_data, _callback_data},
@@ -236,7 +253,7 @@ defmodule Klife.Consumer.Fetcher do
 
   defp handle_cluster_or_metadata_changes(state) do
     :ok = handle_batchers(state)
-    {:noreply, state}
+    {:noreply, %{state | latest_metadata_sync_ts: System.monotonic_time()}}
   end
 
   def handle_batchers(%__MODULE__{} = state) do
@@ -312,7 +329,18 @@ defmodule Klife.Consumer.Fetcher do
   def get_batcher_id(client_name, fetcher_name, topic, partition) do
     {__MODULE__, client_name, fetcher_name}
     |> :persistent_term.get()
-    |> Map.fetch!({topic, partition})
+    |> Map.get({topic, partition})
+    |> case do
+      nil ->
+        :ok = sync_metadata_cache(client_name, fetcher_name)
+
+        {__MODULE__, client_name, fetcher_name}
+        |> :persistent_term.get()
+        |> Map.fetch!({topic, partition})
+
+      data ->
+        data
+    end
   end
 
   defp build_batcher_config(%__MODULE__{} = state) do

@@ -10,7 +10,9 @@ defmodule Simulator.Engine do
     :total_consumed_counters,
     :sup_pid,
     :init_ts,
-    :cluster_log_pid
+    :cluster_log_pid,
+    partition_counts: %{},
+    partition_counts_updated_at: %{}
   ]
 
   def get_config, do: :persistent_term.get(:engine_config)
@@ -46,6 +48,15 @@ defmodule Simulator.Engine do
     Process.sleep(5_000)
 
     :ok = handle_tables(config)
+    :ok = init_partition_resources(config)
+
+    now = System.monotonic_time(:second)
+
+    partition_counts =
+      Map.new(config.topics, fn %{topic: t, partitions: pcount} -> {t, pcount} end)
+
+    partition_counts_updated_at =
+      Map.new(config.topics, fn %{topic: t} -> {t, now} end)
 
     {:ok, _pid} = Simulator.Engine.ProcessRegistry.start_link()
     {:ok, sup_pid} = DynamicSupervisor.start_link([])
@@ -72,7 +83,9 @@ defmodule Simulator.Engine do
       total_produced_counter: total_produced_counter,
       total_consumed_counters: consumed_counters,
       sup_pid: sup_pid,
-      cluster_log_pid: cluster_log_pid
+      cluster_log_pid: cluster_log_pid,
+      partition_counts: partition_counts,
+      partition_counts_updated_at: partition_counts_updated_at
     }
 
     {:ok, state}
@@ -147,6 +160,29 @@ defmodule Simulator.Engine do
   def handle_call({:init_consumer_group, opts}, _from, %__MODULE__{} = state) do
     result = start_consumer_group(opts, state.sup_pid)
     {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:get_partition_count, topic}, _from, %__MODULE__{} = state) do
+    {:reply, Map.fetch!(state.partition_counts, topic), state}
+  end
+
+  @impl true
+  def handle_call({:update_partition_count, topic, new_count}, _from, %__MODULE__{} = state) do
+    old_count = Map.fetch!(state.partition_counts, topic)
+
+    for p <- old_count..(new_count - 1) do
+      create_partition_resources(topic, p, state.config)
+    end
+
+    state = %{
+      state
+      | partition_counts: Map.put(state.partition_counts, topic, new_count),
+        partition_counts_updated_at:
+          Map.put(state.partition_counts_updated_at, topic, System.monotonic_time(:second))
+    }
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -227,16 +263,16 @@ defmodule Simulator.Engine do
     now = System.monotonic_time(:millisecond)
     lag_threshold = :timer.seconds(90)
 
-    time_diff_from_start =
-      System.monotonic_time(:second) - :persistent_term.get(:simulation_start_ts)
-
-    for %{topic: t, partitions: pcount} <- config.topics,
-        p <- 0..(pcount - 1) do
+    for %{topic: t} <- config.topics,
+        p <- 0..(Map.fetch!(state.partition_counts, t) - 1) do
       cg_latest_ts_map =
         Enum.map(config.consumer_groups, fn %{name: cgname} ->
           consumed_recs = :ets.info(idempotency_table_name(t, p, cgname), :size)
 
-          if(consumed_recs == 0 and time_diff_from_start > 90) do
+          time_since_partition_change =
+            System.monotonic_time(:second) - Map.fetch!(state.partition_counts_updated_at, t)
+
+          if(consumed_recs == 0 and time_since_partition_change > 90) do
             insert_violation(:no_produce, %{
               topic: t,
               partition: p
@@ -313,31 +349,47 @@ defmodule Simulator.Engine do
     state
   end
 
-  def handle_tables(%EngineConfig{} = config) do
+  def handle_tables(%EngineConfig{} = _config) do
     :ets.new(:engine_support, [:set, :public, :named_table])
     :ets.new(:invariants_violations, [:bag, :public, :named_table])
+    :ok
+  end
 
+  defp init_partition_resources(%EngineConfig{} = config) do
     for %{topic: t, partitions: pcount} <- config.topics,
         p <- 0..(pcount - 1) do
-      :ets.new(producer_table_name(t, p), [:ordered_set, :public, :named_table])
-
-      Enum.each(config.consumer_groups, fn %{name: cg_name} ->
-        ref = :atomics.new(1, [])
-        :atomics.sub(ref, 1, 1)
-
-        :ok =
-          :persistent_term.put(consumer_counter_key(t, p, cg_name), ref)
-
-        :ets.new(consumer_table_name(t, p, cg_name), [:ordered_set, :public, :named_table])
-
-        :ets.insert(
-          consumer_table_name(t, p, cg_name),
-          {:latest_timestamp, System.monotonic_time(:millisecond)}
-        )
-
-        :ets.new(idempotency_table_name(t, p, cg_name), [:set, :public, :named_table])
-      end)
+      create_partition_resources(t, p, config)
     end
+
+    :ok
+  end
+
+  defp create_partition_resources(topic, partition, %EngineConfig{} = config) do
+    :ets.new(producer_table_name(topic, partition), [:ordered_set, :public, :named_table])
+
+    Enum.each(config.consumer_groups, fn %{name: cg_name} ->
+      ref = :atomics.new(1, [])
+      :atomics.sub(ref, 1, 1)
+
+      :persistent_term.put(consumer_counter_key(topic, partition, cg_name), ref)
+
+      :ets.new(consumer_table_name(topic, partition, cg_name), [
+        :ordered_set,
+        :public,
+        :named_table
+      ])
+
+      :ets.insert(
+        consumer_table_name(topic, partition, cg_name),
+        {:latest_timestamp, System.monotonic_time(:millisecond)}
+      )
+
+      :ets.new(idempotency_table_name(topic, partition, cg_name), [
+        :set,
+        :public,
+        :named_table
+      ])
+    end)
 
     :ok
   end
@@ -383,6 +435,14 @@ defmodule Simulator.Engine do
 
   def init_consumer_group(opts) do
     GenServer.call(__MODULE__, {:init_consumer_group, opts})
+  end
+
+  def get_partition_count(topic) do
+    GenServer.call(__MODULE__, {:get_partition_count, topic})
+  end
+
+  def update_partition_count(topic, new_count) do
+    GenServer.call(__MODULE__, {:update_partition_count, topic, new_count})
   end
 
   def handle_event_executor(sup_pid) do
@@ -495,10 +555,10 @@ defmodule Simulator.Engine do
       true ->
         case :atomics.compare_exchange(counter, 1, latest_consummed_offset, rec.offset) do
           :ok ->
-            :persistent_term.get({:total_consumed_counter, cg_name}) |> :atomics.add(1, 1)
-
             case :ets.take(producer_table, to_take) do
               [{_key, _hash, insert_time, _offset, _confirmation_ts}] ->
+                :persistent_term.get({:total_consumed_counter, cg_name}) |> :atomics.add(1, 1)
+
                 :ets.insert(
                   consumer_table_name(rec.topic, rec.partition, cg_name),
                   {:latest_timestamp, insert_time}

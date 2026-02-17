@@ -61,7 +61,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def init(args_map) do
     client_name = args_map.client_name
-    topic_name = MetadataCache.get_topic_name_by_id(client_name, args_map.topic_id)
+    topic_name = MetadataCache.get_topic_name_by_id!(client_name, args_map.topic_id)
 
     state =
       %__MODULE__{

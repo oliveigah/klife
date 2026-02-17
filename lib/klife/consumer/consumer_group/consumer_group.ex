@@ -3,6 +3,8 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   require Logger
 
+  alias Klife.Connection.Controller, as: ConnController
+
   alias Klife.Consumer.Fetcher
   alias Klife.Connection.Broker
 
@@ -173,6 +175,10 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.merge(map_args)
       |> Map.put(:mod, cg_mod)
       |> Map.put(:member_id, UUID.uuid4())
+
+    if ConnController.disabled_feature?(cg_mod.klife_client(), :consumer_group) do
+      raise "Consumer Group was started but producer feature is disabled (client=#{inspect(cg_mod.klife_client())}). Check logs for details."
+    end
 
     GenServer.start_link(cg_mod, validated_args,
       name: get_process_name(cg_mod.klife_client(), cg_mod, validated_args.group_name)
@@ -581,7 +587,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Enum.map(fn {tid, _p} -> tid end)
       |> Enum.uniq()
       |> Enum.map(fn tid ->
-        tname = MetadataCache.get_topic_name_by_id(state.client_name, tid)
+        tname = MetadataCache.get_topic_name_by_id!(state.client_name, tid)
         {tid, tname}
       end)
       |> Map.new()
@@ -641,7 +647,9 @@ defmodule Klife.Consumer.ConsumerGroup do
     grouped_by_broker =
       Enum.group_by(
         tname_p_list,
-        fn {tname, p} -> MetadataCache.get_metadata_attribute(client, tname, p, :leader_id) end
+        fn {tname, p} ->
+          MetadataCache.get_metadata_attribute(client, tname, p, :leader_id)
+        end
       )
 
     contents =
@@ -707,6 +715,22 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     to_stop = MapSet.difference(current_mapset, assigment_mapset)
     to_start = MapSet.difference(assigment_mapset, current_mapset)
+
+    # This may be needed if we receive a new topic/partition that is not on
+    # the metadata yet! So we should filter them out for now until metadata
+    # is updated!
+    # TODO: Force metadata refresh here!
+    #
+    # Also there is still a chance for the consumer to start before the
+    # fetcher can react to the metadata change, think how to solve this.
+    to_start =
+      Enum.reject(to_start, fn {topic_id, partition} ->
+        tname = MetadataCache.get_topic_name_by_id(state.client_name, topic_id)
+        have_metadata? = MetadataCache.metadata_exists?(state.client_name, tname, partition)
+
+        tname == nil or have_metadata? == false
+      end)
+      |> MapSet.new()
 
     new_state =
       Enum.reduce(to_stop, state, fn {topic_id, partition}, acc_state ->
@@ -801,7 +825,7 @@ defmodule Klife.Consumer.ConsumerGroup do
          init_offset
        ) do
     committer_id = get_next_committer_id(state.committers_distribution)
-    topic_name = MetadataCache.get_topic_name_by_id(state.client_name, topic_id)
+    topic_name = MetadataCache.get_topic_name_by_id!(state.client_name, topic_id)
 
     consumer_args = [
       consumer_group_mod: state.mod,

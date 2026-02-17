@@ -101,8 +101,9 @@ defmodule Simulator.EngineConfig do
       end
 
     with_consumer =
-      for %{topic: tname, partitions: pcount} <- config.topics,
-          pidx <- 0..pcount,
+      for %{topic: tname} <- config.topics,
+          # Pre alocate random seeds for partitions that may be created dynamically
+          pidx <- 0..49,
           %{name: cgname, max_consumers: cgcount} <- config.consumer_groups,
           cgidx <- 0..(cgcount - 1),
           into: with_producer do

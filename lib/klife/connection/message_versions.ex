@@ -55,9 +55,10 @@ defmodule Klife.Connection.MessageVersions do
       {M.EndTxn, %{min: 3, max: 3, required_for: [:txn_producer]}},
       {M.SaslHandshake, %{min: 1, max: 1, required_for: [:sasl]}},
       {M.SaslAuthenticate, %{min: 1, max: 1, required_for: [:sasl]}},
-      {M.ConsumerGroupHeartbeat, %{min: 0, max: 1, required_for: [:consumer_group]}},
+      {M.ConsumerGroupHeartbeat, %{min: 1, max: 1, required_for: [:consumer_group]}},
       {M.OffsetFetch, %{min: 9, max: 9, required_for: [:consumer_group]}},
-      {M.OffsetCommit, %{min: 9, max: 9, required_for: [:consumer_group]}}
+      {M.OffsetCommit, %{min: 9, max: 9, required_for: [:consumer_group]}},
+      {M.CreatePartitions, %{min: 3, max: 3, required_for: [:simulator]}}
     ]
   end
 

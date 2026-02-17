@@ -140,10 +140,16 @@ defmodule Klife.MetadataCache do
     end
   end
 
-  def get_topic_name_by_id(client_name, topic_id) do
+  def get_topic_name_by_id!(client_name, topic_id) do
     {__MODULE__, :topic_id_name_map, client_name}
     |> :persistent_term.get()
     |> Map.fetch!(topic_id)
+  end
+
+  def get_topic_name_by_id(client_name, topic_id) do
+    {__MODULE__, :topic_id_name_map, client_name}
+    |> :persistent_term.get()
+    |> Map.get(topic_id)
   end
 
   defp set_topic_name_for_id(client_name, data) do
@@ -202,6 +208,11 @@ defmodule Klife.MetadataCache do
     table = metadata_table(client_name)
     idx = @metadata_table_name_to_idxs[attr] + 1
     :ets.update_element(table, {topic, partition}, {idx, val})
+  end
+
+  def metadata_exists?(client_name, topic, partition) do
+    table = metadata_table(client_name)
+    :ets.member(table, {topic, partition})
   end
 
   def get_metadata(client_name, topic, partition) do

@@ -166,7 +166,7 @@ defmodule Klife.Testing do
                   fetch_offset:
                     get_setup_offset(
                       client_name,
-                      MetadataCache.get_topic_name_by_id(client_name, topic),
+                      MetadataCache.get_topic_name_by_id!(client_name, topic),
                       p
                     ) + 1,
                   partition_max_bytes: round(max_bytes / length(partitions)),
@@ -219,7 +219,7 @@ defmodule Klife.Testing do
     |> Enum.map(fn rec ->
       %Klife.Record{
         value: rec.value,
-        topic: MetadataCache.get_topic_name_by_id(client_name, t_id),
+        topic: MetadataCache.get_topic_name_by_id!(client_name, t_id),
         key: rec.key,
         headers: rec.headers,
         offset: rec.offset,

@@ -75,11 +75,11 @@ defmodule Klife.MixProject do
       # docs
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       # Benchmarks and tests
-      # {:benchee, "~> 1.0", only: :dev, runtime: false},
-      # {:kafka_ex, "~> 0.13", only: :dev},
-      # {:brod, "~> 4.4", only: :dev},
-      # {:erlkaf, "~> 2.2", only: :dev},
-      # {:observer_cli, "~> 1.7", only: :dev},
+      {:benchee, "~> 1.0", only: :dev, runtime: false},
+      {:kafka_ex, "~> 0.13", only: :dev},
+      {:brod, "~> 4.4", only: :dev},
+      {:erlkaf, "~> 2.2", only: :dev},
+      {:observer_cli, "~> 1.7", only: :dev},
       # dev
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
