@@ -238,6 +238,36 @@ defmodule Klife.Producer.Batcher do
     end
   end
 
+  @impl true
+  def terminate(reason, %GenBatcher{
+        user_state: %__MODULE__{dispatcher_pid: dispatcher_pid},
+        current_batch: current_batch,
+        current_batch_item_count: current_batch_item_count,
+        batch_queue: batch_queue
+      }) do
+    error_reason =
+      case reason do
+        {:shutdown, {:cluster_change, {:removed_broker, _broker_id}}} -> :broker_removed
+        reason -> reason
+      end
+
+    queued_batches = :queue.to_list(batch_queue)
+
+    batches_to_drain =
+      if current_batch_item_count > 0,
+        do: queued_batches ++ [current_batch],
+        else: queued_batches
+
+    Enum.each(batches_to_drain, fn %__MODULE__.Batch{data: data, waiting_pids: waiting_pids} ->
+      records_map = build_records_map(data)
+      Dispatcher.notify_broker_error(waiting_pids, records_map, error_reason)
+    end)
+
+    if dispatcher_pid && Process.alive?(dispatcher_pid) do
+      Dispatcher.flush_and_stop(dispatcher_pid, error_reason)
+    end
+  end
+
   ## PRIVATE FUNCTIONS
 
   defp add_record_to_data(

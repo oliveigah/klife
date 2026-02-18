@@ -435,6 +435,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @retryable_errors [
     :timeout,
     :batcher_down,
+    :broker_removed,
     -1,
     3,
     5,

@@ -48,6 +48,9 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
   def dispatch(server, %Batcher.Batch{} = data),
     do: GenServer.call(server, {:dispatch, data})
 
+  def flush_and_stop(server, error_reason),
+    do: GenServer.call(server, {:flush_and_stop, error_reason})
+
   @impl true
   def handle_call({:dispatch, %Batcher.Batch{} = batch}, _from, %__MODULE__{} = state) do
     case do_dispatch(batch, state) do
@@ -66,6 +69,25 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         new_state = complete_batch(state, batch, resp)
         {:reply, :ok, new_state}
     end
+  end
+
+  @impl true
+  def handle_call({:flush_and_stop, error_reason}, _from, %__MODULE__{} = state) do
+    Enum.each(state.requests, fn {_ref, %Batcher.Batch{} = batch} ->
+      notify_broker_error(batch.data, error_reason)
+    end)
+
+    {:stop, :normal, :ok, state}
+  end
+
+  def notify_broker_error(batch_data, error_reason) do
+    Enum.each(batch_data, fn {{_t, p}, %Batcher.BatchItem{} = item} ->
+      send(
+        item.__callback,
+        {:klife_fetch_response, {item.topic_name, p, item.offset_to_fetch},
+         {:error, error_reason}}
+      )
+    end)
   end
 
   @impl true

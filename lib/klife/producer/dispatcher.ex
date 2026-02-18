@@ -58,6 +58,9 @@ defmodule Klife.Producer.Dispatcher do
   def dispatch(server, %Request{} = data),
     do: GenServer.call(server, {:dispatch, data})
 
+  def flush_and_stop(server, error_reason),
+    do: GenServer.call(server, {:flush_and_stop, error_reason})
+
   @impl true
   def handle_call({:dispatch, %Request{} = data}, _from, %__MODULE__{} = state) do
     %Request{
@@ -83,6 +86,15 @@ defmodule Klife.Producer.Dispatcher do
         GenBatcher.complete_dispatch(state.batcher_pid, request_ref)
         {:reply, :ok, state}
     end
+  end
+
+  @impl true
+  def handle_call({:flush_and_stop, error_reason}, _from, %__MODULE__{} = state) do
+    Enum.each(state.requests, fn {_ref, %Request{} = req} ->
+      notify_broker_error(req.delivery_confirmation_pids, req.records_map, error_reason)
+    end)
+
+    {:stop, :normal, :ok, state}
   end
 
   @impl true
@@ -345,5 +357,32 @@ defmodule Klife.Producer.Dispatcher do
   defp remove_request(%__MODULE__{} = state, req_ref) do
     %__MODULE__{requests: requests} = state
     %{state | requests: Map.delete(requests, req_ref)}
+  end
+
+  def notify_broker_error(delivery_confirmation_pids, records_map, error_reason) do
+    Enum.each(delivery_confirmation_pids, fn {{topic, partition}, pids} ->
+      Enum.each(pids, fn
+        {pid, _batch_offset, batch_idx} when is_pid(pid) ->
+          send(pid, {:klife_produce, {:error, error_reason}, batch_idx})
+
+        {{m, f, a}, batch_offset} ->
+          callback_rec =
+            records_map
+            |> Map.fetch!({topic, partition})
+            |> Map.fetch!(batch_offset)
+            |> Map.put(:error_code, error_reason)
+
+          Task.start(m, f, [{:error, callback_rec} | a])
+
+        {fun, batch_offset} when is_function(fun, 1) ->
+          callback_rec =
+            records_map
+            |> Map.fetch!({topic, partition})
+            |> Map.fetch!(batch_offset)
+            |> Map.put(:error_code, error_reason)
+
+          Task.start(fn -> fun.({:error, callback_rec}) end)
+      end)
+    end)
   end
 end

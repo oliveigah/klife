@@ -8,7 +8,7 @@ defmodule Klife.Producer.DefaultPartitioner do
   - if record key is not `nil` than define a partition using Kafka's Murmur2 hash
 
   This ensures that records with the same key are assigned to the same partition
-  regardless of whether they are produced by klife or any other Kafka client
+  regardless of whether they are produced by klife or any other compliant Kafka client
   (Java, Python, Go, etc.).
   """
   @behaviour Klife.Behaviours.Partitioner
