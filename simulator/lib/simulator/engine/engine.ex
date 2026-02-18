@@ -271,14 +271,15 @@ defmodule Simulator.Engine do
       current_count =
         :persistent_term.get({:partition_produced_counter, t, p}) |> :atomics.get(1)
 
-      last_count = Map.get(state.last_partition_produced_counts, {t, p}, 0)
+      {last_count, occurrences} = Map.get(state.last_partition_produced_counts, {t, p}, {0, 0})
 
-      if last_count > 0 and current_count <= last_count do
+      if last_count > 0 and current_count <= last_count and occurrences + 1 >= 5 do
         insert_violation(:stale_producer, %{
           topic: t,
           partition: p,
           last_count: last_count,
-          current_count: current_count
+          current_count: current_count,
+          consecutive_occurrences: occurrences + 1
         })
       end
 
@@ -370,7 +371,14 @@ defmodule Simulator.Engine do
         current_count =
           :persistent_term.get({:partition_produced_counter, t, p}) |> :atomics.get(1)
 
-        {{t, p}, current_count}
+        {last_count, occurrences} = Map.get(state.last_partition_produced_counts, {t, p}, {0, 0})
+
+        new_occurrences =
+          if last_count > 0 and current_count <= last_count,
+            do: occurrences + 1,
+            else: 0
+
+        {{t, p}, {current_count, new_occurrences}}
       end
 
     %{state | last_partition_produced_counts: new_last_partition_produced_counts}
