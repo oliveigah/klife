@@ -145,18 +145,29 @@ defmodule Klife do
   def add_partition(%Record{} = record, client, opts \\ []) do
     case record do
       %Record{partition: nil, topic: topic} ->
-        {:ok,
-         %{
-           default_partitioner: default_partitioner_mod,
-           max_partition: max_partition
-         }} = MetadataCache.get_metadata(client, topic, 0)
+        case MetadataCache.get_metadata(client, topic, 0) do
+          {:ok,
+           %{
+             default_partitioner: default_partitioner_mod,
+             max_partition: max_partition
+           }} ->
+            partitioner_mod = Keyword.get(opts, :partitioner, default_partitioner_mod)
 
-        partitioner_mod = Keyword.get(opts, :partitioner, default_partitioner_mod)
+            %{record | partition: partitioner_mod.get_partition(record, max_partition)}
 
-        %{record | partition: partitioner_mod.get_partition(record, max_partition)}
+          {:error, :not_found} ->
+            {:error, :unkown_metadata_for_topic}
+        end
 
       record ->
         record
+    end
+  end
+
+  def add_partition!(%Record{} = record, client, opts \\ []) do
+    case add_partition(record, client, opts) do
+      %Record{} = rec -> rec
+      err -> raise "Error on add partition: #{inspect(err)}"
     end
   end
 
@@ -200,7 +211,7 @@ defmodule Klife do
       rec
       |> Map.replace!(:__estimated_size, Record.estimate_size(rec))
       |> Map.replace!(:__batch_index, idx)
-      |> add_partition(client, opts)
+      |> add_partition!(client, opts)
     end)
   end
 end

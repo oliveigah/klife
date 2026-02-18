@@ -1,5 +1,5 @@
 defmodule Simulator.MultiRunner do
-  use GenServer, restart: :transient
+  use GenServer, restart: :temporary
   require Logger
 
   @run_timeout_ms :timer.minutes(10)
@@ -36,10 +36,19 @@ defmodule Simulator.MultiRunner do
 
   @impl true
   def handle_info(
-        {:DOWN, ref, :process, pid, _reason},
+        {:DOWN, ref, :process, pid, reason},
         %__MODULE__{engine_pid: pid, engine_monitor_ref: ref} = state
       ) do
     send(self(), :start_engine)
+
+    Logger.info(
+      "MultiRunner: Simulation run #{state.run_count} terminated with reason #{inspect(reason)}"
+    )
+
+    if reason != :normal do
+      raise "Unexpected engine termination with reason #{inspect(reason)}"
+    end
+
     new_state = %{state | engine_pid: nil, engine_monitor_ref: nil, run_start_time: nil}
     {:noreply, new_state}
   end

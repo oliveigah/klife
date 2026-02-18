@@ -5,6 +5,7 @@ defmodule Simulator.Engine.Producer do
 
   import Simulator.Engine.ProcessRegistry, only: [via_tuple: 1]
 
+  alias Klife.MetadataCache
   alias Simulator.Engine
   alias Simulator.EngineConfig
 
@@ -51,8 +52,14 @@ defmodule Simulator.Engine.Producer do
 
   @impl true
   def handle_info(:produce_loop, %__MODULE__{} = state) do
-    new_state = do_produce(state)
-    jitter = Enum.random(1..1000) / 100
+    new_state =
+      if MetadataCache.metadata_exists?(state.client, state.topic, 0) do
+        do_produce(state)
+      else
+        state
+      end
+
+    jitter = Enum.random(1..500) / 100
     Process.send_after(self(), :produce_loop, round(state.loop_interval_ms * jitter))
     {:noreply, new_state}
   end
@@ -70,7 +77,7 @@ defmodule Simulator.Engine.Producer do
             value: :rand.bytes(state.record_value_bytes),
             key: :crypto.strong_rand_bytes(state.record_key_bytes) |> Base.encode16()
           }
-          |> Klife.add_partition(state.client)
+          |> Klife.add_partition!(state.client)
 
         :ok = Engine.insert_produced_record(rec)
 
@@ -93,7 +100,7 @@ defmodule Simulator.Engine.Producer do
 
         :error ->
           Engine.rollback_produced_record(rec)
-          Logger.error("Error on producer: error_code #{rec.error_code}")
+          Logger.error("Error on producer: error_code #{inspect(rec.error_code)}")
       end
     end
 

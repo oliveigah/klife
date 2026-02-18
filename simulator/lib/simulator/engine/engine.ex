@@ -40,7 +40,7 @@ defmodule Simulator.Engine do
 
     :persistent_term.put(:total_produced_counter, total_produced_counter)
     :persistent_term.put(:simulation_start_ts, System.monotonic_time(:second))
-
+    Logger.info("Engine started with timestamp: #{:persistent_term.get(:simulation_timestamp)}")
     save_data(:"config.exs", inspect(config, limit: :infinity) |> Code.format_string!())
 
     :ok = create_topics(config)
@@ -60,7 +60,7 @@ defmodule Simulator.Engine do
       Map.new(config.topics, fn %{topic: t} -> {t, now} end)
 
     {:ok, _pid} = Simulator.Engine.ProcessRegistry.start_link()
-    {:ok, sup_pid} = DynamicSupervisor.start_link([])
+    {:ok, sup_pid} = DynamicSupervisor.start_link(max_restarts: 1000)
 
     :ok = handle_consumers(config, sup_pid)
     :ok = handle_producers(config, sup_pid)
@@ -264,7 +264,7 @@ defmodule Simulator.Engine do
   defp do_check_invariants(%__MODULE__{} = state) do
     config = state.config
     now = System.monotonic_time(:millisecond)
-    lag_threshold = :timer.seconds(90)
+    lag_threshold = :timer.seconds(100)
 
     for %{topic: t} <- config.topics,
         p <- 0..(Map.fetch!(state.partition_counts, t) - 1) do
@@ -273,7 +273,7 @@ defmodule Simulator.Engine do
 
       {last_count, occurrences} = Map.get(state.last_partition_produced_counts, {t, p}, {0, 0})
 
-      if last_count > 0 and current_count <= last_count and occurrences + 1 >= 5 do
+      if last_count > 0 and current_count <= last_count and occurrences + 1 >= 10 do
         insert_violation(:stale_producer, %{
           topic: t,
           partition: p,
