@@ -12,7 +12,8 @@ defmodule Simulator.Engine do
     :init_ts,
     :cluster_log_pid,
     partition_counts: %{},
-    partition_counts_updated_at: %{}
+    partition_counts_updated_at: %{},
+    last_partition_produced_counts: %{}
   ]
 
   def get_config, do: :persistent_term.get(:engine_config)
@@ -267,6 +268,20 @@ defmodule Simulator.Engine do
 
     for %{topic: t} <- config.topics,
         p <- 0..(Map.fetch!(state.partition_counts, t) - 1) do
+      current_count =
+        :persistent_term.get({:partition_produced_counter, t, p}) |> :atomics.get(1)
+
+      last_count = Map.get(state.last_partition_produced_counts, {t, p}, 0)
+
+      if last_count > 0 and current_count <= last_count do
+        insert_violation(:stale_producer, %{
+          topic: t,
+          partition: p,
+          last_count: last_count,
+          current_count: current_count
+        })
+      end
+
       cg_latest_ts_map =
         Enum.map(config.consumer_groups, fn %{name: cgname} ->
           consumed_recs = :ets.info(idempotency_table_name(t, p, cgname), :size)
@@ -348,7 +363,17 @@ defmodule Simulator.Engine do
       end
     end
 
-    state
+    new_last_partition_produced_counts =
+      for %{topic: t} <- config.topics,
+          p <- 0..(Map.fetch!(state.partition_counts, t) - 1),
+          into: %{} do
+        current_count =
+          :persistent_term.get({:partition_produced_counter, t, p}) |> :atomics.get(1)
+
+        {{t, p}, current_count}
+      end
+
+    %{state | last_partition_produced_counts: new_last_partition_produced_counts}
   end
 
   def handle_tables(%EngineConfig{} = _config) do
@@ -367,6 +392,9 @@ defmodule Simulator.Engine do
   end
 
   defp create_partition_resources(topic, partition, %EngineConfig{} = config) do
+    ref = :atomics.new(1, [])
+    :persistent_term.put({:partition_produced_counter, topic, partition}, ref)
+
     :ets.new(producer_table_name(topic, partition), [:ordered_set, :public, :named_table])
 
     Enum.each(config.consumer_groups, fn %{name: cg_name} ->
@@ -637,6 +665,9 @@ defmodule Simulator.Engine do
         {5, System.monotonic_time(:millisecond)}
       ])
     end)
+
+    :persistent_term.get({:partition_produced_counter, rec.topic, rec.partition})
+    |> :atomics.add(1, 1)
 
     :ok
   end
