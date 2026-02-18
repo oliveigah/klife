@@ -125,7 +125,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:topics_replication_factor, _config) do
-    3
+    2
   end
 
   defp random_value(:consumer_groups, _config) do

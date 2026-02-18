@@ -187,7 +187,9 @@ defmodule Simulator.Engine do
 
   @impl true
   def handle_call(:terminate, from, %__MODULE__{} = state) do
+    :ok = Simulator.Engine.EventExecutor.force_rollbacks()
     :ok = DynamicSupervisor.stop(state.sup_pid, :normal)
+
     ts = :persistent_term.get(:simulation_timestamp)
     :logger.remove_handler(:"engine_log_file_handler_#{ts}")
 
@@ -434,7 +436,7 @@ defmodule Simulator.Engine do
   end
 
   def init_consumer_group(opts) do
-    GenServer.call(__MODULE__, {:init_consumer_group, opts})
+    GenServer.call(__MODULE__, {:init_consumer_group, opts}, 60_000)
   end
 
   def get_partition_count(topic) do

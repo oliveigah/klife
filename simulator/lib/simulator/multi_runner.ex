@@ -55,6 +55,8 @@ defmodule Simulator.MultiRunner do
 
       {:stop, :normal, state}
     else
+      :ok = Simulator.Engine.EventExecutor.ensure_all_brokers()
+
       run_count = state.run_count + 1
       Logger.info("MultiRunner run #{run_count}: Starting run ##{run_count}")
 
