@@ -119,15 +119,14 @@ defmodule Klife.Consumer.Fetcher do
 
     {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
 
-    batcher_pid =
-      case registry_lookup({Batcher, client, fetcher, broker, batcher_id, iso_level}) do
-        [{pid, _}] -> pid
-        [] -> nil
-      end
+    case registry_lookup({Batcher, client, fetcher, broker, batcher_id, iso_level}) do
+      [{pid, _}] ->
+        {:ok, _timeout} = Batcher.request_data([item], pid)
+        {:ok, pid}
 
-    {:ok, _timeout} = Batcher.request_data([item], batcher_pid)
-
-    {:ok, batcher_pid}
+      [] ->
+        {:error, :batcher_not_found}
+    end
   end
 
   defp tpo_to_batch_item(t, p, o, client, max_bytes, fetcher) do

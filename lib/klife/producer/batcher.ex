@@ -194,7 +194,7 @@ defmodule Klife.Producer.Batcher do
         key = {topic, partition}
         new_pe_val = Producer.new_epoch(client_name, producer_name, topic, partition)
         new_pe = Map.put(acc_pe, key, new_pe_val)
-        new_bs = Map.replace!(acc_bs, key, 0)
+        new_bs = Map.replace(acc_bs, key, 0)
         {new_pe, new_bs}
       end)
 

@@ -1,6 +1,6 @@
 defmodule Simulator.Engine do
   require Logger
-  use GenServer
+  use GenServer, restart: :temporary
 
   alias Simulator.EngineConfig
 
@@ -273,7 +273,7 @@ defmodule Simulator.Engine do
 
       {last_count, occurrences} = Map.get(state.last_partition_produced_counts, {t, p}, {0, 0})
 
-      if last_count > 0 and current_count <= last_count and occurrences + 1 >= 10 do
+      if last_count > 0 and current_count <= last_count and occurrences + 1 >= 15 do
         insert_violation(:stale_producer, %{
           topic: t,
           partition: p,

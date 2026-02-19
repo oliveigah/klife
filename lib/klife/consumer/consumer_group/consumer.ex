@@ -167,12 +167,18 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       max_bytes: topic_config.fetch_max_bytes
     ]
 
-    {:ok, batcher_pid} = Fetcher.fetch_async(tpo, state.client_name, opts)
+    case Fetcher.fetch_async(tpo, state.client_name, opts) do
+      {:ok, batcher_pid} ->
+        batcher_monitor = Process.monitor(batcher_pid)
 
-    batcher_monitor = Process.monitor(batcher_pid)
+        {:noreply,
+         %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor},
+         state.idle_timeout}
 
-    {:noreply, %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor},
-     state.idle_timeout}
+      {:error, :batcher_not_found} ->
+        Process.send_after(self(), :poll_records, Enum.random(100..1000))
+        {:noreply, state, state.idle_timeout}
+    end
   end
 
   def handle_info(:poll_records, %__MODULE__{} = state) do

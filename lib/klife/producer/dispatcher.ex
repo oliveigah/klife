@@ -263,6 +263,15 @@ defmodule Klife.Producer.Dispatcher do
     to_retry_keys = Enum.map(to_retry, fn {t, p, _, _} -> {t, p} end)
     new_data_to_send = Map.take(data_to_send, to_retry_keys)
 
+    to_bump =
+      to_discard
+      |> Enum.filter(fn {_t, _p, ec, _bo} -> ec == 47 end)
+      |> Enum.map(fn {t, p, 47, _bo} -> {t, p} end)
+
+    if to_bump != [] do
+      send(state.batcher_pid, {:bump_epoch, to_bump})
+    end
+
     if map_size(new_data_to_send) == 0 do
       GenBatcher.complete_dispatch(state.batcher_pid, req_ref)
       {:noreply, remove_request(state, req_ref)}
