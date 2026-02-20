@@ -507,20 +507,40 @@ defmodule Klife.Producer do
     delivery_timeout_ms =
       records
       |> group_records_by_batcher(client_name, opt_producer)
-      |> Enum.reduce(0, fn {key, recs}, acc ->
+      |> Enum.reduce(client_name.get_default_request_timeout_ms, fn {key, recs}, acc ->
         {broker_id, producer, batcher_id} = key
         recs = Enum.map(recs, fn %Record{} = rec -> %Record{rec | __callback: callback_pid} end)
 
-        {:ok, delivery_timeout_ms} =
-          Batcher.produce(
-            recs,
-            client_name,
-            broker_id,
-            producer,
-            batcher_id
-          )
+        # The try/catch here is important to prevent
+        # partial writes on raises. If a broker dies in the middle
+        # of this reduce some messages would still be produced
+        # but the user would see an exception and naturally think
+        # that all the records failed. That why we catch so we can
+        # deliver any problem as "normal" errors to the user
+        produce_resp =
+          try do
+            Batcher.produce(recs, client_name, broker_id, producer, batcher_id)
+          catch
+            kind, reason ->
+              {:error, {kind, reason}}
+          end
 
-        if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
+        case produce_resp do
+          {:ok, delivery_timeout_ms} ->
+            if acc < delivery_timeout_ms, do: delivery_timeout_ms, else: acc
+
+          # This is a hack to simplify error handling
+          # instead of hanlding possible errors on this step
+          # we send to self errors as messages, exactly
+          # the same way the Dispatcher would do in case of
+          # a normal error.
+          {:error, reason} ->
+            Enum.each(recs, fn %Record{} = rec ->
+              send(self(), {:klife_produce, {:error, reason}, rec.__batch_index})
+            end)
+
+            acc
+        end
       end)
 
     max_resps = List.last(records).__batch_index
@@ -548,14 +568,40 @@ defmodule Klife.Producer do
       {broker_id, producer, batcher_id} = key
       recs = Enum.map(recs, fn %Record{} = rec -> %Record{rec | __callback: callback} end)
 
-      :ok =
-        Batcher.produce_async(
-          recs,
-          client_name,
-          broker_id,
-          producer,
-          batcher_id
-        )
+      # The try/catch here is important to prevent
+      # partial writes on raises. If a broker dies in the middle
+      # of this reduce some messages would still be produced
+      # but the user would see an exception and naturally think
+      # that all the records failed. That why we catch so we can
+      # deliver any problem as "normal" errors to the user
+      produce_resp =
+        try do
+          Batcher.produce_async(recs, client_name, broker_id, producer, batcher_id)
+        catch
+          kind, reason ->
+            {:error, {kind, reason}}
+        end
+
+      case produce_resp do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Enum.each(recs, fn %Record{} = rec ->
+            case callback do
+              nil ->
+                :noop
+
+              {m, f, a} ->
+                rec = %{rec | error_code: reason}
+                Task.start(m, f, [{:error, rec} | a])
+
+              fun when is_function(fun) ->
+                rec = %{rec | error_code: reason}
+                Task.start(fn -> fun.({:error, rec}) end)
+            end
+          end)
+      end
     end)
   end
 

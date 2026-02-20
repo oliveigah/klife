@@ -1,4 +1,6 @@
 defmodule Klife.Consumer.ConsumerGroup.Consumer do
+  @moduledoc false
+
   use GenServer
 
   import Klife.ProcessRegistry
@@ -175,7 +177,15 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
          %__MODULE__{state | fetch_ref: ref, fetch_batcher_monitor_ref: batcher_monitor},
          state.idle_timeout}
 
-      {:error, :batcher_not_found} ->
+      {:error, reason} ->
+        Logger.warning(
+          "Fetch error for #{state.topic_name}:#{state.partition_idx} on group #{state.cg_name} reason #{reason} (client=#{inspect(state.client_name)})",
+          client: state.client_name,
+          group: state.cg_name,
+          topic: state.topic_name,
+          partition: state.partition_idx
+        )
+
         Process.send_after(self(), :poll_records, Enum.random(100..1000))
         {:noreply, state, state.idle_timeout}
     end
@@ -347,6 +357,9 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
           }
 
         next_handle_delay = Keyword.get(usr_opts, :handler_cooldown_ms, 0)
+        # TODO: Proper implement cooldown! The send_after approach does not guarantee
+        # that no record will be consumed because :handle_records may be received
+        # from the commit or poll message handling
         Process.send_after(self(), :handle_records, next_handle_delay)
 
         {:noreply, new_state, state.idle_timeout}
@@ -387,9 +400,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         client: state.client_name,
         group: state.cg_name,
         topic: state.topic_name,
-        partition: state.partition_idx,
-        latest_committed_offset: state.latest_committed_offset,
-        latest_processed_offset: state.latest_processed_offset
+        partition: state.partition_idx
       )
     end
 
@@ -428,9 +439,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       client: state.client_name,
       group: state.cg_name,
       topic: t,
-      partition: p,
-      requested_offset: o,
-      reset_offset: reset_offset
+      partition: p
     )
 
     send(self(), :poll_records)
@@ -462,9 +471,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       client: state.client_name,
       group: state.cg_name,
       topic: t,
-      partition: p,
-      offset: o,
-      error: inspect(error)
+      partition: p
     )
 
     Process.send_after(

@@ -1,4 +1,6 @@
 defmodule Klife.Consumer.Fetcher.Batcher do
+  @moduledoc false
+
   use Klife.GenBatcher
 
   import Klife.ProcessRegistry, only: [via_tuple: 1]
@@ -19,6 +21,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
   ]
 
   defmodule Batch do
+    @moduledoc false
     defstruct [
       :data,
       :dispatch_ref
@@ -26,6 +29,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
   end
 
   defmodule BatchItem do
+    @moduledoc false
     defstruct [
       :topic_name,
       :topic_id,
@@ -47,10 +51,6 @@ defmodule Klife.Consumer.Fetcher.Batcher do
     client
     |> get_process_name(fetcher_name, broker_id, batcher_id, iso_level)
     |> GenBatcher.insert_call(reqs)
-  end
-
-  def request_data(reqs, batcher_pid) when is_pid(batcher_pid) do
-    GenBatcher.insert_call(batcher_pid, reqs)
   end
 
   def start_link(args) do
@@ -139,7 +139,7 @@ defmodule Klife.Consumer.Fetcher.Batcher do
 
   @impl true
   def handle_insert_response(_items, %__MODULE__{} = state) do
-    {:ok, state.fetcher_config.request_timeout_ms}
+    {:ok, state.fetcher_config.request_timeout_ms, self()}
   end
 
   @impl true
@@ -204,7 +204,8 @@ defmodule Klife.Consumer.Fetcher.Batcher do
         else: queued_batches
 
     Enum.each(batches_to_drain, fn %Batch{data: data} ->
-      Dispatcher.notify_broker_error(data, error_reason)
+      parsed_data = Enum.map(data, fn {{_t, _p}, %BatchItem{} = item} -> item end)
+      Dispatcher.notify_broker_error(parsed_data, error_reason)
     end)
 
     if dispatcher_pid && Process.alive?(dispatcher_pid) do

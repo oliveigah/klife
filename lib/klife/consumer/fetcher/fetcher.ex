@@ -1,7 +1,7 @@
 defmodule Klife.Consumer.Fetcher do
   use GenServer
 
-  import Klife.ProcessRegistry, only: [via_tuple: 1, registry_lookup: 1]
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   alias Klife.Connection.Controller, as: ConnController
   alias Klife.Consumer.Fetcher.Batcher
@@ -102,11 +102,35 @@ defmodule Klife.Consumer.Fetcher do
         tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
       end)
       |> Enum.group_by(fn {key, _item} -> key end, fn {_, val} -> val end)
-      |> Enum.reduce(0, fn {{broker, batcher_id}, items}, _acc ->
-        {:ok, timeout} =
-          Batcher.request_data(items, client, fetcher, broker, batcher_id, iso_level)
+      |> Enum.reduce(0, fn {{broker, batcher_id}, items}, acc ->
+        fetch_resp =
+          try do
+            Batcher.request_data(items, client, fetcher, broker, batcher_id, iso_level)
+          catch
+            kind, reason ->
+              {:error, {kind, reason}}
+          end
 
-        timeout
+        case fetch_resp do
+          {:ok, timeout, _pid} ->
+            if timeout > acc, do: timeout, else: acc
+
+          # This is a hack to simplify error handling
+          # instead of hanlding possible errors on this step
+          # we send to self errors as messages, exactly
+          # the same way the Dispatcher would do in case of
+          # a normal error.
+          {:error, reason} ->
+            Enum.each(items, fn %Batcher.BatchItem{} = item ->
+              send(
+                self(),
+                {:klife_fetch_response, {item.topic_name, item.partition, item.offset_to_fetch},
+                 {:error, reason}}
+              )
+            end)
+
+            acc
+        end
       end)
 
     wait_fetch_response(timeout, length(tpo_list))
@@ -119,13 +143,22 @@ defmodule Klife.Consumer.Fetcher do
 
     {{broker, batcher_id}, item} = tpo_to_batch_item(t, p, o, client, max_bytes, fetcher)
 
-    case registry_lookup({Batcher, client, fetcher, broker, batcher_id, iso_level}) do
-      [{pid, _}] ->
-        {:ok, _timeout} = Batcher.request_data([item], pid)
+    # This try/catch is important to prevent raise surges during cluster
+    # changes. This raise surges may cause unecessary consumer restarts
+    fetch_resp =
+      try do
+        Batcher.request_data([item], client, fetcher, broker, batcher_id, iso_level)
+      catch
+        kind, reason ->
+          {:error, {kind, reason}}
+      end
+
+    case fetch_resp do
+      {:ok, _timeout, pid} ->
         {:ok, pid}
 
-      [] ->
-        {:error, :batcher_not_found}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

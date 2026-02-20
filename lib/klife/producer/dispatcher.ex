@@ -81,6 +81,13 @@ defmodule Klife.Producer.Dispatcher do
         {:reply, :ok, new_state}
 
       {:error, :request_deadline} ->
+        :ok =
+          notify_delivery_error(
+            data.delivery_confirmation_pids,
+            data.records_map,
+            :request_deadline
+          )
+
         failed_topic_partitions = Map.keys(data_to_send)
         send(state.batcher_pid, {:bump_epoch, failed_topic_partitions})
         GenBatcher.complete_dispatch(state.batcher_pid, request_ref)
@@ -91,7 +98,7 @@ defmodule Klife.Producer.Dispatcher do
   @impl true
   def handle_call({:flush_and_stop, error_reason}, _from, %__MODULE__{} = state) do
     Enum.each(state.requests, fn {_ref, %Request{} = req} ->
-      notify_broker_error(req.delivery_confirmation_pids, req.records_map, error_reason)
+      notify_delivery_error(req.delivery_confirmation_pids, req.records_map, error_reason)
     end)
 
     {:stop, :normal, :ok, state}
@@ -115,6 +122,13 @@ defmodule Klife.Producer.Dispatcher do
         {:noreply, state}
 
       {:error, :request_deadline} ->
+        :ok =
+          notify_delivery_error(
+            data.delivery_confirmation_pids,
+            data.records_map,
+            :request_deadline
+          )
+
         failed_topic_partitions = Map.keys(data_to_send)
         send(state.batcher_pid, {:bump_epoch, failed_topic_partitions})
         GenBatcher.complete_dispatch(state.batcher_pid, request_ref)
@@ -368,7 +382,7 @@ defmodule Klife.Producer.Dispatcher do
     %{state | requests: Map.delete(requests, req_ref)}
   end
 
-  def notify_broker_error(delivery_confirmation_pids, records_map, error_reason) do
+  def notify_delivery_error(delivery_confirmation_pids, records_map, error_reason) do
     Enum.each(delivery_confirmation_pids, fn {{topic, partition}, pids} ->
       Enum.each(pids, fn
         {pid, _batch_offset, batch_idx} when is_pid(pid) ->

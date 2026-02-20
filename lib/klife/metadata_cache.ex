@@ -1,4 +1,6 @@
 defmodule Klife.MetadataCache do
+  @moduledoc false
+
   use GenServer
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
@@ -53,6 +55,11 @@ defmodule Klife.MetadataCache do
 
   @impl true
   def handle_info(:check_metadata, %__MODULE__{} = state) do
+    # Prevent subtle edge case when check metadata
+    # messages may accumullate idefinitely due to
+    # multiple cluster changes
+    Process.cancel_timer(state.next_check_ref)
+
     case do_check_metadata(state) do
       :ok ->
         new_ref = Process.send_after(self(), :check_metadata, @check_interval_ms)
@@ -60,10 +67,6 @@ defmodule Klife.MetadataCache do
 
       {:error, _} ->
         :ok = ConnController.trigger_brokers_verification(state.client_name)
-
-        # Prevent subtle edge case when check metadata
-        # messages may accumullate idefinitely
-        Process.cancel_timer(state.next_check_ref)
 
         new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
         {:noreply, %__MODULE__{state | next_check_ref: new_ref}}

@@ -26,6 +26,8 @@ defmodule Klife.Producer.Batcher do
   ]
 
   defmodule Batch do
+    @moduledoc false
+
     defstruct [
       :data,
       :waiting_pids,
@@ -260,7 +262,7 @@ defmodule Klife.Producer.Batcher do
 
     Enum.each(batches_to_drain, fn %__MODULE__.Batch{data: data, waiting_pids: waiting_pids} ->
       records_map = build_records_map(data)
-      Dispatcher.notify_broker_error(waiting_pids, records_map, error_reason)
+      Dispatcher.notify_delivery_error(waiting_pids, records_map, error_reason)
     end)
 
     if dispatcher_pid && Process.alive?(dispatcher_pid) do

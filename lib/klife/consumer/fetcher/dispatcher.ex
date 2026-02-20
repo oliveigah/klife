@@ -1,4 +1,6 @@
 defmodule Klife.Consumer.Fetcher.Dispatcher do
+  @moduledoc false
+
   defstruct [
     :requests,
     :broker_id,
@@ -74,17 +76,18 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
   @impl true
   def handle_call({:flush_and_stop, error_reason}, _from, %__MODULE__{} = state) do
     Enum.each(state.requests, fn {_ref, %Batcher.Batch{} = batch} ->
-      notify_broker_error(batch.data, error_reason)
+      parsed_data = Enum.map(batch.data, fn {{_t, _p}, %Batcher.BatchItem{} = item} -> item end)
+      notify_broker_error(parsed_data, error_reason)
     end)
 
     {:stop, :normal, :ok, state}
   end
 
-  def notify_broker_error(batch_data, error_reason) do
-    Enum.each(batch_data, fn {{_t, p}, %Batcher.BatchItem{} = item} ->
+  def notify_broker_error(items, error_reason) do
+    Enum.each(items, fn %Batcher.BatchItem{} = item ->
       send(
         item.__callback,
-        {:klife_fetch_response, {item.topic_name, p, item.offset_to_fetch},
+        {:klife_fetch_response, {item.topic_name, item.partition, item.offset_to_fetch},
          {:error, error_reason}}
       )
     end)
