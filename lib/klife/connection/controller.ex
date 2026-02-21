@@ -213,7 +213,12 @@ defmodule Klife.Connection.Controller do
 
         {:noreply, new_state}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to get cluster info, will re-initialize bootstrap connection (reason=#{inspect(reason)}) (client=#{inspect(state.client_name)})",
+          client: state.client_name
+        )
+
         Process.send_after(self(), :init_bootstrap_conn, :timer.seconds(1))
         {:noreply, state}
     end

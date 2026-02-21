@@ -2,6 +2,7 @@ defmodule Klife.MetadataCache do
   @moduledoc false
 
   use GenServer
+  require Logger
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   alias KlifeProtocol.Messages, as: M
@@ -138,7 +139,12 @@ defmodule Klife.MetadataCache do
 
         :ok
 
-      {:error, _} = err ->
+      {:error, reason} = err ->
+        Logger.warning(
+          "Failed to fetch metadata from broker controller, will retry (reason=#{inspect(reason)}) (client=#{inspect(client_name)})",
+          client: client_name
+        )
+
         err
     end
   end

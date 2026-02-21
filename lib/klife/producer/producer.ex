@@ -530,6 +530,7 @@ defmodule Klife.Producer do
             Batcher.produce(recs, client_name, broker_id, producer, batcher_id)
           catch
             kind, reason ->
+              :ok = sync_metadata_cache(client_name, producer)
               {:error, {kind, reason}}
           end
 
@@ -590,6 +591,7 @@ defmodule Klife.Producer do
           Batcher.produce_async(recs, client_name, broker_id, producer, batcher_id)
         catch
           kind, reason ->
+            :ok = sync_metadata_cache(client_name, producer)
             {:error, {kind, reason}}
         end
 
