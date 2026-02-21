@@ -503,13 +503,21 @@ defmodule Klife.Producer do
   def produce([%Record{} | _] = records, client_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
     callback_pid = self()
+    # This ref prevents stale produce response messages from a previous
+    # timed-out call being consumed by a subsequent call, which would
+    # cause responses to be matched to the wrong records.
+    produce_ref = make_ref()
 
     delivery_timeout_ms =
       records
       |> group_records_by_batcher(client_name, opt_producer)
-      |> Enum.reduce(client_name.get_default_request_timeout_ms, fn {key, recs}, acc ->
+      |> Enum.reduce(client_name.get_default_request_timeout_ms(), fn {key, recs}, acc ->
         {broker_id, producer, batcher_id} = key
-        recs = Enum.map(recs, fn %Record{} = rec -> %Record{rec | __callback: callback_pid} end)
+
+        recs =
+          Enum.map(recs, fn %Record{} = rec ->
+            %Record{rec | __callback: {callback_pid, produce_ref}}
+          end)
 
         # The try/catch here is important to prevent
         # partial writes on raises. If a broker dies in the middle
@@ -536,7 +544,10 @@ defmodule Klife.Producer do
           # a normal error.
           {:error, reason} ->
             Enum.each(recs, fn %Record{} = rec ->
-              send(self(), {:klife_produce, {:error, reason}, rec.__batch_index})
+              send(
+                self(),
+                {:klife_produce, produce_ref, {:error, inspect(reason)}, rec.__batch_index}
+              )
             end)
 
             acc
@@ -544,7 +555,7 @@ defmodule Klife.Producer do
       end)
 
     max_resps = List.last(records).__batch_index
-    responses = wait_produce_response(delivery_timeout_ms, max_resps)
+    responses = wait_produce_response(produce_ref, delivery_timeout_ms, max_resps)
 
     records
     |> Enum.map(fn %Record{} = rec ->
@@ -593,11 +604,11 @@ defmodule Klife.Producer do
                 :noop
 
               {m, f, a} ->
-                rec = %{rec | error_code: reason}
+                rec = %{rec | error_code: inspect(reason)}
                 Task.start(m, f, [{:error, rec} | a])
 
               fun when is_function(fun) ->
-                rec = %{rec | error_code: reason}
+                rec = %{rec | error_code: inspect(reason)}
                 Task.start(fn -> fun.({:error, rec}) end)
             end
           end)
@@ -626,25 +637,32 @@ defmodule Klife.Producer do
     |> Enum.map(fn {k, v} -> {k, List.flatten(v)} end)
   end
 
-  defp wait_produce_response(timeout_ms, max_resps) do
+  defp wait_produce_response(produce_ref, timeout_ms, max_resps) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_produce_response(deadline, max_resps, 0, %{})
+    do_wait_produce_response(produce_ref, deadline, max_resps, 0, %{})
   end
 
-  defp do_wait_produce_response(_deadline, max_resps, max_resps, resps), do: resps
+  defp do_wait_produce_response(_produce_ref, _deadline, max_resps, max_resps, resps), do: resps
 
-  defp do_wait_produce_response(deadline, max_resps, counter, resps) do
+  defp do_wait_produce_response(produce_ref, deadline, max_resps, counter, resps) do
     now = System.monotonic_time(:millisecond)
 
     if deadline > now do
       receive do
-        {:klife_produce, resp, batch_idx} ->
+        {:klife_produce, ^produce_ref, resp, batch_idx} ->
           new_resps = Map.put(resps, batch_idx, resp)
           new_counter = counter + 1
-          do_wait_produce_response(deadline, max_resps, new_counter, new_resps)
+          do_wait_produce_response(produce_ref, deadline, max_resps, new_counter, new_resps)
+
+        {:klife_produce, _produce_ref, resp, _batch_idx} ->
+          Logger.warning(
+            "Unkown ref received on producer call! Unkown produce response is: #{inspect(resp)}"
+          )
+
+          do_wait_produce_response(produce_ref, deadline, max_resps, counter, resps)
       after
         deadline - now ->
-          do_wait_produce_response(deadline, max_resps, counter, resps)
+          do_wait_produce_response(produce_ref, deadline, max_resps, counter, resps)
       end
     else
       new_resps =
@@ -652,7 +670,7 @@ defmodule Klife.Producer do
           Map.put_new(acc, idx, {:error, :timeout})
         end)
 
-      do_wait_produce_response(deadline, max_resps, max_resps, new_resps)
+      do_wait_produce_response(produce_ref, deadline, max_resps, max_resps, new_resps)
     end
   end
 

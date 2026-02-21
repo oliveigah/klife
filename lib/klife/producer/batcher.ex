@@ -409,7 +409,7 @@ defmodule Klife.Producer.Batcher do
   defp add_waiting_pid(
          waiting_pids,
          new_data,
-         new_pid,
+         {new_pid, produce_ref},
          %Record{topic: t, partition: p} = rec
        )
        when is_pid(new_pid) do
@@ -418,7 +418,7 @@ defmodule Klife.Producer.Batcher do
       |> Map.fetch!({t, p})
       |> Map.fetch!(:last_offset_delta)
 
-    new_entry = {new_pid, offset, rec.__batch_index}
+    new_entry = {new_pid, produce_ref, offset, rec.__batch_index}
 
     Map.update(waiting_pids, {t, p}, [new_entry], fn curr_pids -> [new_entry | curr_pids] end)
   end

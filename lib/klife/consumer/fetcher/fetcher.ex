@@ -125,7 +125,7 @@ defmodule Klife.Consumer.Fetcher do
               send(
                 self(),
                 {:klife_fetch_response, {item.topic_name, item.partition, item.offset_to_fetch},
-                 {:error, reason}}
+                 {:error, inspect(reason)}}
               )
             end)
 
@@ -158,7 +158,7 @@ defmodule Klife.Consumer.Fetcher do
         {:ok, pid}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, inspect(reason)}
     end
   end
 
@@ -183,7 +183,7 @@ defmodule Klife.Consumer.Fetcher do
   end
 
   defp wait_fetch_response(timeout_ms, max_resps) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    deadline = System.monotonic_time(:millisecond) + timeout_ms + 2_000
     do_wait_fetch_response(deadline, max_resps, 0, %{})
   end
 

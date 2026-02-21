@@ -191,8 +191,8 @@ defmodule Klife.Producer.Dispatcher do
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
       |> Enum.each(fn
-        {pid, batch_offset, batch_idx} when is_pid(pid) ->
-          send(pid, {:klife_produce, {:ok, base_offset + batch_offset}, batch_idx})
+        {pid, produce_ref, batch_offset, batch_idx} when is_pid(pid) ->
+          send(pid, {:klife_produce, produce_ref, {:ok, base_offset + batch_offset}, batch_idx})
 
         {{m, f, a}, batch_offset} ->
           callback_rec =
@@ -251,8 +251,8 @@ defmodule Klife.Producer.Dispatcher do
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
       |> Enum.each(fn
-        {pid, _batch_offset, batch_idx} when is_pid(pid) ->
-          send(pid, {:klife_produce, {:error, error_code}, batch_idx})
+        {pid, produce_ref, _batch_offset, batch_idx} when is_pid(pid) ->
+          send(pid, {:klife_produce, produce_ref, {:error, error_code}, batch_idx})
 
         {{m, f, a}, batch_offset} ->
           callback_rec =
@@ -344,7 +344,14 @@ defmodule Klife.Producer.Dispatcher do
       {:before_deadline?, false} ->
         {:error, :request_deadline}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to send produce request to broker, will retry (reason=#{inspect(reason)}) (client=#{inspect(client_name)})",
+          client: client_name,
+          broker_id: state.broker_id,
+          reason: reason
+        )
+
         {:error, :retry}
     end
   end
@@ -385,8 +392,8 @@ defmodule Klife.Producer.Dispatcher do
   def notify_delivery_error(delivery_confirmation_pids, records_map, error_reason) do
     Enum.each(delivery_confirmation_pids, fn {{topic, partition}, pids} ->
       Enum.each(pids, fn
-        {pid, _batch_offset, batch_idx} when is_pid(pid) ->
-          send(pid, {:klife_produce, {:error, error_reason}, batch_idx})
+        {pid, produce_ref, _batch_offset, batch_idx} when is_pid(pid) ->
+          send(pid, {:klife_produce, produce_ref, {:error, error_reason}, batch_idx})
 
         {{m, f, a}, batch_offset} ->
           callback_rec =
