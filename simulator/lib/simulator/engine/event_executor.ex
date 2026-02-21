@@ -17,6 +17,8 @@ defmodule Simulator.Engine.EventExecutor do
   @rollback_max_ms :timer.seconds(120)
   @event_threshold 0.5
 
+  @broker_kill_cooldown_ms :timer.minutes(1)
+
   @max_partitions 50
 
   @port_to_service_name %{
@@ -38,7 +40,7 @@ defmodule Simulator.Engine.EventExecutor do
     :kill_broker
   ]
 
-  defstruct pending_rollbacks: [], shutting_down: false
+  defstruct pending_rollbacks: [], shutting_down: false, last_broker_kill_at: nil
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__}))
@@ -144,6 +146,8 @@ defmodule Simulator.Engine.EventExecutor do
   end
 
   def handle_info(:execute_loop, %__MODULE__{} = state) do
+    state = check_unexpected_broker_stops(state)
+
     now = System.monotonic_time(:millisecond)
 
     {to_rollback, remaining} =
@@ -158,7 +162,7 @@ defmodule Simulator.Engine.EventExecutor do
 
     state =
       if :rand.uniform() >= @event_threshold do
-        available_actions = filter_available_actions(@actions, state.pending_rollbacks)
+        available_actions = filter_available_actions(@actions, state)
 
         if available_actions != [] do
           action = Enum.random(available_actions)
@@ -192,24 +196,72 @@ defmodule Simulator.Engine.EventExecutor do
     File.write!(path, line, [:append])
   end
 
-  defp filter_available_actions(actions, pending_rollbacks) do
+  defp filter_available_actions(actions, %__MODULE__{} = state) do
     has_broker_rollback =
-      Enum.any?(pending_rollbacks, fn {_time, action, _args} -> action == :restart_broker end)
+      Enum.any?(state.pending_rollbacks, fn {_time, action, _args} ->
+        action == :restart_broker
+      end)
+
+    broker_cooldown_active =
+      case state.last_broker_kill_at do
+        nil -> false
+        ts -> System.monotonic_time(:millisecond) - ts < @broker_kill_cooldown_ms
+      end
 
     consumer_group_rollback_count =
-      Enum.count(pending_rollbacks, fn {_time, action, _args} ->
+      Enum.count(state.pending_rollbacks, fn {_time, action, _args} ->
         action == :restart_consumer_group
       end)
 
     Enum.filter(actions, fn
       :kill_broker ->
-        not has_broker_rollback
+        not has_broker_rollback and not broker_cooldown_active
 
       action when action in [:kill_consumer_group, :stop_consumer_group] ->
         consumer_group_rollback_count < 2
 
       _action ->
         true
+    end)
+  end
+
+  defp check_unexpected_broker_stops(%__MODULE__{} = state) do
+    pending_restart_services =
+      state.pending_rollbacks
+      |> Enum.filter(fn {_time, action, _args} -> action == :restart_broker end)
+      |> Enum.map(fn {_time, _action, %{service_name: service_name}} -> service_name end)
+      |> MapSet.new()
+
+    all_services = @port_to_service_name |> Map.values() |> Enum.uniq()
+    services_to_check = Enum.reject(all_services, &(&1 in pending_restart_services))
+
+    docker_compose_file = get_docker_compose_file()
+
+    {output, _} =
+      System.shell(
+        "docker compose -f #{docker_compose_file} ps --status running --services 2>/dev/null"
+      )
+
+    running_services = output |> String.split("\n") |> Enum.map(&String.trim/1) |> MapSet.new()
+
+    Enum.reduce(services_to_check, state, fn service_name, acc ->
+      if service_name in running_services do
+        acc
+      else
+        Logger.warning(
+          "EventExecutor: check_brokers - #{service_name} is down unexpectedly, restarting"
+        )
+
+        :ok = do_start_broker(service_name)
+
+        Logger.info(
+          "EventExecutor: check_brokers - #{service_name} restarted, waiting for detection"
+        )
+
+        log_event(:recovery, :restart_broker, %{service_name: service_name})
+
+        acc
+      end
     end)
   end
 
@@ -467,6 +519,6 @@ defmodule Simulator.Engine.EventExecutor do
       result: :ok
     })
 
-    state
+    %{state | last_broker_kill_at: System.monotonic_time(:millisecond)}
   end
 end

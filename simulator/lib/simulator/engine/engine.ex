@@ -549,6 +549,17 @@ defmodule Simulator.Engine do
     expected_record? =
       case lookup_resp do
         [] ->
+          # TODO: Make possible to catch violations of unexpected produced records
+          # i'm specialy thinking about the bug described in the try/catch blocks
+          # of the lib/klife/producer/producer.ex file the producer would raise
+          # never inserting the record on the ETS but it still be consumed
+          #
+          # I've tried to implement this using the producer_ready? function
+          # but it does not work properly (it raises when it should not),
+          # needs to investigate! So I'm leaving  the hard coded true for now.
+
+          # if producer_ready?(rec.topic, rec.partition, cg_name), do: false, else: true
+
           true
 
         [{_key, hash_data, _insert_time, _offset, _confirmation_ts}] ->
@@ -576,7 +587,7 @@ defmodule Simulator.Engine do
 
       not expected_record? ->
         :ok =
-          insert_violation(:consumed_wrong_hash, %{
+          insert_violation(:consumed_unexpected_record, %{
             consumer_group: cg_name,
             topic: rec.topic,
             partition: rec.partition
@@ -600,6 +611,11 @@ defmodule Simulator.Engine do
                 :ets.insert(
                   consumer_table_name(rec.topic, rec.partition, cg_name),
                   {:latest_timestamp, insert_time}
+                )
+
+                :ets.insert(
+                  :engine_support,
+                  {{:producer_ready, rec.topic, rec.partition, cg_name}, true}
                 )
 
               [] ->
@@ -705,6 +721,13 @@ defmodule Simulator.Engine do
 
   def consumer_ready?(topic, partition, cg_name) do
     case :ets.lookup(:engine_support, {:consumer_ready, topic, partition, cg_name}) do
+      [{_key, val}] -> val
+      [] -> false
+    end
+  end
+
+  def producer_ready?(topic, partition, cg_name) do
+    case :ets.lookup(:engine_support, {:producer_ready, topic, partition, cg_name}) do
       [{_key, val}] -> val
       [] -> false
     end
