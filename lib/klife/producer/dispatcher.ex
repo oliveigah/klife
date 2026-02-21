@@ -291,7 +291,13 @@ defmodule Klife.Producer.Dispatcher do
       {:noreply, remove_request(state, req_ref)}
     else
       Process.send_after(self(), {:dispatch, req_ref}, p_config.retry_backoff_ms)
-      new_req_data = %{data | data_to_send: new_data_to_send}
+      new_delivery_confirmation_pids = Map.take(delivery_confirmation_pids, to_retry_keys)
+
+      new_req_data = %{
+        data
+        | data_to_send: new_data_to_send,
+          delivery_confirmation_pids: new_delivery_confirmation_pids
+      }
 
       new_state = %{
         state
