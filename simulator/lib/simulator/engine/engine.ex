@@ -476,11 +476,11 @@ defmodule Simulator.Engine do
   end
 
   def get_partition_count(topic) do
-    GenServer.call(__MODULE__, {:get_partition_count, topic})
+    GenServer.call(__MODULE__, {:get_partition_count, topic}, :infinity)
   end
 
   def update_partition_count(topic, new_count) do
-    GenServer.call(__MODULE__, {:update_partition_count, topic, new_count})
+    GenServer.call(__MODULE__, {:update_partition_count, topic, new_count}, :infinity)
   end
 
   def handle_event_executor(sup_pid) do

@@ -14,10 +14,10 @@ defmodule Simulator.Engine.EventExecutor do
   @loop_interval_ms :timer.seconds(10)
 
   @rollback_min_ms :timer.seconds(30)
-  @rollback_max_ms :timer.seconds(120)
+  @rollback_max_ms :timer.seconds(180)
   @event_threshold 0.5
 
-  @broker_kill_cooldown_ms :timer.minutes(1)
+  @broker_kill_cooldown_ms :timer.minutes(2)
 
   @max_partitions 50
 
@@ -48,6 +48,10 @@ defmodule Simulator.Engine.EventExecutor do
 
   def force_rollbacks do
     GenServer.call(via_tuple({__MODULE__}), :force_rollbacks, 120_000)
+  end
+
+  def signal_shutdown do
+    GenServer.call(via_tuple({__MODULE__}), :signal_shutdown, 120_000)
   end
 
   @broker_count @port_to_service_name |> Map.values() |> Enum.uniq() |> length()
@@ -119,6 +123,12 @@ defmodule Simulator.Engine.EventExecutor do
 
     Process.send_after(self(), :execute_loop, @loop_interval_ms)
     {:ok, state}
+  end
+
+  @impl true
+  def handle_call(:signal_shutdown, _from, %__MODULE__{} = state) do
+    Logger.info("EventExecutor: Shutdown signal received, stopping execute_loop")
+    {:reply, :ok, %{state | shutting_down: true}}
   end
 
   @impl true

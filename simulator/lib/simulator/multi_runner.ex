@@ -2,7 +2,7 @@ defmodule Simulator.MultiRunner do
   use GenServer, restart: :temporary
   require Logger
 
-  @run_timeout_ms :timer.minutes(10)
+  @run_timeout_ms :timer.minutes(15)
   @total_timeout_ms :timer.hours(24)
   @check_interval_ms :timer.seconds(5)
 
@@ -109,6 +109,7 @@ defmodule Simulator.MultiRunner do
         # Give some time to have more error datapoints
         Process.sleep(15_000)
 
+        :ok = Simulator.Engine.EventExecutor.signal_shutdown()
         :ok = Simulator.Engine.terminate()
 
         {:noreply, state}
@@ -118,6 +119,7 @@ defmodule Simulator.MultiRunner do
           "MultiRunner run #{state.run_count}: Run timeout reached, stopping run ##{state.run_count}"
         )
 
+        :ok = Simulator.Engine.EventExecutor.signal_shutdown()
         :ok = Simulator.Engine.terminate()
 
         {:noreply, state}
