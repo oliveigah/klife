@@ -177,8 +177,20 @@ defmodule Klife.Producer.Batcher do
   end
 
   def handle_info(
+        {:bump_epoch, _topics_partitions_list},
+        %GenBatcher{
+          user_state: %__MODULE__{producer_config: %Producer{producer_id: nil}}
+        } = batcher_state
+      ) do
+    {:noreply, batcher_state}
+  end
+
+  def handle_info(
         {:bump_epoch, topics_partitions_list},
         %GenBatcher{
+          batch_queue: batch_queue,
+          current_batch: current_batch,
+          current_batch_item_count: current_batch_item_count,
           user_state: %__MODULE__{} = state
         } = batcher_state
       ) do
@@ -191,18 +203,36 @@ defmodule Klife.Producer.Batcher do
       }
     } = state
 
-    {new_pe, new_bs} =
-      Enum.reduce(topics_partitions_list, {pe, bs}, fn {topic, partition}, {acc_pe, acc_bs} ->
+    {new_pe, bump_map} =
+      Enum.reduce(topics_partitions_list, {pe, %{}}, fn {topic, partition}, {acc_pe, acc_bump} ->
         key = {topic, partition}
         new_pe_val = Producer.new_epoch(client_name, producer_name, topic, partition)
         new_pe = Map.put(acc_pe, key, new_pe_val)
-        new_bs = Map.replace(acc_bs, key, 0)
-        {new_pe, new_bs}
+        new_bump = Map.put(acc_bump, key, {new_pe_val, 0})
+        {new_pe, new_bump}
       end)
 
+    {new_queue, new_current_batch, rewritten_bs} =
+      rewrite_batches_on_epoch_bump(
+        batch_queue,
+        current_batch,
+        current_batch_item_count,
+        bump_map
+      )
+
+    new_bs = Map.merge(bs, rewritten_bs)
     new_state = %{state | producer_epochs: new_pe, base_sequences: new_bs}
 
-    {:noreply, %{batcher_state | user_state: new_state}}
+    tp_set = MapSet.new(topics_partitions_list)
+    send(state.dispatcher_pid, {:flush_partitions, tp_set})
+
+    {:noreply,
+     %{
+       batcher_state
+       | batch_queue: new_queue,
+         current_batch: new_current_batch,
+         user_state: new_state
+     }}
   end
 
   def handle_info(
@@ -402,6 +432,54 @@ defmodule Klife.Producer.Batcher do
       _ ->
         curr_epochs
     end
+  end
+
+  defp rewrite_batches_on_epoch_bump(
+         batch_queue,
+         current_batch,
+         current_batch_item_count,
+         bump_map
+       ) do
+    batches = :queue.to_list(batch_queue)
+
+    {rewritten_batches, seq_acc} =
+      Enum.map_reduce(batches, bump_map, &rewrite_single_batch/2)
+
+    {rewritten_current, final_seq_acc} =
+      if current_batch_item_count > 0 do
+        rewrite_single_batch(current_batch, seq_acc)
+      else
+        {current_batch, seq_acc}
+      end
+
+    new_queue = :queue.from_list(rewritten_batches)
+    final_bs = Map.new(final_seq_acc, fn {key, {_epoch, next_seq}} -> {key, next_seq} end)
+
+    {new_queue, rewritten_current, final_bs}
+  end
+
+  defp rewrite_single_batch(%Batch{data: data} = batch, seq_acc) do
+    {new_data, new_seq_acc} =
+      Enum.reduce(data, {data, seq_acc}, fn {key, partition_data}, {acc_data, acc_seq} ->
+        case Map.get(acc_seq, key) do
+          {new_epoch, next_seq} ->
+            updated_partition_data = %{
+              partition_data
+              | base_sequence: next_seq,
+                producer_epoch: new_epoch
+            }
+
+            new_acc_seq =
+              Map.put(acc_seq, key, {new_epoch, next_seq + partition_data.records_length})
+
+            {Map.put(acc_data, key, updated_partition_data), new_acc_seq}
+
+          nil ->
+            {acc_data, acc_seq}
+        end
+      end)
+
+    {%Batch{batch | data: new_data}, new_seq_acc}
   end
 
   defp add_waiting_pid(waiting_pids, _new_batch, nil, _record), do: waiting_pids

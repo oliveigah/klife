@@ -8,7 +8,9 @@ defmodule Klife.Producer.Dispatcher do
       :delivery_confirmation_pids,
       :base_time,
       :request_ref,
-      :records_map
+      :records_map,
+      in_flight: false,
+      bumped_tp_set: MapSet.new()
     ]
   end
 
@@ -71,7 +73,7 @@ defmodule Klife.Producer.Dispatcher do
 
     case do_dispatch(data, state) do
       :ok ->
-        new_state = put_in(state.requests[request_ref], data)
+        new_state = put_in(state.requests[request_ref], %{data | in_flight: true})
 
         {:reply, :ok, new_state}
 
@@ -115,7 +117,8 @@ defmodule Klife.Producer.Dispatcher do
 
     case do_dispatch(data, state) do
       :ok ->
-        {:noreply, state}
+        new_state = put_in(state.requests[request_ref], %{data | in_flight: true})
+        {:noreply, new_state}
 
       {:error, :retry} ->
         Process.send_after(self(), {:dispatch, request_ref}, retry_ms)
@@ -152,6 +155,56 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
+  # On epoch bump, the batcher rewrites queued batches with the new epoch/sequences,
+  # but requests already in the dispatcher (waiting to retry) still carry stale
+  # epoch/sequences. We drop those here instead of rewriting them, which may cause
+  # unnecessary record loss. Rewriting them would require coordinating sequence
+  # numbering back to the batcher, adding significant complexity for an edge case.
+  def handle_info({:flush_partitions, tp_set}, %__MODULE__{} = state) do
+    new_requests =
+      Enum.reduce(state.requests, state.requests, fn {ref, %Request{} = req}, acc ->
+        {flush_keys, remaining_keys} =
+          req.data_to_send
+          |> Map.keys()
+          |> Enum.split_with(&MapSet.member?(tp_set, &1))
+
+        case flush_keys do
+          [] ->
+            acc
+
+          _ when req.in_flight ->
+            new_drop = MapSet.union(req.bumped_tp_set, MapSet.new(flush_keys))
+            Map.put(acc, ref, %{req | bumped_tp_set: new_drop})
+
+          _ ->
+            :ok =
+              notify_delivery_error(
+                Map.take(req.delivery_confirmation_pids, flush_keys),
+                req.records_map,
+                :epoch_bumped
+              )
+
+            case remaining_keys do
+              [] ->
+                GenBatcher.complete_dispatch(state.batcher_pid, ref)
+                Map.delete(acc, ref)
+
+              _ ->
+                new_req = %{
+                  req
+                  | data_to_send: Map.take(req.data_to_send, remaining_keys),
+                    delivery_confirmation_pids:
+                      Map.take(req.delivery_confirmation_pids, remaining_keys)
+                }
+
+                Map.put(acc, ref, new_req)
+            end
+        end
+      end)
+
+    {:noreply, %{state | requests: new_requests}}
+  end
+
   # TODO: Handle more specific codes
   @delivery_success_codes [0, 46]
   @delivery_discard_codes [18, 47, 10]
@@ -164,14 +217,41 @@ defmodule Klife.Producer.Dispatcher do
       broker_id: broker_id
     } = state
 
-    data =
-      %Request{
-        delivery_confirmation_pids: delivery_confirmation_pids,
-        request_ref: ^req_ref,
-        data_to_send: data_to_send,
-        producer_config: %{name: producer_name, client_name: client_name} = p_config,
-        records_map: records_map
-      } = Map.fetch!(requests, req_ref)
+    case Map.get(requests, req_ref) do
+      nil ->
+        Logger.warning(
+          "Broker response received for an unknown request ref",
+          broker_id: broker_id
+        )
+
+        {:noreply, state}
+
+      %Request{} = data ->
+        handle_produce_response(data, req_ref, binary_resp, msg_mod, msg_version, state)
+    end
+  end
+
+  defp handle_produce_response(
+         %Request{} = data,
+         req_ref,
+         binary_resp,
+         msg_mod,
+         msg_version,
+         state
+       ) do
+    %__MODULE__{
+      requests: requests,
+      broker_id: broker_id
+    } = state
+
+    %Request{
+      delivery_confirmation_pids: delivery_confirmation_pids,
+      request_ref: ^req_ref,
+      data_to_send: data_to_send,
+      producer_config: %{name: producer_name, client_name: client_name} = p_config,
+      records_map: records_map,
+      bumped_tp_set: bumped_tp_set
+    } = data
 
     {:ok, resp} = apply(msg_mod, :deserialize_response, [binary_resp, msg_version])
 
@@ -216,30 +296,45 @@ defmodule Klife.Producer.Dispatcher do
 
     grouped_errors =
       Enum.group_by(failure_list, fn {topic, partition, error_code, _base_offset} ->
-        if error_code in @delivery_discard_codes do
-          Logger.warning(
-            "Non-retryable produce error on #{topic}:#{partition}, message discarded (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
-            client: client_name,
-            producer: producer_name,
-            broker_id: broker_id,
-            topic: topic,
-            partition: partition,
-            error_code: error_code
-          )
+        cond do
+          MapSet.member?(bumped_tp_set, {topic, partition}) ->
+            Logger.warning(
+              "Produce error on #{topic}:#{partition}, message discarded due to epoch bump (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
+              client: client_name,
+              producer: producer_name,
+              broker_id: broker_id,
+              topic: topic,
+              partition: partition,
+              error_code: error_code
+            )
 
-          :discard
-        else
-          Logger.warning(
-            "Produce error on #{topic}:#{partition}, message will be retried (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
-            client: client_name,
-            producer: producer_name,
-            broker_id: broker_id,
-            topic: topic,
-            partition: partition,
-            error_code: error_code
-          )
+            :discard
 
-          :retry
+          error_code in @delivery_discard_codes ->
+            Logger.warning(
+              "Non-retryable produce error on #{topic}:#{partition}, message discarded (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
+              client: client_name,
+              producer: producer_name,
+              broker_id: broker_id,
+              topic: topic,
+              partition: partition,
+              error_code: error_code
+            )
+
+            :discard
+
+          true ->
+            Logger.warning(
+              "Produce error on #{topic}:#{partition}, message will be retried (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
+              client: client_name,
+              producer: producer_name,
+              broker_id: broker_id,
+              topic: topic,
+              partition: partition,
+              error_code: error_code
+            )
+
+            :retry
         end
       end)
 
@@ -247,6 +342,11 @@ defmodule Klife.Producer.Dispatcher do
     to_retry = grouped_errors[:retry] || []
 
     Enum.each(to_discard, fn {topic, partition, error_code, _base_offset} ->
+      error_code =
+        if MapSet.member?(bumped_tp_set, {topic, partition}),
+          do: :epoch_bumped,
+          else: error_code
+
       delivery_confirmation_pids
       |> Map.get({topic, partition}, [])
       |> Enum.reverse()
@@ -296,7 +396,9 @@ defmodule Klife.Producer.Dispatcher do
       new_req_data = %{
         data
         | data_to_send: new_data_to_send,
-          delivery_confirmation_pids: new_delivery_confirmation_pids
+          delivery_confirmation_pids: new_delivery_confirmation_pids,
+          in_flight: false,
+          bumped_tp_set: MapSet.new()
       }
 
       new_state = %{
