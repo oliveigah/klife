@@ -156,7 +156,8 @@ defmodule Simulator.Engine.EventExecutor do
   end
 
   def handle_info(:execute_loop, %__MODULE__{} = state) do
-    state = check_unexpected_broker_stops(state)
+    check_unexpected_broker_stops(state)
+    check_unexpected_consumer_group_stops(state)
 
     now = System.monotonic_time(:millisecond)
 
@@ -254,10 +255,8 @@ defmodule Simulator.Engine.EventExecutor do
 
     running_services = output |> String.split("\n") |> Enum.map(&String.trim/1) |> MapSet.new()
 
-    Enum.reduce(services_to_check, state, fn service_name, acc ->
-      if service_name in running_services do
-        acc
-      else
+    Enum.each(services_to_check, fn service_name ->
+      if service_name not in running_services do
         Logger.warning(
           "EventExecutor: check_brokers - #{service_name} is down unexpectedly, restarting"
         )
@@ -269,8 +268,65 @@ defmodule Simulator.Engine.EventExecutor do
         )
 
         log_event(:recovery, :restart_broker, %{service_name: service_name})
+      end
+    end)
+  end
 
-        acc
+  # On simulations consumer groups are started as :temporary children so that when the event
+  # executor intentionally kills them they stay dead until the scheduled rollback
+  # restarts them. However, this means that if a consumer group crashes for any
+  # other reason it won't be automatically restarted by the supervisor.
+  # Since in production cases the consumer group wont be started as temporary.
+  # This function fills that gap by checking, on every loop iteration, whether any
+  # consumer group that is expected to be alive is actually down, and restarts it.
+  defp check_unexpected_consumer_group_stops(%__MODULE__{} = state) do
+    %EngineConfig{consumer_group_configs: cg_configs} = Engine.get_config()
+
+    pending_restart_cg_keys =
+      state.pending_rollbacks
+      |> Enum.filter(fn {_time, action, _args} -> action == :restart_consumer_group end)
+      |> Enum.map(fn {_time, _action, opts} -> {opts[:cg_mod], opts[:group_name]} end)
+      |> MapSet.new()
+
+    cgs_to_check =
+      Enum.reject(cg_configs, fn opts ->
+        {opts[:cg_mod], opts[:group_name]} in pending_restart_cg_keys
+      end)
+
+    Enum.each(cgs_to_check, fn opts ->
+      cg_mod = opts[:cg_mod]
+      client = opts[:client]
+      group_name = opts[:group_name]
+
+      name =
+        {:via, Registry,
+         {Klife.ProcessRegistry, {Klife.Consumer.ConsumerGroup, client, cg_mod, group_name}}}
+
+      case GenServer.whereis(name) do
+        nil ->
+          Logger.warning(
+            "EventExecutor: check_consumer_groups - #{inspect(cg_mod)} (group=#{group_name}) is down unexpectedly, restarting"
+          )
+
+          case Engine.init_consumer_group(opts) do
+            {:ok, _pid} ->
+              Logger.info(
+                "EventExecutor: check_consumer_groups - #{inspect(cg_mod)} (group=#{group_name}) restarted"
+              )
+
+              log_event(:recovery, :restart_consumer_group, %{
+                cg_mod: cg_mod,
+                group_name: group_name
+              })
+
+            {:error, reason} ->
+              Logger.warning(
+                "EventExecutor: check_consumer_groups - failed to restart #{inspect(cg_mod)} (group=#{group_name}): #{inspect(reason)}"
+              )
+          end
+
+        _pid ->
+          :ok
       end
     end)
   end

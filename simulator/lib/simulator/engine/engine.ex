@@ -297,6 +297,14 @@ defmodule Simulator.Engine do
             })
           end
 
+          lag = current_count - consumed_recs
+
+          if lag >= 15 do
+            Logger.info(
+              "Invariant check lag: topic=#{t} partition=#{p} group=#{cgname} produced=#{current_count} consumed=#{consumed_recs} lag=#{lag}"
+            )
+          end
+
           :ets.lookup(consumer_table_name(t, p, cgname), :latest_timestamp)
 
           [{_, latest_ts}] = :ets.lookup(consumer_table_name(t, p, cgname), :latest_timestamp)
