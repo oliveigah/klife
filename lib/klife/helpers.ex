@@ -4,18 +4,22 @@ defmodule Klife.Helpers do
     do_with_timeout!(deadline, fun)
   end
 
-  defp do_with_timeout!(deadline, fun) do
+  defp do_with_timeout!(deadline, fun, last_error \\ nil) do
     if System.monotonic_time(:millisecond) < deadline do
       case fun.() do
         :retry ->
           Process.sleep(Enum.random(500..1000))
-          do_with_timeout!(deadline, fun)
+          do_with_timeout!(deadline, fun, last_error)
+
+        {:retry, error} ->
+          Process.sleep(Enum.random(500..1000))
+          do_with_timeout!(deadline, fun, error)
 
         val ->
           val
       end
     else
-      raise "Timeout while waiting for broker response"
+      raise "Timeout while waiting for broker response! Last error is: #{inspect(last_error)}"
     end
   end
 

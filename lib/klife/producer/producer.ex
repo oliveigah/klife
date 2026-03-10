@@ -428,8 +428,8 @@ defmodule Klife.Producer do
 
           :retry
 
-        _ ->
-          :retry
+        err ->
+          {:retry, err}
       end
     end
 

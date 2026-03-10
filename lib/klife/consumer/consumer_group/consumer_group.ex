@@ -177,7 +177,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.put(:member_id, UUID.uuid4())
 
     if ConnController.disabled_feature?(cg_mod.klife_client(), :consumer_group) do
-      raise "Consumer Group was started but producer feature is disabled (client=#{inspect(cg_mod.klife_client())}). Check logs for details."
+      raise "Consumer Group was started but consumer_group feature is disabled for client #{inspect(cg_mod.klife_client())}. Check logs for details."
     end
 
     GenServer.start_link(cg_mod, validated_args,
@@ -250,7 +250,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     send(self(), :heartbeat)
 
     Logger.info(
-      "Starting consumer group #{init_state.group_name}: (client=#{inspect(init_state.client_name)}, mod=#{init_state.mod})",
+      "Starting consumer group #{init_state.group_name} with module #{init_state.mod}",
       client: init_state.client_name,
       group: init_state.group_name
     )
@@ -289,6 +289,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
         {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
           if state.coordinator_id != nil and state.coordinator_id != broker_id do
+            Logger.info(
+              "Coordinator changed from #{state.coordinator_id} to #{broker_id} for group #{state.group_name} running module #{state.mod}",
+              client: state.client_name,
+              group: state.group_name
+            )
+
             Enum.each(state.committers_distribution, fn {commiter_id, _list} ->
               :ok =
                 Committer.update_coordinator(
@@ -305,27 +311,25 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         {:ok, %{content: %{coordinators: [%{error_code: ec}]}}} ->
           Logger.error(
-            "#{inspect(M.FindCoordinator)} failed with error code #{ec} (client=#{inspect(state.client_name)}, group=#{state.group_name})",
+            "#{inspect(M.FindCoordinator)} failed with error code #{ec} for group #{state.group_name} running module #{state.mod}",
             client: state.client_name,
-            group: state.group_name,
-            error_code: ec
+            group: state.group_name
           )
 
-          :retry
+          {:retry, {:error, ec}}
 
         {:error, reason} ->
           Logger.error(
-            "#{inspect(M.FindCoordinator)} failed unexpectedly: #{inspect(reason)} (client=#{inspect(state.client_name)}, group=#{state.group_name})",
+            "#{inspect(M.FindCoordinator)} failed unexpectedly with reason #{inspect(reason)} for group #{state.group_name} running module #{state.mod}",
             client: state.client_name,
-            group: state.group_name,
-            reason: inspect(reason)
+            group: state.group_name
           )
 
-          :retry
+          {:retry, {:error, reason}}
       end
     end
 
-    Helpers.with_timeout!(fun, :timer.seconds(30))
+    Helpers.with_timeout!(fun, state.client_name.get_default_request_timeout_ms() * 2)
   end
 
   def processing_allowed?(client_name, cg_mod, topic_id, partition, cg_name) do
@@ -381,39 +385,24 @@ defmodule Klife.Consumer.ConsumerGroup do
            %{},
            timeout_ms: state.rebalance_timeout_ms
          ) do
-      {:error, :timeout} ->
-        Logger.error(
-          "Heartbeat timeout for group #{state.group_name}. Consumers may be fenced, stopping consumption (client=#{inspect(state.client_name)})",
-          client: state.client_name,
-          group: state.group_name,
-          coordinator_id: state.coordinator_id
-        )
-
-        {:error, :timeout}
-
-      # Needs to unack all because this loop may cause problems when a consumer can not properly
-      # send/receive heartbeats. Because the consumer group will be stuck on
-      # this heartbeat -> coordinator -> heartbeat loop, and wont stop consumers.
-      #
-      # The comsumption will be re enabled after the next successfull heartbeat
-      #
-      # TODO: Should we raise after some timeout here?
       {:error, error} ->
-        true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
-
         Logger.error(
-          "Heartbeat error for group #{state.group_name}: #{inspect(error)} (client=#{inspect(state.client_name)})",
+          "Heartbeat error for group #{state.group_name} running module #{state.mod}: #{inspect(error)}",
           client: state.client_name,
           group: state.group_name,
           reason: inspect(error)
         )
 
-        state
-        |> get_coordinator!()
-        |> do_heartbeat()
+        {:ok, get_coordinator!(state)}
 
       {:ok, %{content: %{error_code: 0} = resp}} ->
         if state.coordinator_id != nil and resp.member_epoch != state.epoch do
+          Logger.info(
+            "Epoch bumped from #{state.epoch} to #{resp.member_epoch} for group #{state.group_name} running module #{state.mod}",
+            client: state.client_name,
+            group: state.group_name
+          )
+
           Enum.each(state.committers_distribution, fn {commiter_id, _list} ->
             :ok =
               Committer.update_epoch(
@@ -426,30 +415,31 @@ defmodule Klife.Consumer.ConsumerGroup do
           end)
         end
 
-        new_state =
-          %__MODULE__{
-            state
-            | assigned_topic_partitions: get_in(resp, [:assignment, :topic_partitions]) || [],
-              heartbeat_interval_ms: resp.heartbeat_interval_ms,
-              epoch: resp.member_epoch
-          }
-
         Enum.each(tp_list, fn {t_id, p} ->
           true =
             ack_topic_partition(
-              new_state.client_name,
-              new_state.mod,
+              state.client_name,
+              state.mod,
               t_id,
               p,
-              new_state.group_name
+              state.group_name
             )
         end)
+
+        new_state =
+          %__MODULE__{
+            state
+            | assigned_topic_partitions:
+                get_in(resp, [:assignment, :topic_partitions]) || state.assigned_topic_partitions,
+              heartbeat_interval_ms: resp.heartbeat_interval_ms,
+              epoch: resp.member_epoch
+          }
 
         {:ok, new_state}
 
       {:ok, %{content: %{error_code: ec, error_message: em}}} ->
         Logger.error(
-          "Heartbeat error for group #{state.group_name}: error_code=#{ec} error_message=#{em} (client=#{inspect(state.client_name)})",
+          "Heartbeat error for group #{state.group_name} running module #{state.mod}: error_code=#{ec} error_message=#{em}",
           client: state.client_name,
           group: state.group_name,
           consumer_group_mod: state.mod,
@@ -462,18 +452,15 @@ defmodule Klife.Consumer.ConsumerGroup do
 
         cond do
           coordinator_error? ->
-            state
-            |> get_coordinator!()
-            |> do_heartbeat()
+            {:ok, get_coordinator!(state)}
 
-          # This should happen only when the previous instance is leaving the group
-          # so we can keep going and this should resolve eventually!
           static_membership_error? ->
-            state
+            {:ok, state}
 
+          # TODO: Check if there is ways to handle more error codes here!
           true ->
             Logger.error(
-              "Unrecoverable heartbeat error for group #{state.group_name}, restarting: error_code=#{ec} error_message=#{em} (client=#{inspect(state.client_name)})",
+              "Unrecoverable heartbeat error for group #{state.group_name} running module #{state.mod}, restarting: error_code=#{ec} error_message=#{em}",
               client: state.client_name,
               group: state.group_name,
               error_code: ec,
@@ -486,7 +473,6 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   defp build_committer_specs(%__MODULE__{} = state) do
-    # TODO: Handle coordinator changes on committer
     1..state.committers_count
     |> Enum.map_reduce([], fn committer_id, acc_specs ->
       committer_args = [
@@ -616,17 +602,41 @@ defmodule Klife.Consumer.ConsumerGroup do
       require_stable: true
     }
 
+    # TODO: Filter out successfull topic/partitions on retries!
     offset_fetch_result =
-      case Broker.send_message(M.OffsetFetch, state.client_name, state.coordinator_id, content) do
-        {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
-          # TODO: Think how to handle errors on specific topics/partitions
-          for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions, into: %{} do
-            {{topic_resp.name, pdata.partition_index}, pdata.committed_offset}
-          end
+      Helpers.with_timeout!(
+        fn ->
+          case Broker.send_message(
+                 M.OffsetFetch,
+                 state.client_name,
+                 state.coordinator_id,
+                 content
+               ) do
+            {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
+              {results, errors} =
+                for topic_resp <- tdata,
+                    pdata <- topic_resp.partitions,
+                    tp = {topic_resp.name, pdata.partition_index},
+                    reduce: {%{}, []} do
+                  {res_acc, err_acc} when pdata.error_code == 0 ->
+                    {Map.put(res_acc, tp, pdata.committed_offset), err_acc}
 
-        {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
-          raise "#{inspect(M.OffsetFetch)} failed with error code #{ec} (client=#{inspect(state.client_name)}, group=#{state.group_name})"
-      end
+                  {res_acc, err_acc} ->
+                    {res_acc, [{tp, pdata.error_code} | err_acc]}
+                end
+
+              if errors == [] do
+                results
+              else
+                {:retry, errors}
+              end
+
+            {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
+              {:retry, [{:group, ec}]}
+          end
+        end,
+        state.client_name.get_default_request_timeout_ms() * 2
+      )
 
     missing_resp_tp =
       offset_fetch_result
@@ -643,7 +653,6 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def get_reset_offset(tname_p_list, client, tconfig_map) do
-    # TODO: Think how to handle errors on specific topics/partitions
     grouped_by_broker =
       Enum.group_by(
         tname_p_list,
@@ -682,18 +691,43 @@ defmodule Klife.Consumer.ConsumerGroup do
         {broker, content}
       end)
 
+    timeout = client.get_default_request_timeout_ms() * 2
+
     Task.async_stream(
       contents,
       fn {broker, content} ->
-        {:ok, %{content: %{topics: tdata}}} =
-          Broker.send_message(M.ListOffsets, client, broker, content)
+        # TODO: Filter out successfull topic/partitions on retries!
+        Helpers.with_timeout!(
+          fn ->
+            case Broker.send_message(M.ListOffsets, client, broker, content) do
+              {:ok, %{content: %{topics: tdata}}} ->
+                {results, errors} =
+                  for topic_resp <- tdata,
+                      pdata <- topic_resp.partitions,
+                      tp = {topic_resp.name, pdata.partition_index},
+                      reduce: {[], []} do
+                    {res_acc, err_acc} when pdata.error_code == 0 ->
+                      # Need the -1 so we do not skip the first record
+                      {[{tp, pdata.offset - 1} | res_acc], err_acc}
 
-        for topic_resp <- tdata, %{error_code: 0} = pdata <- topic_resp.partitions do
-          # Need the -1 so we do not skip the first record
-          {{topic_resp.name, pdata.partition_index}, pdata.offset - 1}
-        end
+                    {res_acc, err_acc} ->
+                      {res_acc, [{tp, pdata.error_code} | err_acc]}
+                  end
+
+                if errors == [] do
+                  results
+                else
+                  {:retry, errors}
+                end
+
+              {:error, reason} ->
+                {:retry, reason}
+            end
+          end,
+          timeout
+        )
       end,
-      timeout: 30_000
+      timeout: timeout + :timer.seconds(5)
     )
     |> Enum.flat_map(fn {:ok, resp} -> resp end)
     |> Map.new()
@@ -724,11 +758,20 @@ defmodule Klife.Consumer.ConsumerGroup do
     # Also there is still a chance for the consumer to start before the
     # fetcher can react to the metadata change, think how to solve this.
     to_start =
-      Enum.reject(to_start, fn {topic_id, partition} ->
+      to_start
+      |> Enum.reject(fn {topic_id, partition} ->
         tname = MetadataCache.get_topic_name_by_id(state.client_name, topic_id)
         have_metadata? = MetadataCache.metadata_exists?(state.client_name, tname, partition)
+        unknown_metadata? = tname == nil or have_metadata? == false
 
-        tname == nil or have_metadata? == false
+        if unknown_metadata? do
+          Logger.warning(
+            "Unkown metadata for #{tname}:#{partition} assigned for #{state.group_name} running module #{state.mod}",
+            group: state.group_name
+          )
+        end
+
+        unknown_metadata?
       end)
       |> MapSet.new()
 
@@ -737,19 +780,12 @@ defmodule Klife.Consumer.ConsumerGroup do
         stop_consumer(acc_state, topic_id, partition)
       end)
 
-    new_state =
-      if MapSet.size(to_start) != 0 do
-        init_offsets_map = get_init_offsets(state, to_start)
+    if MapSet.size(to_start) != 0 do
+      init_offsets_map = get_init_offsets(state, to_start)
 
-        Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
-          start_consumer(acc_state, topic_id, partition, init_offsets_map[{topic_id, partition}])
-        end)
-      else
-        new_state
-      end
-
-    if MapSet.size(to_stop) != 0 or MapSet.size(to_start) != 0 do
-      %{new_state | heartbeat_interval_ms: 5}
+      Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
+        start_consumer(acc_state, topic_id, partition, init_offsets_map[{topic_id, partition}])
+      end)
     else
       new_state
     end
@@ -759,7 +795,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     case Map.get(cmap, monitor_ref) do
       nil ->
         Logger.error(
-          "Unexpected consumer DOWN message received (client=#{inspect(state.client_name)}, group=#{state.group_name})",
+          "Unexpected consumer DOWN message received for #{state.group_name} running module #{state.mod} (client=#{inspect(state.client_name)}, group=#{state.group_name})",
           client: state.client_name,
           group: state.group_name,
           reason: inspect(reason)
@@ -774,14 +810,13 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   def handle_terminate(%__MODULE__{} = state, reason) do
-    Logger.info(
-      "Terminating consumer group #{state.group_name}: #{inspect(reason)} (client=#{inspect(state.client_name)})",
-      client: state.client_name,
-      group: state.group_name,
-      reason: inspect(reason)
-    )
-
     true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
+
+    Logger.info(
+      "Terminating consumer group #{state.group_name} running module #{state.mod}: #{inspect(reason)}",
+      client: state.client_name,
+      group: state.group_name
+    )
 
     # TODO: Maybe we should also use the termination reason to define leaving epoch
     leaving_epoch = if state.instance_id != nil, do: -2, else: -1
@@ -792,14 +827,26 @@ defmodule Klife.Consumer.ConsumerGroup do
       fn {_k, {tid, p}} ->
         :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p, state.group_name)
       end,
-      timeout: 15_000
+      timeout: 5_000,
+      on_timeout: :kill_task
     )
     |> Enum.to_list()
 
     exit_state = %__MODULE__{state | consumers_monitor_map: %{}, epoch: leaving_epoch}
 
-    {:ok, exit_state} = do_heartbeat(exit_state)
-    exit_state
+    case do_heartbeat(exit_state) do
+      {:ok, exit_state} ->
+        exit_state
+
+      {:error, reason} ->
+        Logger.error(
+          "Error while terminating consumer group #{state.group_name} running module #{state.mod}: #{inspect(reason)}",
+          client: state.client_name,
+          group: state.group_name
+        )
+
+        exit_state
+    end
   end
 
   defp stop_consumer(%__MODULE__{} = state, topic_id, partition) do
@@ -814,6 +861,14 @@ defmodule Klife.Consumer.ConsumerGroup do
         partition,
         state.group_name
       )
+
+    topic_name = MetadataCache.get_topic_name_by_id!(state.client_name, topic_id)
+
+    Logger.info(
+      "Assignment revoked #{topic_name}:#{partition} for consumer group #{state.group_name} running module #{state.mod}}",
+      client: state.client_name,
+      group: state.group_name
+    )
 
     remove_entry_from_committers_map(state, topic_id, partition)
   end
@@ -866,6 +921,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       end)
 
     ref = Process.monitor(pid)
+
+    Logger.info(
+      "Assignment received #{topic_name}:#{partition} for consumer group #{state.group_name} running module #{state.mod}}",
+      client: state.client_name,
+      group: state.group_name
+    )
 
     %__MODULE__{
       state

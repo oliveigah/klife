@@ -193,6 +193,13 @@ defmodule Klife.Connection.Controller do
   end
 
   def handle_info(:check_cluster, %__MODULE__{} = state) do
+    # Prevent subtle edge case when
+    # messages may accumullate idefinitely due to
+    # multiple cluster changes
+    if state.check_cluster_timer_ref do
+      Process.cancel_timer(state.check_cluster_timer_ref)
+    end
+
     case get_cluster_info(state.bootstrap_conn) do
       {:ok, %{brokers: new_brokers_list, controller: controller}} ->
         set_cluster_controller(controller, state.client_name)
@@ -228,7 +235,6 @@ defmodule Klife.Connection.Controller do
   def handle_call(:trigger_check_cluster, from, %__MODULE__{} = state) do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
-        Process.cancel_timer(state.check_cluster_timer_ref)
         new_ref = Process.send_after(self(), :check_cluster, 0)
 
         {:noreply,
@@ -251,7 +257,6 @@ defmodule Klife.Connection.Controller do
   def handle_cast(:trigger_check_cluster, %__MODULE__{} = state) do
     case state do
       %__MODULE__{check_cluster_waiting_pids: []} ->
-        Process.cancel_timer(state.check_cluster_timer_ref)
         new_ref = Process.send_after(self(), :check_cluster, 0)
 
         {:noreply,

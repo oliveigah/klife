@@ -7,6 +7,8 @@ defmodule MyConsumerGroup do
       [name: "my_consumer_topic_2"]
     ]
 
+  require Logger
+
   alias Klife.Record
 
   @impl true
@@ -19,5 +21,30 @@ defmodule MyConsumerGroup do
     )
 
     :commit
+  end
+
+  @impl true
+  def handle_consumer_start(topic, partition, group_name) do
+    Logger.info(
+      event: "consumer_start",
+      topic: topic,
+      partition: partition,
+      group: group_name,
+      mod: __MODULE__
+    )
+
+    :ok
+  end
+
+  @impl true
+  def handle_consumer_stop(topic, partition, group_name, reason) do
+    Logger.info(
+      event: "consumer_stop",
+      topic: topic,
+      partition: partition,
+      group: group_name,
+      mod: __MODULE__,
+      reason: reason
+    )
   end
 end

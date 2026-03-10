@@ -96,37 +96,55 @@ defmodule Klife.MetadataCache do
         {tp_ids, any_new?} =
           for topic <- resp.topics,
               partition <- topic.partitions,
-              topic.error_code == 0,
               reduce: {[], false} do
             {acc_tp_ids, acc_any_new} ->
-              new_acc_tp_ids = [{topic.topic_id, topic.name} | acc_tp_ids]
+              cond do
+                topic.error_code != 0 ->
+                  Logger.warning(
+                    "Metadata response with error on topic (topic=#{topic.name}) (error_code=#{topic.error_code}) (client=#{inspect(client_name)})",
+                    client: client_name
+                  )
 
-              key = {topic.name, partition.partition_index}
+                  {acc_tp_ids, acc_any_new}
 
-              case :ets.lookup(table_name, key) do
-                [] ->
-                  :ok = upsert_metadata(state, topic, partition)
-                  {new_acc_tp_ids, true}
+                partition.error_code != 0 ->
+                  Logger.warning(
+                    "Metadata response with error on partition (topic=#{topic.name}) (partition=#{partition.partition_index}) (error_code=#{partition.error_code}) (client=#{inspect(client_name)})",
+                    client: client_name
+                  )
 
-                [tuple_data] ->
-                  data = metadata_tuple_to_map(tuple_data)
+                  {acc_tp_ids, acc_any_new}
 
-                  max_partition =
-                    topic.partitions
-                    |> Enum.map(fn p_data -> p_data.partition_index end)
-                    |> Enum.max()
+                true ->
+                  new_acc_tp_ids = [{topic.topic_id, topic.name} | acc_tp_ids]
 
-                  new_data? = [
-                    data.leader_id != partition.leader_id,
-                    data.topic_id != topic.topic_id,
-                    data.max_partition != max_partition
-                  ]
+                  key = {topic.name, partition.partition_index}
 
-                  if Enum.any?(new_data?) do
-                    :ok = upsert_metadata(state, topic, partition)
-                    {new_acc_tp_ids, true}
-                  else
-                    {new_acc_tp_ids, acc_any_new}
+                  case :ets.lookup(table_name, key) do
+                    [] ->
+                      :ok = upsert_metadata(state, topic, partition)
+                      {new_acc_tp_ids, true}
+
+                    [tuple_data] ->
+                      data = metadata_tuple_to_map(tuple_data)
+
+                      max_partition =
+                        topic.partitions
+                        |> Enum.map(fn p_data -> p_data.partition_index end)
+                        |> Enum.max()
+
+                      new_data? = [
+                        data.leader_id != partition.leader_id,
+                        data.topic_id != topic.topic_id,
+                        data.max_partition != max_partition
+                      ]
+
+                      if Enum.any?(new_data?) do
+                        :ok = upsert_metadata(state, topic, partition)
+                        {new_acc_tp_ids, true}
+                      else
+                        {new_acc_tp_ids, acc_any_new}
+                      end
                   end
               end
           end

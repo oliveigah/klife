@@ -211,6 +211,8 @@ defmodule Klife.Consumer.Committer do
     end
   end
 
+  @error_codes_to_wait [25, 16, 113]
+
   def handle_info(
         {:async_broker_response, req_ref, binary_resp, M.OffsetCommit = msg_mod, msg_version},
         %GenBatcher{user_state: %__MODULE__{} = state} =
@@ -249,15 +251,23 @@ defmodule Klife.Consumer.Committer do
                   error_code: ec
                 )
 
-                {:retry, batch_item}
+                {:retry, batch_item, ec}
             end
           end
 
-        to_retry =
-          Enum.filter(result, fn e -> match?({:retry, _}, e) end)
-          |> Enum.map(fn {:retry, batch_item} -> batch_item end)
+        {to_retry, sleep?} =
+          case Enum.filter(result, fn e -> match?({:retry, _, _ec}, e) end) do
+            [] ->
+              {[], false}
 
-        {:noreply, complete_dispatch(batcher_state, req_ref, to_retry)}
+            retry_list ->
+              sleep? =
+                Enum.any?(retry_list, fn {:retry, _item, ec} -> ec in @error_codes_to_wait end)
+
+              {Enum.map(retry_list, fn {:retry, batch_item, _ec} -> batch_item end), sleep?}
+          end
+
+        {:noreply, complete_dispatch(batcher_state, req_ref, to_retry, sleep?)}
     end
   end
 
@@ -275,7 +285,19 @@ defmodule Klife.Consumer.Committer do
         {:noreply, batcher_state}
 
       %Batch{} = batch ->
-        {:noreply, complete_dispatch(batcher_state, req_ref, Map.values(batch.data))}
+        items = Map.values(batch.data)
+
+        for %BatchItem{} = item <- items do
+          Logger.warning(
+            "Commit broker timeout for #{item.topic_name}:#{item.partition} at offset #{item.offset_to_commit}, retrying (client=#{inspect(state.client_name)}, group=#{state.group_id}, broker=#{state.broker_id})",
+            client: state.client_name,
+            group: state.group_id,
+            topic: item.topic_name,
+            partition: item.partition
+          )
+        end
+
+        {:noreply, complete_dispatch(batcher_state, req_ref, items, true)}
     end
   end
 
@@ -288,11 +310,23 @@ defmodule Klife.Consumer.Committer do
         {:noreply, batcher_state}
 
       %Batch{} = batch ->
-        {:noreply, complete_dispatch(batcher_state, req_ref, Map.values(batch.data))}
+        items = Map.values(batch.data)
+
+        for %BatchItem{} = item <- items do
+          Logger.warning(
+            "Commit send error for #{item.topic_name}:#{item.partition} at offset #{item.offset_to_commit}, retrying (client=#{inspect(state.client_name)}, group=#{state.group_id}, broker=#{state.broker_id})",
+            client: state.client_name,
+            group: state.group_id,
+            topic: item.topic_name,
+            partition: item.partition
+          )
+        end
+
+        {:noreply, complete_dispatch(batcher_state, req_ref, items, true)}
     end
   end
 
-  defp complete_dispatch(%GenBatcher{} = batcher_state, req_ref, to_retry) do
+  defp complete_dispatch(%GenBatcher{} = batcher_state, req_ref, to_retry, sleep? \\ false) do
     %GenBatcher{user_state: %__MODULE__{} = state} = batcher_state
 
     batcher_state =
@@ -309,6 +343,16 @@ defmodule Klife.Consumer.Committer do
 
     new_user_state = %__MODULE__{state | requests: Map.delete(state.requests, req_ref)}
 
+    # This probaly isnt the best approach, but the intent here is to avoid massive retries
+    # during broker restarts (ec=16) or epoch bumps (ec=113)
+    #
+    # Ideally we should wait for proper coordinator changes or epoch updates before
+    # retrying again, but it's not clear how to implement this now. Since this is an
+    # edge case I think it is ok to sleep a second here!
+    if sleep? do
+      Process.sleep(Enum.random(500..1500))
+    end
+
     %GenBatcher{new_state | user_state: new_user_state}
   end
 
@@ -319,7 +363,7 @@ defmodule Klife.Consumer.Committer do
         %GenBatcher{user_state: %__MODULE__{} = state} = batcher_state
       ) do
     # Needs to complete all in flight requests so we do not need to wait
-    # for a timeout from a pontentially dead coordinator.
+    # for a timeout from a pontentially dead coordinator. And retry everything
     %GenBatcher{user_state: %__MODULE__{} = updated_state} =
       batcher_state =
       Enum.reduce(state.requests, batcher_state, fn {req_ref, %Batch{} = batch}, acc ->

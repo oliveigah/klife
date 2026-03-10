@@ -108,7 +108,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   def revoke_assignment(client_name, cg_mod, topic_id, partition, cg_name) do
     client_name
     |> get_process_name(cg_mod, topic_id, partition, cg_name)
-    |> GenServer.call(:assignment_revoked, 15_000)
+    |> GenServer.call(:assignment_revoked, 5_000)
   end
 
   def revoke_assignment_async(client_name, cg_mod, topic_id, partition, cg_name) do
@@ -284,7 +284,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         # only after the commit happens.
         # Ideally we should wait for the commits before fully removing
         # this consumer from the consumer group, but it is not clear
-        # how to proper implement it right now
+        # how to proper implement it right now.
+        # This problem may cause records to be processed twice unecessarly
         {parsed_user_result, usr_opts} =
           case cg_mod.handle_record_batch(topic_name, partition_idx, cg_name, rec_batch) do
             [_ | _] = result -> {result, []}
