@@ -172,7 +172,7 @@ defmodule Simulator.Engine.EventExecutor do
     state = %{state | pending_rollbacks: remaining}
 
     state =
-      if :rand.uniform() >= @event_threshold do
+      if System.get_env("FORCE_STABLE") != "true" and :rand.uniform() >= @event_threshold do
         available_actions = filter_available_actions(@actions, state)
 
         if available_actions != [] do

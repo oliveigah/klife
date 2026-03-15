@@ -264,7 +264,7 @@ defmodule Simulator.Engine do
   defp do_check_invariants(%__MODULE__{} = state) do
     config = state.config
     now = System.monotonic_time(:millisecond)
-    lag_threshold = :timer.seconds(100)
+    lag_threshold = config.invariant_check_loop_lag_threshold
 
     for %{topic: t} <- config.topics,
         p <- 0..(Map.fetch!(state.partition_counts, t) - 1) do
@@ -299,7 +299,7 @@ defmodule Simulator.Engine do
 
           lag = current_count - consumed_recs
 
-          if lag >= 15 do
+          if lag >= config.producer_max_rps do
             Logger.info(
               "Invariant check lag: topic=#{t} partition=#{p} group=#{cgname} produced=#{current_count} consumed=#{consumed_recs} lag=#{lag}"
             )
@@ -579,19 +579,21 @@ defmodule Simulator.Engine do
     cond do
       duplicated_message? ->
         # It is not possible to guarantee that wont have any duplicated records
-        # during failure scenarios. So lets just log it now, and not include it
-        # as an invariant violation!
-        #
-        # :ok =
-        #   insert_violation(:consumed_duplicate, %{
-        #     consumer_group: cg_name,
-        #     topic: rec.topic,
-        #     partition: rec.partition,
-        #     duplicated_offset: rec.offset
-        #   })
-        Logger.warning(
-          "Duplicated record offset #{rec.offset} consumed by group #{cg_name} for topic #{rec.topic} partition #{rec.partition}"
-        )
+        # during failure scenarios. So we can only count it as a invariant when
+        # we are forcing a stable envrionment (no user raises, no broker restarts)
+        if System.get_env("FORCE_STABLE") == "true" do
+          :ok =
+            insert_violation(:consumed_duplicate, %{
+              consumer_group: cg_name,
+              topic: rec.topic,
+              partition: rec.partition,
+              duplicated_offset: rec.offset
+            })
+        else
+          Logger.warning(
+            "Duplicated record offset #{rec.offset} consumed by group #{cg_name} for topic #{rec.topic} partition #{rec.partition}"
+          )
+        end
 
       not expected_record? ->
         :ok =

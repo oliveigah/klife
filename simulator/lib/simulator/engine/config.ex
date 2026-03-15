@@ -15,7 +15,10 @@ defmodule Simulator.EngineConfig do
     :record_key_bytes,
     :invariants_check_interval_ms,
     :root_seed,
-    :random_seeds_map
+    :random_seeds_map,
+    :consumer_raise_threshold,
+    :consumer_retry_threshhold,
+    :invariant_check_loop_lag_threshold
   ]
 
   def generate_config do
@@ -44,7 +47,10 @@ defmodule Simulator.EngineConfig do
       :record_value_bytes,
       :record_key_bytes,
       :invariants_check_interval_ms,
-      :random_seeds_map
+      :random_seeds_map,
+      :consumer_raise_threshold,
+      :consumer_retry_threshhold,
+      :invariant_check_loop_lag_threshold
     ]
 
     Enum.reduce(config_keys, %__MODULE__{}, fn key, acc_config ->
@@ -126,6 +132,30 @@ defmodule Simulator.EngineConfig do
 
   defp random_value(:topics_replication_factor, _config) do
     2
+  end
+
+  defp random_value(:consumer_raise_threshold, _config) do
+    if System.get_env("FORCE_STABLE") == "true" do
+      1.01
+    else
+      Enum.random([0.999, 0.9999, 0.99999])
+    end
+  end
+
+  defp random_value(:consumer_retry_threshhold, _config) do
+    if System.get_env("FORCE_STABLE") == "true" do
+      1.01
+    else
+      0.99
+    end
+  end
+
+  defp random_value(:invariant_check_loop_lag_threshold, _config) do
+    if System.get_env("FORCE_STABLE") == "true" do
+      :timer.seconds(5)
+    else
+      :timer.seconds(100)
+    end
   end
 
   defp random_value(:consumer_groups, _config) do
@@ -231,7 +261,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value(:producer_concurrency, _config) do
-    Enum.random(5..20)
+    Enum.random(1..20)
   end
 
   defp random_value(:producer_loop_interval_ms, _config) do

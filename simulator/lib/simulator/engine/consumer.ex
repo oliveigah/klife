@@ -116,8 +116,13 @@ defmodule Simulator.Engine.Consumer do
   end
 
   def handle_record_batch(t, p, gn, recs, cg_mod, consumer_idx) do
-    should_fail_some? = :rand.uniform() >= 0.99
-    should_raise? = :rand.uniform() >= 0.999
+    %EngineConfig{
+      consumer_raise_threshold: consumer_raise_threshold,
+      consumer_retry_threshhold: consumer_retry_threshhold
+    } = Engine.get_config()
+
+    should_fail_some? = :rand.uniform() >= consumer_retry_threshhold
+    should_raise? = :rand.uniform() >= consumer_raise_threshold
 
     if should_raise? do
       key = rand_state_key(t, p, gn, consumer_idx)
