@@ -129,7 +129,10 @@ defmodule Simulator.Engine do
   end
 
   def start_link(args) do
-    ts = ("_" <> (DateTime.utc_now() |> DateTime.to_iso8601())) |> String.slice(0..19)
+    ts =
+      (("_" <> (DateTime.utc_now() |> DateTime.to_iso8601()))
+       |> String.slice(0..19)) <> "_" <> Base.encode16(:rand.bytes(2))
+
     :persistent_term.put(:simulation_timestamp, ts)
 
     case System.get_env("RERUN_TS") do
