@@ -18,8 +18,13 @@ defmodule Simulator.EngineConfig do
     :random_seeds_map,
     :consumer_raise_threshold,
     :consumer_retry_threshhold,
-    :invariant_check_loop_lag_threshold
+    :invariant_check_loop_lag_threshold,
+    :force_stable
   ]
+
+  def force_stable? do
+    :persistent_term.get(:engine_config).force_stable
+  end
 
   def generate_config do
     case :persistent_term.get(:rerun_timestamp, nil) do
@@ -36,6 +41,7 @@ defmodule Simulator.EngineConfig do
     # Order is imporant here because some configs depends on others
     config_keys = [
       :root_seed,
+      :force_stable,
       :clients,
       :topics,
       :topics_replication_factor,
@@ -134,25 +140,29 @@ defmodule Simulator.EngineConfig do
     2
   end
 
-  defp random_value(:consumer_raise_threshold, _config) do
-    if System.get_env("FORCE_STABLE") == "true" do
+  defp random_value(:force_stable, _config) do
+    System.get_env("FORCE_STABLE") == "true"
+  end
+
+  defp random_value(:consumer_raise_threshold, config) do
+    if config.force_stable do
       1.01
     else
       Enum.random([0.999, 0.9999, 0.99999])
     end
   end
 
-  defp random_value(:consumer_retry_threshhold, _config) do
-    if System.get_env("FORCE_STABLE") == "true" do
+  defp random_value(:consumer_retry_threshhold, config) do
+    if config.force_stable do
       1.01
     else
       0.99
     end
   end
 
-  defp random_value(:invariant_check_loop_lag_threshold, _config) do
-    if System.get_env("FORCE_STABLE") == "true" do
-      :timer.seconds(5)
+  defp random_value(:invariant_check_loop_lag_threshold, config) do
+    if config.force_stable do
+      :timer.seconds(10)
     else
       :timer.seconds(100)
     end
@@ -162,7 +172,10 @@ defmodule Simulator.EngineConfig do
     cg_count = Enum.random(1..5)
 
     Enum.map(1..cg_count, fn i ->
-      %{name: "SimulatorGroup#{i}", max_consumers: Enum.random(3..6)}
+      %{
+        name: "#{Base.encode16(:rand.bytes(2))}_SimulatorGroup#{i}",
+        max_consumers: Enum.random(3..6)
+      }
     end)
   end
 

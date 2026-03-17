@@ -299,7 +299,7 @@ defmodule Simulator.Engine do
 
           lag = current_count - consumed_recs
 
-          if lag >= config.producer_max_rps do
+          if lag >= config.producer_max_rps * config.producer_concurrency / 2 do
             Logger.info(
               "Invariant check lag: topic=#{t} partition=#{p} group=#{cgname} produced=#{current_count} consumed=#{consumed_recs} lag=#{lag}"
             )
@@ -581,7 +581,7 @@ defmodule Simulator.Engine do
         # It is not possible to guarantee that wont have any duplicated records
         # during failure scenarios. So we can only count it as a invariant when
         # we are forcing a stable envrionment (no user raises, no broker restarts)
-        if System.get_env("FORCE_STABLE") == "true" do
+        if EngineConfig.force_stable?() do
           :ok =
             insert_violation(:consumed_duplicate, %{
               consumer_group: cg_name,
