@@ -1,0 +1,4 @@
+{68, :too_much_lag, %{partition: 0, consumer_group: "9BB3_SimulatorGroup5", topic: "8983C0780DE6CB399B7D01664B9686109C2C65D61E2392780C13D60C6E03", oldest_offset: 15, oldest_time_diff_ms: 16397}}
+{68, :too_much_lag, %{partition: 1, consumer_group: "9BB3_SimulatorGroup5", topic: "00C99E3321C618CE4225FDC25AE636C3B382CB2977A5F696BEDA192ED1BB", oldest_offset: 12, oldest_time_diff_ms: 18400}}
+{68, :too_much_lag, %{partition: 7, consumer_group: "9BB3_SimulatorGroup5", topic: "5F18181C59D4E6C9F2C479F14FEAF1308253CB15C379775E355789846286", oldest_offset: 21, oldest_time_diff_ms: 18357}}
+{63, :too_much_lag, %{partition: 2, consumer_group: "9BB3_SimulatorGroup5", topic: "8983C0780DE6CB399B7D01664B9686109C2C65D61E2392780C13D60C6E03", oldest_offset: 18, oldest_time_diff_ms: 18704}}

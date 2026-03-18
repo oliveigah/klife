@@ -1,0 +1,1 @@
+2026-03-17 06:35:37 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.TLSClient0, group_name: "041A_SimulatorGroup4"}
