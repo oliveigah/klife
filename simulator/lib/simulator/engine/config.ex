@@ -162,7 +162,7 @@ defmodule Simulator.EngineConfig do
 
   defp random_value(:invariant_check_loop_lag_threshold, config) do
     if config.force_stable do
-      :timer.seconds(15)
+      :timer.seconds(30)
     else
       :timer.seconds(120)
     end

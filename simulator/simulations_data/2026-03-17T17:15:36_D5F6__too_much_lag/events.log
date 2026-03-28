@@ -1,2 +1,0 @@
-2026-03-17 14:16:34 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient0, group_name: "7549_SimulatorGroup1"}
-2026-03-17 14:16:34 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient2, group_name: "F573_SimulatorGroup2"}

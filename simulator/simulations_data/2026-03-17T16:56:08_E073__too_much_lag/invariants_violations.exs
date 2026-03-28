@@ -1,2 +1,0 @@
-{295, :too_much_lag, %{partition: 0, topic: "87E3780523FEAAB7E38FC594D578E8D9C4EDFDFDDCBDB85F39631E7016F2", consumer_group: "70BD_SimulatorGroup1", oldest_offset: 537, oldest_time_diff_ms: 20416}}
-{290, :too_much_lag, %{partition: 0, topic: "87E3780523FEAAB7E38FC594D578E8D9C4EDFDFDDCBDB85F39631E7016F2", consumer_group: "70BD_SimulatorGroup1", oldest_offset: 537, oldest_time_diff_ms: 15414}}

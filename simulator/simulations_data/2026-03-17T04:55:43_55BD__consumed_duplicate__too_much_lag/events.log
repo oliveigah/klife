@@ -1,5 +1,0 @@
-2026-03-17 01:56:25 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient1, group_name: "4338_SimulatorGroup4"}
-2026-03-17 01:56:25 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient3, group_name: "4338_SimulatorGroup4"}
-2026-03-17 01:56:35 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient2, group_name: "0D56_SimulatorGroup2"}
-2026-03-17 01:56:36 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient5, group_name: "0D56_SimulatorGroup2"}
-2026-03-17 01:56:36 [recovery] restart_consumer_group %{cg_mod: Simulator.Engine.Consumer.NormalClient0, group_name: "A7C1_SimulatorGroup5"}

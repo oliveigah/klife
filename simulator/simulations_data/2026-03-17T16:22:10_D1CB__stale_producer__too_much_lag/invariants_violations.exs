@@ -1,7 +1,0 @@
-{121, :stale_producer, %{partition: 9, topic: "6B71FB614E7E2C41D3EC98E26D2C866889DDE583992D6A88AB216ECF68C3", consecutive_occurrences: 22, current_count: 1, last_count: 1}}
-{121, :stale_producer, %{partition: 2, topic: "ECA340DA66FBF51F04DC007FD3E6043E70FFD4B99EB1E3CB9AC04216749C", consecutive_occurrences: 21, current_count: 3, last_count: 3}}
-{126, :stale_producer, %{partition: 9, topic: "6B71FB614E7E2C41D3EC98E26D2C866889DDE583992D6A88AB216ECF68C3", consecutive_occurrences: 23, current_count: 1, last_count: 1}}
-{126, :stale_producer, %{partition: 2, topic: "ECA340DA66FBF51F04DC007FD3E6043E70FFD4B99EB1E3CB9AC04216749C", consecutive_occurrences: 22, current_count: 3, last_count: 3}}
-{111, :stale_producer, %{partition: 9, topic: "6B71FB614E7E2C41D3EC98E26D2C866889DDE583992D6A88AB216ECF68C3", consecutive_occurrences: 20, current_count: 1, last_count: 1}}
-{116, :stale_producer, %{partition: 9, topic: "6B71FB614E7E2C41D3EC98E26D2C866889DDE583992D6A88AB216ECF68C3", consecutive_occurrences: 21, current_count: 1, last_count: 1}}
-{116, :stale_producer, %{partition: 2, topic: "ECA340DA66FBF51F04DC007FD3E6043E70FFD4B99EB1E3CB9AC04216749C", consecutive_occurrences: 20, current_count: 3, last_count: 3}}

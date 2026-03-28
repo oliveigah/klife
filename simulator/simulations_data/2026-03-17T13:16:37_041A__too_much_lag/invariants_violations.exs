@@ -1,3 +1,0 @@
-{205, :too_much_lag, %{partition: 4, consumer_group: "D522_SimulatorGroup2", topic: "0F56810C2D31F2E9AE25BDA50C5957FEF2BC7D34A5DF0F020741E36FB97A", oldest_offset: 2605, oldest_time_diff_ms: 16230}}
-{205, :too_much_lag, %{partition: 9, consumer_group: "D522_SimulatorGroup2", topic: "0F56810C2D31F2E9AE25BDA50C5957FEF2BC7D34A5DF0F020741E36FB97A", oldest_offset: 2769, oldest_time_diff_ms: 16666}}
-{205, :too_much_lag, %{partition: 0, consumer_group: "D522_SimulatorGroup2", topic: "B1BB0C375BED12E51AE6F24180D5CD722F7A16EE001EF7B75CF7706A5444", oldest_offset: 17998, oldest_time_diff_ms: 15357}}

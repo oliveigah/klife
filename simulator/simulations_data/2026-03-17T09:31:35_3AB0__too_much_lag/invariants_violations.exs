@@ -1,1 +1,0 @@
-{24, :too_much_lag, %{partition: 5, consumer_group: "CC71_SimulatorGroup4", topic: "BD85707D2062B7605237D7F1CE401FB3638DDB90B77A90BE6E000E4F69D9", oldest_offset: 1, oldest_time_diff_ms: 15011}}
