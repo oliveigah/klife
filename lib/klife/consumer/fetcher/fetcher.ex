@@ -1,15 +1,4 @@
 defmodule Klife.Consumer.Fetcher do
-  use GenServer
-
-  import Klife.ProcessRegistry, only: [via_tuple: 1]
-
-  alias Klife.Connection.Controller, as: ConnController
-  alias Klife.Consumer.Fetcher.Batcher
-
-  alias Klife.MetadataCache
-
-  alias Klife.PubSub
-
   @fetcher_opts [
     name: [
       type: {:or, [:atom, :string]},
@@ -54,12 +43,6 @@ defmodule Klife.Consumer.Fetcher do
       doc:
         "The maximum amount of time the fetcher will wait for a broker response to a request before considering it as failed."
     ],
-    isolation_level: [
-      type: {:in, [:read_committed, :read_uncommitted]},
-      default: :read_committed,
-      doc:
-        "Define if the consumers of the consumer group will receive uncommitted transactional records"
-    ],
     max_wait_ms: [
       type: :non_neg_integer,
       default: 0,
@@ -68,13 +51,137 @@ defmodule Klife.Consumer.Fetcher do
     ]
   ]
 
+  @moduledoc """
+  Defines a fetcher.
+
+  A fetcher is responsible for batching and sending fetch requests to Kafka brokers. Klife groups
+  all topic-partitions that share the same broker leader into the same fetcher batcher,
+  so most requests are sent as a single batched TCP call per broker, maximizing network efficiency.
+
+  Fetchers are configured as part of `Klife.Client` setup. Most users interact with fetchers
+  indirectly through a `Klife.Consumer.ConsumerGroup`, which manages offset tracking, rebalancing,
+  and dispatching under the hood. The consumer group creates or shares fetchers according to its
+  `:fetch_strategy` configuration, see the `Klife.Consumer.ConsumerGroup` docs for details.
+
+  For advanced use cases that require full control over offset management and partition assignment
+  (i.e. standalone consumers), fetchers can also be used directly through the `Klife.Client` fetch API.
+  This gives you the same building blocks that the consumer group uses internally.
+
+  ## Client configurations
+
+  #{NimbleOptions.docs(@fetcher_opts)}
+
+  ## How many fetchers?
+
+  By default, all fetch requests use a single default fetcher configured with standard settings,
+  maximizing batch efficiency.
+
+  There are two main reasons to consider using multiple fetchers:
+
+  - Different configurations for specific topics: Some topics may benefit from unique settings. You can assign topics with similar needs
+  to the same fetcher.
+
+  - Fault isolation: Each fetcher has an independent request pipeline. Using multiple fetchers
+  can prevent issues in one topic from affecting fetch latency of others.
+
+  Consider this scenario:
+
+  ```md
+  - A fetcher batches fetch requests for topics A and B into a single request to the broker leader.
+  - For some reason, topic B is temporarily unavailable and the broker responds slowly.
+  - Because both topics share the same batcher pipeline, fetch responses for topic A are delayed
+    waiting on topic B's slow response.
+  ```
+
+  If this presents a potential issue for your use case, consider creating multiple fetchers
+  and dedicating some of them to critical topics. However, note that this may slightly reduce
+  batch efficiency in normal operation.
+
+  ## Batchers count
+
+  Each fetcher starts a configurable number of batchers for each broker in the Kafka cluster.
+  Topic-partitions with the same leader are managed by the same batcher.
+
+  Unlike producers, fetchers default `batchers_count` to `ceil(schedulers_online / known_brokers_count)`
+  rather than 1. This is because fetch responses are typically large and deserialization happens inside
+  the batcher, a single batcher per broker can easily become a CPU bottleneck.
+
+  You may still want to tune this value:
+
+  - Lower values improve batch efficiency at the cost of parallelism.
+  - Higher values improve parallelism but may reduce batch efficiency.
+
+  ## Dynamic batching
+
+  Like the producer, the fetcher uses dynamic batching. Fetch requests that arrive while the
+  batcher is waiting for in-flight responses are automatically accumulated into the next batch.
+  As a result, it is rarely necessary to set `linger_ms` to a value greater than zero.
+
+  Increasing `linger_ms` may be helpful only if you set a high value for `max_in_flight_requests`
+  or if you need to limit request rates to the broker for specific reasons.
+
+  ## Isolation level
+
+  The `isolation_level` is a per-request option passed through the `Klife.Client` fetch API
+  (defaulting to `:read_committed`). It controls whether fetch responses include uncommitted
+  transactional records:
+
+  - `:read_committed`: only returns records from committed transactions. Recommended for most use cases.
+  - `:read_uncommitted`: returns all records, including those from transactions that may later
+  be aborted. Use this only when you need the lowest possible latency and can tolerate
+  reading uncommitted data.
+
+  Each fetcher maintains batchers for both isolation levels, so a single fetcher can serve
+  requests with different isolation levels without any additional configuration.
+
+  ## Filtering fetched records
+
+  Fetch responses may include records you want to skip. For example, records before your
+  starting offset, Kafka control records (transaction markers), or records from aborted
+  transactions. Use `Klife.Record.filter_records/2` to remove them:
+
+  ```elixir
+  {:ok, records} = MyClient.fetch("my_topic", 0, 42)
+
+  filtered =
+    Klife.Record.filter_records(records,
+      base_offset: 42,
+      exclude_control: true,
+      exclude_aborted: true
+    )
+  ```
+
+  See the `Klife.Record` docs for further detail.
+
+  ## Client default fetcher
+
+  If a fetch call is made without specifying a fetcher, the client default fetcher is used.
+  The client default fetcher can be configured as part of the overall `Klife.Client` setup.
+  Refer to `Klife.Client` documentation for more details.
+  """
+
+  @doc false
+  use GenServer
+
+  import Klife.ProcessRegistry, only: [via_tuple: 1]
+
+  alias Klife.Connection.Controller, as: ConnController
+  alias Klife.Consumer.Fetcher.Batcher
+
+  alias Klife.MetadataCache
+
+  alias Klife.PubSub
+
   defstruct Keyword.keys(@fetcher_opts) ++
               [:client_name, :batcher_supervisor, :latest_metadata_sync_ts]
 
+  @doc false
   def get_opts, do: @fetcher_opts
 
+  @doc false
   def default_fetcher_config, do: NimbleOptions.validate!([], @fetcher_opts)
 
+  @doc false
   def start_link(args) do
     client_name = args.client_name
     fetcher_name = args.name
@@ -84,14 +191,17 @@ defmodule Klife.Consumer.Fetcher do
   defp get_process_name(client, fetcher_name),
     do: via_tuple({__MODULE__, client, fetcher_name})
 
+  @doc false
   def fetch(tpo_or_list, client, opts \\ [])
 
+  @doc false
   def fetch({_t, _p, _o} = key, client, opts) do
     [key]
     |> fetch(client, opts)
     |> Map.fetch!(key)
   end
 
+  @doc false
   def fetch(tpo_list, client, opts) when is_list(tpo_list) do
     fetcher = opts[:fetcher] || client.get_default_fetcher()
     iso_level = opts[:isolation_level] || :read_committed
@@ -136,6 +246,7 @@ defmodule Klife.Consumer.Fetcher do
     wait_fetch_response(timeout, length(tpo_list))
   end
 
+  @doc false
   def fetch_async({t, p, o}, client, opts \\ []) do
     fetcher = opts[:fetcher] || client.get_default_fetcher()
     iso_level = opts[:isolation_level] || :read_committed
@@ -214,6 +325,7 @@ defmodule Klife.Consumer.Fetcher do
     end
   end
 
+  @doc false
   @impl true
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
@@ -258,6 +370,7 @@ defmodule Klife.Consumer.Fetcher do
     |> GenServer.call({:sync_metadata_cache, System.monotonic_time()})
   end
 
+  @doc false
   @impl true
   def handle_call({:sync_metadata_cache, ts}, _from, %__MODULE__{} = state) do
     if ts < state.latest_metadata_sync_ts do
@@ -268,6 +381,7 @@ defmodule Klife.Consumer.Fetcher do
     end
   end
 
+  @doc false
   @impl true
   def handle_info(
         {{:metadata_updated, client_name}, _event_data, _callback_data},
@@ -276,6 +390,7 @@ defmodule Klife.Consumer.Fetcher do
     handle_cluster_or_metadata_changes(state)
   end
 
+  @doc false
   def handle_info(
         {{:cluster_change, client_name}, _event_data, _callback_data},
         %__MODULE__{client_name: client_name} = state
@@ -288,6 +403,7 @@ defmodule Klife.Consumer.Fetcher do
     {:noreply, %{state | latest_metadata_sync_ts: System.monotonic_time()}}
   end
 
+  @doc false
   def handle_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.client_name)
     :ok = init_batchers(state, known_brokers)
@@ -358,6 +474,7 @@ defmodule Klife.Consumer.Fetcher do
     )
   end
 
+  @doc false
   def get_batcher_id(client_name, fetcher_name, topic, partition) do
     {__MODULE__, client_name, fetcher_name}
     |> :persistent_term.get()

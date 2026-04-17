@@ -1,4 +1,6 @@
 defmodule Klife.Producer.Murmur2 do
+  @moduledoc false
+
   import Bitwise
 
   @m 0x5BD1E995

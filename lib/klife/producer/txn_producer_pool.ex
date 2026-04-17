@@ -64,19 +64,21 @@ defmodule Klife.TxnProducerPool do
   Once configured, users can interact with these transactional producers through
   the `Klife.Client` transaction API.
 
-
   ## Basic understanding
 
-  Since a single producer can only have a single open transaction at any given time
+  Since a single producer can only have a single open transaction at any given time,
   Klife starts a pool of transactional producers that can be checked out by other
-  processes in order to execute transactions.
+  processes in order to execute transactions. The checkout and checkin are handled
+  automatically by the `Klife.Client` transaction API.
 
   Each transactional producer is a standard `Klife.Producer` but with transactional
   capabilities. The transactional behaviour can be tweaked using its specific configurations.
 
   ## Semantics
 
-  A more practical and guided discussion about transaction semantics can be found on `Klife.Client` transaction API.
+  Transactions provide atomic writes across multiple topics and partitions, either all
+  records in a transaction are committed or none are. A more practical and guided discussion
+  about transaction semantics can be found on the `Klife.Client` transaction API.
 
   """
 

@@ -80,7 +80,7 @@ defmodule Klife.Producer do
       type: :pos_integer,
       default: 1,
       doc:
-        "The number of batchers per broker the producer will start. See `Batchers Count` session for more details."
+        "The number of batchers per broker the producer will start. See `Batchers Count` section for more details."
     ],
     enable_idempotence: [
       type: :boolean,
@@ -99,6 +99,13 @@ defmodule Klife.Producer do
 
   @moduledoc """
   Defines a producer.
+
+  A producer is responsible for batching and sending records to Kafka brokers. Klife groups
+  all topics and partitions that share the same broker leader into the same producer batcher,
+  so most requests are sent as a single batched TCP call per broker, maximizing network efficiency.
+
+  Producers are configured as part of `Klife.Client` setup and interacted with through the client's
+  produce API.
 
   ## Client configurations
 
@@ -161,22 +168,22 @@ defmodule Klife.Producer do
 
   - Records produced by different producers (even if targeting the same topic and partition) may
   be out of order since each producer operates independently and in parallel.
-  - Records produced by a producer with `max_in_flight_requests` > 1 and `enable_idempotence` set to false
+  - Records produced by a producer with `max_in_flight_requests` > 1 and `enable_idempotence` set to `false`
   may be out of order due to network failures and retries.
   - Any records produced by a producer with `max_in_flight_requests` = 1 have guaranteed ordering.
-  - Any records produced by a producer with `enable_idempotence` = true have guaranteed ordering.
+  - Any records produced by a producer with `enable_idempotence` = `true` have guaranteed ordering.
 
   ## Dynamic batching
 
   Klife’s producer uses dynamic batching, which automatically accumulates records that cannot be sent
-  immediately due to in_flight_request limitations. As a result, it is rarely necessary
-  to set linger_ms to a value greater than zero.
+  immediately due to `max_in_flight_requests` limitations. As a result, it is rarely necessary
+  to set `linger_ms` to a value greater than zero.
 
   Typically, increasing `linger_ms` can improve batching efficiency, which benefits high-throughput topics.
   However, if your topic already has high throughput, dynamic batching will likely handle batching
   effectively without adjusting `linger_ms`.
 
-  Increasing linger_ms may be helpful only if you set a very high value for in_flight_request or
+  Increasing `linger_ms` may be helpful only if you set a very high value for `max_in_flight_requests` or
   if you need to limit request rates to the broker for specific reasons.
 
   ## Batchers Count
@@ -194,10 +201,10 @@ defmodule Klife.Producer do
   - `batchers_count` = 1
 
   In this scenario, the application could encounter a performance bottleneck due to having only
-  three batchers handling all record production requests. Increasing parallelism by adjusting `batcher_count`
+  three batchers handling all record production requests. Increasing parallelism by adjusting `batchers_count`
   can help resolve this issue.
 
-  For instance, increasing batcher_count from 1 to 5 would create 15 batchers (5 per broker), potentially improving
+  For instance, increasing `batchers_count` from 1 to 5 would create 15 batchers (5 per broker), potentially improving
   parallelism and CPU utilization.
 
   #### Some caveats:
@@ -205,7 +212,21 @@ defmodule Klife.Producer do
   - The same topic and partition are always handled by the same batcher.
   - Higher batcher counts reduce batch efficiency, which may lower overall throughput.
   - The ideal setting may vary depending on your workload, so it's best to measure and
-  adjust batcher_count based on your specific performance needs.
+  adjust `batchers_count` based on your specific performance needs.
+
+  ## Retries and error handling
+
+  When a produce request fails, the producer automatically retries using the following flow:
+
+  1. A batch is dispatched to the broker. The broker must respond within `request_timeout_ms`
+  2. If the request times out or returns a retryable error, the producer waits `retry_backoff_ms` before retrying.
+  3. Steps 1-2 repeat until the total time since the original send exceeds `delivery_timeout_ms`, at which point remaining records fail with a `:timeout` error.
+
+  Some broker errors are non-retryable. In those cases the affected records are immediately discarded with the corresponding error code, without retrying.
+
+  Since retries happen at the dispatcher level, they interact with `max_in_flight_requests`:
+  a retry occupies an in-flight slot, which may delay other batches waiting to be sent. See the
+  "How many producers?" section for strategies to isolate critical topics from this behavior.
 
   ## Topic default producer
 
@@ -570,6 +591,7 @@ defmodule Klife.Producer do
     end)
   end
 
+  @doc false
   def produce_async([%Record{} | _] = records, client_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
     callback = Keyword.get(opts, :callback)
@@ -758,6 +780,7 @@ defmodule Klife.Producer do
     )
   end
 
+  @doc false
   def get_batcher_id(client_name, producer_name, topic, partition) do
     {__MODULE__, client_name, producer_name}
     |> :persistent_term.get()

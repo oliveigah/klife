@@ -4,48 +4,41 @@
 
 # Klife
 
-Klife is a high-performance Kafka client built from the ground up with minimal dependencies.
-Currently, Klife supports producer functionality, with plans to add consumer features in the future.
+Klife is a modern, ergonomic and high-performance Kafka client built from the ground up with minimal dependencies.
 
-To achieve high batch efficiency and ensure compatibility with evolving protocol versions, Klife
-leverages [Klife Protocol](https://github.com/oliveigah/klife_protocol). This efficiency allows
-Klife to deliver exceptional performance, with throughput improvements of up to 15x over other
-community Kafka clients in some scenarios.
+- **Modern**: Built for today's Kafka. It supports Kafka >= 4.0 and implements the [next generation of the consumer rebalance protocol (KIP-848)](https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol), providing a simpler and more efficient consumer group experience.
 
-## Features
+- **Ergonomic**: Designed to feel natural in Elixir projects (e.g. Ecto-like transactions, `Klife.Record` struct, testing utilities, consumer callbacks, etc.) and also provides capabilities to better handle Kafka workflows like automatic retry counting and batch size limits.
 
-Currently, Klife provides producer functionality, with plans to expand into consumer
-features as the project develops. Key features include:
+- **High Performance**: Batching architecture that delivers exceptional throughput. Most requests destined for the same broker are batched into a single TCP request, maximizing network efficiency. In [benchmarks](benchmarks.md) against other community Kafka clients, this approach has shown massive throughput improvements while minimizing the Kafka cluster resource usage.
 
-- **Efficient Batching**: Batches data to the same broker in a single TCP request per producer.
-- **Minimal Resource Usage**: Only one connection per broker for each client, optimizing resource usage.
-- **Exactly Once Semantics (EOS)**: Providing safe retries with idempotency on the protocol level.
-- **Synchronous and Asynchronous Produce Options**: Synchronous produces return the offset, while asynchronous produces support callbacks.
-- **Batch Produce API**: Allows batching for multiple topics and partitions.
-- **Automatic Cluster and Metadata Management**: Automatically adapts to changes in cluster topology and metadata.
-- **Testing Utilities**: Includes helper functions for testing against a real broker without complex mocking.
-- **Simple Configuration**: Streamlined setup for straightforward use.
-- **Comprehensive Documentation**: Includes examples and explanations of trade-offs.
-- **Custom Partitioner per Topic**: Configurable partitioning for each topic.
-- **Transactional Support**: Supports transactions in an Ecto-like style.
-- **SASL Authentication**: Currently supports plain authentication.
-- **Protocol Compatibility**: Supports recent protocol versions, with forward compatibility in mind.
+## Key Features
 
-## Installation
+- **Consumer Group**: The new [KIP-848 rebalance protocol](https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol) introduced in Kafka 4.0.
+- **Custom Consumer Configuration**: Per-topic consumer settings within the same group.
+- **Static Membership**: Stable consumer identity via `instance_id`.
+- **Backpressure**: Fetch rate naturally regulated by processing speed, with multiple configurable controls.
+- **Graceful Shutdown**: In-flight records are processed and offsets committed before leaving the group.
+- **Direct Fetch**: Fetch a specific topic/partition/offset combinations without consumer coordination.
+- **Batch Produce API**: Produce to multiple topics/partitions in a single call, with sync and async modes.
+- **Custom Partitioner per Topic**: Configurable partitioning strategy for each topic.
+- **Transactional Support**: Ecto-like transaction API for producing records.
+- **Testing Utilities**: Helpers for testing against a real broker without mocking.
+- **SASL Authentication**: Plain authentication support.
 
-### Add `klife` to your list of dependencies in `mix.exs`:
+## Installation and Base setup
+
+### 0. Add `klife` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:klife, "~> 0.5.0"}
+    {:klife, "~> 1.0"}
   ]
 end
 ```
 
-## Basic Usage
-
-### Define your application client
+### 1. Define your application client
 
 ```elixir
 defmodule MyApp.Client do
@@ -53,7 +46,7 @@ defmodule MyApp.Client do
 end
 ```
 
-### Add basic configuration
+### 2. Add basic configuration
 
 ```elixir
 config :my_app, MyApp.Client,
@@ -63,7 +56,9 @@ config :my_app, MyApp.Client,
   ]
 ```
 
-### Add the client to the supervision tree
+Check out the `Klife.Client` [docs](https://hexdocs.pm/klife/Klife.Client.html) for more details regarding configurations!
+
+### 3. Add the client to the supervision tree
 
 ```elixir
 children = [ MyApp.Client ]
@@ -72,88 +67,90 @@ opts = [strategy: :one_for_one, name: Example.Supervisor]
 Supervisor.start_link(children, opts)
 ```
 
-### Call the producer API
+## Produce records
+
+Assuming a proper setup as described above, now you just need to call your client produce API!
 
 ```elixir
 my_rec = %Klife.Record{value: "my_val_1", topic: "my_topic_1"}
-{:ok, %Klife.Record} = MyApp.Client.produce(my_rec)
+{:ok, %Klife.Record{}} = MyApp.Client.produce(my_rec)
+
+# Batch produce across multiple topics and partitions in a single call
+my_recs = [
+  %Klife.Record{value: "val_1", topic: "my_topic_1"},
+  %Klife.Record{value: "val_2", topic: "my_topic_2"}
+]
+[{:ok, %Klife.Record{}}, {:ok, %Klife.Record{}}] = MyApp.Client.produce_batch(my_recs)
 ```
 
-Checkout the `Klife.Client` [docs](https://hexdocs.pm/klife/Klife.Client.html) for more details
+Check out the `Klife.Client` [docs](https://hexdocs.pm/klife/Klife.Client.html) for more details regarding the produce API and the `Klife.Producer` [docs](https://hexdocs.pm/klife/Klife.Producer.html) for configuration options!
 
-## Producer performance
+## Consumer Group
 
-I've test it against the 3 awesome community kafka libraries [brod](https://github.com/kafka4beam/brod)
-and [kafka_ex](https://github.com/kafkaex/kafka_ex) and [erlkaf](https://github.com/silviucpp/erlkaf)
-which are the most popular ones.
+Assuming a proper setup as described above, now you just need to define a Consumer Group module:
 
-The relevant client configuration should be equal on all clients and they are:
+```elixir
+defmodule MyApp.MyConsumerGroup do
+  use Klife.Consumer.ConsumerGroup,
+    client: MyApp.Client,
+    group_name: "my_group_name",
+    topics: [
+      [name: "my_topic_1"],
+      [name: "my_topic_2"]
+    ]
 
-- required_acks: all
-- max_inflight_request: 1
-- linger_ms: 0
-- max_batch_size: 512kb
-
-### Produce sync
-
-In order to test sync produce performance we prepared a benchmark that uses [benchee](https://github.com/bencheeorg/benchee) to produce
-kafka records on kafka cluster running locally.
-
-The details can be checked out on `benchmark.ex` mix task and the results on `bechmark_results`.
-
-To reproduce it on your setup you can run (16 is the benchee parallel value):
-
-```
-bash start-kafka.sh
-mix benchmark producer_sync 16
+  @impl true
+  def handle_record_batch(topic, partition, cg_name, record_list) do
+    Enum.map(record_list, fn %Klife.Record{} = rec ->
+      IO.inspect("Consuming record with offset #{rec.offset} and value #{rec.value}!")
+      {:commit, rec}
+    end)
+  end
+end
 ```
 
-Each iteration of the benchmark produces 3 records for 3 different topics in paralel and wait for the completion
-in order to move to the next iteration.
+and then start it under your supervision tree!
 
-The main point driving the Klife's performance is the batching efficiency. As far as I can tell:
+```elixir
+children = [ MyApp.MyConsumerGroup ]
 
-- Klife: Batches everything that can be batched together in a single TCP request
-- Brod: Batches records only for the same topic/partition in a single TCP request
-- Kafka_ex: Does not batch records (I'm not sure if there is a way to change this behaviour)
-
-With this scenario I've executed the benchmark increasing the `parallel` attribute from
-benchee from 1 to 16, doubling it each round. The results are the following:
-
-![](./assets/producer_sync_benchmark.png "Producer Sync Benchmark Results")
-
-### Produce async
-
-In order to test async produce performance we prepared a test script that produces records asynchronously on
-a kafka cluster running locally.
-
-The asynchronous benchmark spawns N parallel processes producing to one of 3 topics in a loop. After 10 seconds,
-it calculates the difference between the initial and current offsets for each topic partition to determine
-the total records produced and the throughput (records per second).
-
-The details can be checked out on `async_producer_benchmark.ex`.
-
-To reproduce it on your setup you can run (16 is the N value):
-
-```
-bash start-kafka.sh
-mix benchmark producer_async 16
+opts = [strategy: :one_for_one, name: Example.Supervisor]
+Supervisor.start_link(children, opts)
 ```
 
-![](./assets/producer_async_benchmark.png "Producer Async Benchmark Results")
+Check out the `Klife.Consumer.ConsumerGroup` [docs](https://hexdocs.pm/klife/Klife.Consumer.ConsumerGroup.html) for more details regarding the consumer group behaviour and configuration options!
 
-## Compatibility with Kafka versions
+## Reliability
 
-Although `Klife Protocol` give us the capability to support all the latests versions
-for now Klife uses fixed versions of the protocol that are not the latest for each message.
+Klife has been validated through thousands of randomized simulation runs using a dedicated chaos testing framework. Each simulation generates a unique scenario from a vast configuration space randomizing all possible configurations.
 
-I have plans to evolve this slowly as the project grows and I find a good way to deal
-with multiple protocol versions at the same time on the code.
+During each run, the simulator continuously injects failures:
 
-For now the message versions can be checked at `lib/klife/connection/message_versions.ex`
+- **Broker crashes**: Kafka brokers are killed and restarted after random delays
+- **Consumer group kills**: Groups are forcefully terminated and gracefully stopped
+- **Partition expansion**: Partitions are dynamically added to topics mid-simulation
+- **Application-level faults**: Random exceptions and batch processing failures in consumer callbacks
 
-For performance reasons I'm aiming to support only versions after the flexible version that
-were introduced on kafka 2.4 on KIP-482.
+Throughout all of this, the framework asserts three core invariants that must never be violated:
 
-But should not be hard to support versions prior to that, if you are willing to try Klife
-but you use an older version of kafka let me know and we can see if it is possible.
+1. **No duplicate consumption**: Every record is delivered exactly once per consumer group (only possible to ensure on runs without injected failures)
+2. **Ordered delivery**: Offsets within a partition are always consumed in order
+3. **No data loss**: Every produced record is eventually consumed by all subscribed groups
+
+The full simulator source code is available in the `simulator` directory.
+
+## Upgrade from 0.x to 1.x
+
+- **Default partitioner**: The default partitioner changed from `phash2` to `murmur2` to improve compatibility with Kafka standards. To avoid the change, you can define a custom partitioner that uses the old `phash2` behavior.
+- **Default timeout**: Changed from 15s to 30s and can now be configured via the `default_request_timeout_ms` option in the connection configuration.
+- **Record struct default headers**: Now defaults to `[]` instead of `nil`. Pattern matches on the `headers` field may need to be updated accordingly.
+
+## Kafka versions support
+
+The focus of Klife is to support the most recent versions of Kafka (i.e. >= 4.0); all development and testing was performed almost exclusively on these versions.
+
+That said, it is possible to use some features of Klife on older versions. The consumer group feature will not work on older brokers, but for produce-only workflows Klife may still work fine (Kafka versions >= 2.4).
+
+During startup, Klife will emit warning logs for any features that were disabled due to lack of compatibility with the broker. The logs follow the format: `[Name of the feature] feature disabled due...`.
+
+If you attempt to use a disabled feature at runtime, Klife will raise with a descriptive error message.

@@ -2,12 +2,12 @@ defmodule Klife.Testing do
   @moduledoc """
   Testing helper functions.
 
-  In order to test Kafka behaviour on tests we can have 2 approachs:
+  In order to test Kafka behaviour on tests we can have 2 approaches:
 
   - Having a running Kafka broker locally and testing against it
   - Mocking all external calls to the broker
 
-  `Klife.Testing` supports the first approach by offering helper functions in order to
+  `Klife.Testing` supports the first approach by offering helper functions to
   verify if a record with the given list of properties exists in the broker.
 
   You can use it like this:
@@ -30,18 +30,16 @@ defmodule Klife.Testing do
 
   # TODO: Rethink all_produced when consumer system is functional
   @doc """
-  Return a list of `Klife.Record` that match the given filters.
+  Returns a list of `Klife.Record` that match the given filters.
 
-  You can search by 3 fields:
-  - value: binary
-  - key: binary
-  - headers: list of maps %{key: binary, value: binary}
+  You can filter by the following fields:
+  - `value`: binary
+  - `key`: binary
+  - `headers`: list of `%{key: binary, value: binary}` maps
 
-  The semantics between all possible fields is "and". Which means we only return records
-  that have match on all 3 filters if all 3 are available.
-
-  The semantics on the headers list is also "and". Which means we only return records
-  that have match with all headers given on the list.
+  All provided filters are combined with "and" semantics — only records matching
+  every filter are returned. The same applies within the headers list: a record
+  must contain all specified headers to match.
 
   ## Examples
       iex> val = :rand.bytes(1000)
@@ -78,10 +76,10 @@ defmodule Klife.Testing do
   end
 
   @doc """
-  Setup `Klife.Testing`, call it on your `test_helper.exs`.
+  Sets up `Klife.Testing`. Call it in your `test_helper.exs`.
 
-  In order to avoid big searchs on big local running Kafka topics, this setup retrieves
-  all te current latests offsets and stores it to only search after them.
+  Snapshots the latest offset for every topic/partition so that `all_produced/3` only
+  searches records produced after this point, avoiding false matches from pre-existing data.
   """
   def setup(client) do
     metas = MetadataCache.get_all_metadata(client)

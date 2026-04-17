@@ -1,12 +1,12 @@
 defmodule Klife.Behaviours.Partitioner do
   @moduledoc """
-  Behaviour to define a partitioner
+  Behaviour for defining a custom partitioner.
 
   Modules must implement this behaviour in order to be used as partitioners on
   the `Klife.Client` producer API.
   """
   @doc """
-  Define the partition of a given record.
+  Defines the partition for a given record.
 
   Receives the record and the highest known partition for the record's topic.
 

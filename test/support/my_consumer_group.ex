@@ -1,4 +1,6 @@
 defmodule MyConsumerGroup do
+  @moduledoc false
+
   use Klife.Consumer.ConsumerGroup,
     client: MyClient,
     group_name: "consumer_group_test_1",

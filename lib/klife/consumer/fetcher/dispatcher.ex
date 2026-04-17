@@ -6,7 +6,8 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
     :broker_id,
     :batcher_pid,
     :fetcher_config,
-    :rack_id
+    :rack_id,
+    :isolation_level
   ]
 
   use GenServer
@@ -41,7 +42,8 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
       broker_id: args[:broker_id],
       batcher_pid: args[:batcher_pid],
       fetcher_config: args[:fetcher_config],
-      rack_id: args[:rack_id]
+      rack_id: args[:rack_id],
+      isolation_level: args[:iso_lvl]
     }
 
     {:ok, state}
@@ -225,7 +227,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
   defp parse_batch_for_send(%Batcher.Batch{} = batch, %__MODULE__{} = state) do
     iso_lvl =
-      case state.fetcher_config.isolation_level do
+      case state.isolation_level do
         :read_committed -> 1
         :read_uncommitted -> 0
       end

@@ -1,4 +1,6 @@
 defmodule Klife.GenBatcher do
+  @moduledoc false
+
   defstruct [
     :current_batch,
     :current_batch_size,

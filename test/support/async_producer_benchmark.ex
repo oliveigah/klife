@@ -1,5 +1,7 @@
 if Mix.env() in [:dev] do
   defmodule Klife.TestUtils.AsyncProducerBenchmark do
+    @moduledoc false
+
     require Logger
 
     @number_of_records 5_000_000

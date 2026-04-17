@@ -80,16 +80,56 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     #   doc: """
     #   Determines whether producer calls are executed inside a transaction linked to the consumer's offset commit.
 
-    #   * `true` — Producer calls are executed within a transaction. The transaction is committed together with the consumer's offset commit.
+    #   * `true`: Producer calls are executed within a transaction. The transaction is committed together with the consumer's offset commit.
     #     Use this when following a **consume → process → produce** workflow (e.g., Kafka Streams) and you need offsets and produced records to be persisted atomically.
     #     Note: Transactions incur additional overhead, reducing throughput and resource efficiency in exchange for stronger consistency.
 
-    #   * `false` — Producer calls run independently of the consumer. Produced records are not tied to offset commits.
+    #   * `false`: Producer calls run independently of the consumer. Produced records are not tied to offset commits.
     #     This can result in reprocessing of messages or duplicates if commit failures occur. To handle duplicates safely, implement application-level idempotency.
     #     This mode maximizes performance and minimizes resource usage.
     #   """
     # ]
   ]
+
+  @moduledoc """
+  Defines per-topic configuration for a `Klife.Consumer.ConsumerGroup`.
+
+  Each entry in the consumer group's `:topics` list is validated against these options.
+  Topic-level settings override the corresponding group-level defaults when provided
+  (e.g. `fetch_strategy`, `isolation_level`).
+
+  ## Options
+
+  #{NimbleOptions.docs(@opts)}
+
+  ## Fetch strategy override
+
+  By default each topic inherits the consumer group's `fetch_strategy`. Setting it
+  at the topic level creates (or shares) a fetcher exclusively for that topic,
+  which is useful when a single topic has very different throughput or latency
+  requirements from the rest of the group.
+
+  ## Batch size and queue depth
+
+  The `handler_max_batch_size` and `max_queue_size` options work together to control
+  memory usage and processing granularity:
+
+  - With `handler_max_batch_size: :dynamic` (default), the consumer delivers all
+  records from a single fetch response as one batch, and `max_queue_size` defaults
+  to 5.
+  - With a fixed `handler_max_batch_size`, fetched records are chunked into smaller
+  batches, and `max_queue_size` defaults to 20 to compensate for the smaller batches.
+
+  ## Pipelining with `handler_max_unacked_commits`
+
+  Setting `handler_max_unacked_commits` to a value greater than 0 allows the consumer
+  to process new batches while previous commits are still in flight. This increases
+  throughput but means more records may be re-processed after a crash, since uncommitted
+  offsets are lost.
+
+  With the default of `0`, each batch must be fully committed before the next one is
+  processed — the safest option.
+  """
 
   defstruct Keyword.keys(@opts)
 

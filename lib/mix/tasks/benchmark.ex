@@ -543,6 +543,7 @@ if Mix.env() in [:dev] do
   end
 
   defmodule BenchmarkConsumer do
+    @moduledoc false
     require Logger
     use Klife.Consumer.ConsumerGroup, client: MyClient
 
@@ -563,6 +564,7 @@ if Mix.env() in [:dev] do
   end
 
   defmodule BrodBenchmarkConsumer do
+    @moduledoc false
     @behaviour :brod_group_subscriber_v2
 
     def child_spec(config) do

@@ -1,4 +1,6 @@
 defmodule Klife.Consumer.Committer do
+  @moduledoc false
+
   # Unlike fetcher/producer batchers, the committer does not use a separate
   # dispatcher process. Fetcher/producer batchers are tied 1:1 to a broker,
   # so both batcher and dispatcher share the same lifecycle. Here the target
@@ -37,6 +39,8 @@ defmodule Klife.Consumer.Committer do
   ]
 
   defmodule Batch do
+    @moduledoc false
+
     defstruct [
       :data,
       :dispatch_ref
@@ -44,6 +48,8 @@ defmodule Klife.Consumer.Committer do
   end
 
   defmodule BatchItem do
+    @moduledoc false
+
     defstruct [
       :topic_name,
       :partition,

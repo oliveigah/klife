@@ -1,10 +1,5 @@
 defmodule Klife do
-  @moduledoc """
-  Main functions to interact with clients.
-
-  Usually you will not need to call any function here directly
-  but instead use them through a module that uses `Klife.Client`.
-  """
+  @moduledoc false
 
   alias Klife.Record
   alias Klife.Producer
@@ -45,12 +40,34 @@ defmodule Klife do
     ]
   ]
 
+  @fetch_opts [
+    fetcher: [
+      type: :atom,
+      required: false,
+      doc: "Fetcher's name that will override the `default_fetcher` configuration."
+    ],
+    isolation_level: [
+      type: {:in, [:read_committed, :read_uncommitted]},
+      required: false,
+      doc:
+        "Controls whether the fetch response includes uncommitted transactional records. Defaults to `:read_committed`."
+    ],
+    max_bytes: [
+      type: :non_neg_integer,
+      required: false,
+      doc:
+        "Maximum number of bytes to return per fetch request. Defaults to `100_000` for `fetch/4` and `500_000` for `fetch_async/4`."
+    ]
+  ]
+
   @doc false
   def get_produce_opts(), do: @produce_opts
   @doc false
   def get_txn_opts(), do: @txn_opts
   @doc false
   def get_async_opts(), do: @async_opts
+  @doc false
+  def get_fetch_opts(), do: @fetch_opts
 
   @doc false
   def produce(%Record{} = record, client, opts \\ []) do
@@ -122,13 +139,6 @@ defmodule Klife do
     TxnProducerPool.run_txn(client, get_txn_pool(client, opts), fun)
   end
 
-  def fetch_one(topic, partition, offset, client, opts \\ []) do
-    case fetch(topic, partition, offset, client, Keyword.put(opts, :max_bytes, 1)) do
-      {:ok, list_of_recs} -> List.first(list_of_recs)
-      err -> err
-    end
-  end
-
   def fetch(topic, partition, offset, client, opts \\ []) do
     tpo = {topic, partition, offset}
     Fetcher.fetch(tpo, client, opts)
@@ -136,6 +146,12 @@ defmodule Klife do
 
   def fetch(tpo_list, client, opts) when is_list(tpo_list) do
     Fetcher.fetch(tpo_list, client, opts)
+  end
+
+  @doc false
+  def fetch_async(topic, partition, offset, client, opts \\ []) do
+    tpo = {topic, partition, offset}
+    Fetcher.fetch_async(tpo, client, opts)
   end
 
   defp get_txn_pool(client, opts) do

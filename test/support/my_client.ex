@@ -1,6 +1,4 @@
 defmodule MyClient do
-  @moduledoc """
-  Example test client
-  """
+  @moduledoc false
   use Klife.Client, otp_app: :klife
 end

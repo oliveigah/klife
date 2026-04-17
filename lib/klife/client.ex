@@ -117,11 +117,10 @@ defmodule Klife.Client do
   >
   > When you `use Klife.Client`, it will extend your module in two ways:
   >
-  > - Define it as a proxy to a subset of the functions on `Klife` module,
-  > using it's module's name as the `client_name` parameter.
-  > One example of this is the `MyClient.produce/2` that forwards
-  > both arguments to `Klife.produce/3` and inject `MyClient` as the
-  > second argument.
+  > - Define it as a proxy to a subset of the functions on Klife module,
+  > using its module name as the `client_name` parameter.
+  > One example of this is `MyApp.MyClient.produce/2` that forwards
+  > both arguments to the same function and injects `MyApp.MyClient` as an argument.
   >
   > - Define it as a supervisor by calling `use Supervisor` and implementing
   > some related functions such as `start_link/1` and `init/1`, so it can be
@@ -194,6 +193,34 @@ defmodule Klife.Client do
   ```elixir
   rec = %Klife.Record{value: "some_val", topic: "my_topic_1"}
   {:ok, %Klife.Record{offset: offset, partition: partition}} = MyClient.produce(rec)
+  ```
+
+  ## Consumer API overview
+
+  For continuous consumption of records, the recommended approach is to use
+  `Klife.Consumer.ConsumerGroup`. It handles partition assignment, offset
+  tracking, rebalancing, and fault tolerance automatically. See the
+  `Klife.Consumer.ConsumerGroup` docs for details.
+
+  The client also exposes lower-level fetch functions `fetch/4`, `fetch/2`, and
+  `fetch_async/4`, for cases where a full consumer group is not needed. These are
+  intended for standalone use: one-off reads, backfilling, debugging, or any
+  workflow where you manage offsets yourself.
+
+  The fetch functions return `Klife.Record` structs, the same data structure used
+  throughout the producer API. Each returned record is fully enriched with all the
+  relevant data available.
+
+  ```elixir
+  # Fetch a batch of records starting at a given offset
+  {:ok, records} = MyClient.fetch("my_topic_1", 0, 42)
+
+  # Fetch from multiple topic/partition/offset combinations in one request
+  tpo_list = [{"my_topic_1", 0, 42}, {"my_topic_2", 3, 0}]
+  %{{"my_topic_1", 0, 42} => {:ok, _}} = MyClient.fetch(tpo_list)
+
+  # Async fetch — result delivered as a message to the calling process
+  {:ok, _pid} = MyClient.fetch_async("my_topic_1", 0, 42)
   ```
   """
 
@@ -433,6 +460,108 @@ defmodule Klife.Client do
   @callback produce_batch_txn(list_of_records, opts :: Keyword.t()) ::
               {:ok, list_of_records} | {:error, list_of_records}
 
+  @doc group: "Consumer API"
+  @doc """
+  Fetch records from a single topic/partition starting at the given offset.
+
+  Returns an `{:ok, list_of_records}` tuple where the list contains all records
+  available from `offset` up to `max_bytes` worth of data. Returns `{:error, reason}`
+  on failure.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_fetch_opts())}
+
+  ## Examples
+      iex> rec1 = %Klife.Record{value: "val_1", topic: "my_topic_1", partition: 0}
+      iex> rec2 = %Klife.Record{value: "val_2", topic: "my_topic_1", partition: 0}
+      iex> [{:ok, %Klife.Record{offset: o1}}, {:ok, _}] = MyClient.produce_batch([rec1, rec2])
+      iex> {:ok, records} = MyClient.fetch("my_topic_1", 0, o1)
+      iex> [%Klife.Record{value: "val_1"}, %Klife.Record{value: "val_2"}] = records
+
+  """
+  @callback fetch(
+              topic :: String.t(),
+              partition :: non_neg_integer(),
+              offset :: non_neg_integer(),
+              opts :: Keyword.t()
+            ) :: {:ok, list_of_records} | {:error, any()}
+
+  @doc group: "Consumer API"
+  @doc """
+  Fetch records from multiple topic/partition/offset combinations in a single request.
+
+  Accepts a list of `{topic, partition, offset}` tuples and returns a map where
+  each key is the input `{topic, partition, offset}` tuple and the value is an
+  `{:ok, list_of_records}` or `{:error, reason}` tuple.
+
+  This is more efficient than calling [`fetch/4`](c:fetch/4) multiple times in a loop
+  because requests targeting the same broker are automatically batched into a single
+  TCP request.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_fetch_opts())}
+
+  ## Examples
+      iex> rec1 = %Klife.Record{value: "val_1", topic: "my_topic_1"}
+      iex> rec2 = %Klife.Record{value: "val_2", topic: "my_topic_2"}
+      iex> [{:ok, %Klife.Record{offset: o1, partition: p1}}, {:ok, %Klife.Record{offset: o2, partition: p2}}] = MyClient.produce_batch([rec1, rec2])
+      iex> tpo_list = [{"my_topic_1", p1, o1}, {"my_topic_2", p2, o2}]
+      iex> %{{"my_topic_1", ^p1, ^o1} => {:ok, resp1}, {"my_topic_2", ^p2, ^o2} => {:ok, resp2}} = MyClient.fetch(tpo_list)
+      iex> [%Klife.Record{value: "val_1"}] = resp1
+      iex> [%Klife.Record{value: "val_2"}] = resp2
+
+  """
+  @callback fetch(
+              tpo_list ::
+                list(
+                  {topic :: String.t(), partition :: non_neg_integer(),
+                   offset :: non_neg_integer()}
+                ),
+              opts :: Keyword.t()
+            ) :: %{
+              {String.t(), non_neg_integer(), non_neg_integer()} =>
+                {:ok, list_of_records} | {:error, any()}
+            }
+
+  @doc group: "Consumer API"
+  @doc """
+  Sends an asynchronous fetch request for a single topic/partition/offset.
+
+  Returns `{:ok, pid}` where `pid` is the batcher process handling the request, or
+  `{:error, reason}` if the request could not be enqueued.
+
+  The result is delivered as a message to the calling process in the form:
+
+      {:klife_fetch_response, {topic, partition, offset}, {:ok, records} | {:error, reason}}
+
+  This is useful for building standalone consumers or any process that needs non-blocking
+  fetch semantics — the same primitive that `Klife.Consumer.ConsumerGroup` uses internally.
+
+  ## Options
+
+  #{NimbleOptions.docs(Klife.get_fetch_opts())}
+
+  ## Examples
+
+      iex> {:ok, %Klife.Record{partition: p, offset: o}} = MyClient.produce(%Klife.Record{value: "async_val", topic: "my_topic_1"})
+      iex> {:ok, _pid} = MyClient.fetch_async("my_topic_1", p, o)
+      iex> receive do
+      ...>   {:klife_fetch_response, {"my_topic_1", ^p, ^o}, {:ok, records}} ->
+      ...>     [%Klife.Record{value: "async_val"} | _] = records
+      ...> after
+      ...>   5_000 -> raise "timeout"
+      ...> end
+
+  """
+  @callback fetch_async(
+              topic :: String.t(),
+              partition :: non_neg_integer(),
+              offset :: non_neg_integer(),
+              opts :: Keyword.t()
+            ) :: {:ok, pid()} | {:error, any()}
+
   defmacro __using__(opts) do
     input_opts = @input_options
 
@@ -498,15 +627,25 @@ defmodule Klife.Client do
       @spec transaction(function(), opts :: list() | nil) :: any()
       def transaction(fun, opts \\ []), do: Klife.transaction(fun, __MODULE__, opts)
 
-      # TODO: Add spec
-      def fetch_one(topic, partition, offset, opts \\ []),
-        do: Klife.fetch_one(topic, partition, offset, __MODULE__, opts)
-
+      @spec fetch(String.t(), non_neg_integer(), non_neg_integer(), opts :: list()) ::
+              {:ok, list(Record.t())} | {:error, any()}
       def fetch(topic, partition, offset, opts \\ []),
         do: Klife.fetch(topic, partition, offset, __MODULE__, opts)
 
+      @spec fetch(
+              list({String.t(), non_neg_integer(), non_neg_integer()}),
+              opts :: list()
+            ) :: %{
+              {String.t(), non_neg_integer(), non_neg_integer()} =>
+                {:ok, list(Record.t())} | {:error, any()}
+            }
       def fetch(tpo_list, opts \\ []),
         do: Klife.fetch(tpo_list, __MODULE__, opts)
+
+      @spec fetch_async(String.t(), non_neg_integer(), non_neg_integer(), opts :: list()) ::
+              {:ok, pid()} | {:error, any()}
+      def fetch_async(topic, partition, offset, opts \\ []),
+        do: Klife.fetch_async(topic, partition, offset, __MODULE__, opts)
     end
   end
 

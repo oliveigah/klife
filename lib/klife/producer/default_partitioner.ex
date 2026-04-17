@@ -4,8 +4,8 @@ defmodule Klife.Producer.DefaultPartitioner do
 
   Uses the following logic:
 
-  - if record key is `nil` than defines a random partition
-  - if record key is not `nil` than define a partition using Kafka's Murmur2 hash
+  - if record key is `nil` then assigns a random partition
+  - if record key is not `nil` then assigns a partition using Kafka's Murmur2 hash
 
   This ensures that records with the same key are assigned to the same partition
   regardless of whether they are produced by klife or any other compliant Kafka client

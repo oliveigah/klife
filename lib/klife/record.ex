@@ -2,22 +2,34 @@ defmodule Klife.Record do
   @moduledoc """
   Kafka record representation.
 
-  Represents a Kafka record struct that will be used in the `Klife.Client` APIs.
+  Represents a Kafka record struct used across all `Klife.Client` APIs for
+  both producer and consumer.
 
-  In general terms it can be used to represent input or output data.
+  ## Producer API
 
-  As an input the `Klife.Record` may have the following attributes:
+  When used as input to a produce call, the following fields are relevant:
   - `:value` (required)
   - `:topic` (required)
   - `:key` (optional)
-  - `:headers` (optional)
-  - `:partition` (optional)
+  - `:headers` (optional, defaults to `[]`)
+  - `:partition` (optional, if omitted, the configured partitioner will assign one)
 
-  As an output the input record will be added with one or more the following attributes:
-  - `:offset` (if it was succesfully written)
-  - `:partition` (if it was not present in the input)
-  - `:error_code` (if something goes wrong on produce. See [kafka protocol error code](https://kafka.apache.org/11/protocol.html#protocol_error_codes) for context)
-  - `:batch_attributes` (record batch attributes byte data. See [kafka protocol attributes](https://kafka.apache.org/documentation/#recordbatch) )
+  On success, the returned record is enriched with:
+  - `:offset`: the offset assigned by the broker
+  - `:partition`: the partition the record was written to (if not provided as input)
+  - `:error_code`: set on failure (see [Kafka protocol error codes](https://kafka.apache.org/11/protocol.html#protocol_error_codes))
+
+  ## Consumer API
+
+  Records returned by the fetch functions or delivered to a consumer group
+  callback are fully populated structs. In addition to the fields listed above,
+  the following are also set:
+  - `:batch_attributes`: metadata about the record batch (see [Kafka protocol record batch](https://kafka.apache.org/documentation/#recordbatch))
+  - `:is_aborted`: `true` if the record belongs to an aborted transaction
+  - `:consumer_attempts`: number of times this record has been delivered to a
+    consumer callback (starts at `0`, incremented on each retry by the consumer group).
+    This is a best-effort, in-memory counter. It may be reset to `0` after rebalances
+    or unexpected crashes
   """
   defstruct [
     :key,
@@ -96,6 +108,7 @@ defmodule Klife.Record do
     80 + get_size(record.value) + get_size(record.key) + get_size(record.headers)
   end
 
+  @doc false
   def parse_from_protocol(t, p, record_batch, opts \\ []) do
     base_offset = record_batch[:base_offset]
     record_list = Enum.with_index(record_batch[:records])
@@ -116,6 +129,21 @@ defmodule Klife.Record do
     end)
   end
 
+  @doc """
+  Filters a list of `Klife.Record` structs returned by the fetch API.
+
+  Useful when working with the standalone fetch functions
+  to remove records that are not relevant to your application logic.
+
+  ## Options
+
+  - `:base_offset` - Drop all records with an offset strictly less than this value.
+    Defaults to `-1` (no records dropped).
+  - `:exclude_control` - When `true`, removes internal Kafka control records
+    (e.g. transaction markers). Defaults to `false`.
+  - `:exclude_aborted` - When `true`, removes records that belong to aborted
+    transactions. Defaults to `false`.
+  """
   def filter_records(rec_list, opts \\ []) do
     base_offset = opts[:base_offset] || -1
     exclude_control = opts[:exclude_control] || false

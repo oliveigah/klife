@@ -27,6 +27,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       doc: "The name of the klife client to be used by the consumer group"
     ],
     topics: [
+      type_doc: "List of ` Klife.Consumer.ConsumerGroup.TopicConfig` configurations",
       type: {:list, {:keyword_list, TopicConfig.get_opts()}},
       required: true,
       doc: "List of topic configurations that will be handled by the consumer group"
@@ -53,8 +54,6 @@ defmodule Klife.Consumer.ConsumerGroup do
       Fetch strategy for this topic. Can be either:
       - `{:exclusive, fetcher_options}` - Will create an exclusive fetcher to be used for this consumer group
       - `{:shared, fetcher_name}` - Will use a pre existing fetcher that will batch requests from different sources
-
-      Defaults to `{:shared, Client.default_fetcher}`
       """
     ],
     committers_count: [
@@ -69,6 +68,362 @@ defmodule Klife.Consumer.ConsumerGroup do
         "Define if the consumers of the consumer group will receive uncommitted transactional records"
     ]
   ]
+
+  @moduledoc """
+  Defines a consumer group.
+
+  A consumer group coordinates the consumption of records across one or more topics,
+  handling partition assignment, offset tracking, rebalancing, and fault tolerance
+  automatically. It uses the Kafka consumer group protocol (KIP-848) to distribute
+  partitions among members of the group.
+
+  Consumer groups are the recommended way to consume records from Kafka with Klife.
+  For lower-level, standalone consumption see the `Klife.Client` fetch API and
+  `Klife.Consumer.Fetcher`.
+
+  > #### `use Klife.Consumer.ConsumerGroup` {: .info}
+  >
+  > When you `use Klife.Consumer.ConsumerGroup`, it will extend your module to:
+  >
+  > - Implement a GenServer that manages the consumer group lifecycle (heartbeats,
+  > rebalancing, consumer start/stop).
+  > - Require implementing the callbacks defined below for handling records
+  > (mandatory) and lifecycle events (optional).
+  >
+  > The `:client` option is required at compile time:
+  >
+  > ```elixir
+  > use Klife.Consumer.ConsumerGroup, client: MyApp.MyClient
+  > ```
+
+  ## Getting started
+
+  Define a consumer group module, implement `handle_record_batch/4`, and start it
+  under your application's supervision tree:
+
+  ```elixir
+  defmodule MyApp.MyConsumerGroup do
+    use Klife.Consumer.ConsumerGroup,
+      client: MyApp.MyClient,
+      group_name: "my_group",
+      topics: [
+        [name: "orders"],
+        [name: "events", offset_reset_policy: :earliest]
+      ]
+
+    @impl true
+    def handle_record_batch(_topic, _partition, _group_name, records) do
+      Enum.map(records, fn record ->
+        # process record...
+        {:commit, record}
+      end)
+    end
+  end
+  ```
+
+  Then add it to your supervision tree:
+
+  ```elixir
+  children = [
+    MyApp.MyClient,
+    MyApp.MyConsumerGroup
+  ]
+  ```
+
+  With default settings, this consumer group will:
+
+  - Process records one batch at a time, waiting for each commit to complete before processing
+  the next batch (no duplicate risk from pipelining).
+  - Start from the latest offset when no previous commit exists (new partitions skip
+  existing data).
+  - Use an exclusive fetcher with default settings.
+  - Only deliver records from committed transactions (`isolation_level: :read_committed`).
+
+  ## Consumer group configurations
+
+  #{NimbleOptions.docs(@consumer_group_opts)}
+
+  ## Topic configurations
+
+  Each topic in the `:topics` list accepts its own set of options for controlling
+  fetch behavior, batch sizes, cooldowns, and offset management.
+
+  See the `Klife.Consumer.ConsumerGroup.TopicConfig` docs for the full list of
+  topic-level options.
+
+  ## Consistency guarantees
+
+  The consumer group provides the following guarantees:
+
+  - **No record is ever skipped.** Records are delivered in offset order within a
+  partition. If a record fails and is retried, no subsequent record from that
+  partition will be delivered until the retry succeeds.
+  - **At-least-once delivery.** After a crash, the consumer restarts from the last
+  committed offset, which means some records may be delivered again.
+
+  The number of duplicate deliveries after a crash depends directly on how many
+  records were processed but not yet committed. Three configurations control this:
+
+  1. **`handler_max_unacked_commits: 0`** (default) — the consumer waits for each
+  batch's offset to be committed before processing the next one. After a crash,
+  at most one batch of records may be re-delivered. This is the safest setting.
+
+  2. **`handler_max_unacked_commits: N`** (N > 0) — the consumer can process up to
+  N additional batches while previous commits are still in flight. This pipelines
+  processing and committing for higher throughput, but after a crash all uncommitted
+  batches are re-delivered. For example, with `handler_max_unacked_commits: 3` the
+  consumer can be up to 4 batches ahead of the last commit, so a crash could
+  re-deliver up to 4 batches.
+
+  3. **`committers_count`** — controls how many committer processes handle offset
+  commits. Topic-partitions are distributed evenly across committers. A single
+  committer (default) means all partitions share one commit pipeline, so a slow
+  commit for one partition delays commits for others. Increasing `committers_count`
+  adds parallelism but the impact on duplicates is indirect: faster commits mean
+  less time for the gap between processed and committed to grow.
+
+  If your application cannot tolerate duplicates, implement idempotent processing
+  in your `handle_record_batch/4` callback (e.g. using a unique key per record to
+  deduplicate on the consumer side).
+
+  ### Per-record retry and offset advancement
+
+  When using per-record return values (`{:commit, record}` / `{:retry, record}`),
+  the committed offset advances to the **last committed record** in the batch. Retried
+  records are re-delivered in the next batch before any new records.
+
+  Consider this scenario:
+
+  ```md
+  - Batch contains records at offsets [10, 11, 12, 13, 14]
+  - Handler returns: [{:commit, 10}, {:commit, 11}, {:retry, 12}, {:commit, 13}, {:commit, 14}]
+  - Offset 14 is committed (the highest committed record)
+  - Record 12 is re-delivered in the next batch with an incremented `consumer_attempts` counter
+  ```
+
+  This means that if the consumer crashes before record 12 is successfully processed,
+  it will restart from offset 15 (since 14 was committed) and record 12 will be lost.
+  Use per-record retry only when you are comfortable with this trade-off, for example
+  when retried records are also written to a dead-letter topic on repeated failure.
+
+  If you need to guarantee that record 12 is never lost, return `:retry` for the
+  entire batch instead — this will not advance the offset and all records will be
+  re-delivered.
+
+  ## Performance tuning
+
+  The default configuration prioritizes safety: one batch at a time, wait for commit,
+  then process the next batch. For high-throughput workloads, several options can be
+  tuned to increase performance at the cost of more duplicates after crashes.
+
+  ### Pipelining processing and commits
+
+  Set `handler_max_unacked_commits` to a value greater than 0 to allow the consumer to
+  continue processing while previous commits are in flight. The consumer will process up
+  to `handler_max_unacked_commits` additional batches ahead of the last confirmed commit.
+
+  ```elixir
+  topics: [
+    [name: "events", handler_max_unacked_commits: 5]
+  ]
+  ```
+
+  This is the single most impactful setting for throughput. A value of 5 is a good
+  starting point for workloads where occasional duplicates are acceptable.
+
+  ### Controlling batch sizes
+
+  The `handler_max_batch_size` and `fetch_max_bytes` options together control how much
+  data is delivered per callback invocation:
+
+  - `fetch_max_bytes` controls how much data the fetcher requests from the broker per
+  partition. Larger values mean fewer fetch round-trips. Must be lower than the
+  fetcher's `max_bytes_per_request`.
+
+  - `handler_max_batch_size: :dynamic` (default) delivers all records from a single
+  fetch response as one batch. This minimizes per-batch overhead and is best for
+  most workloads.
+
+  - `handler_max_batch_size: N` (positive integer) chunks fetched records into batches
+  of at most N records. Use this when your handler logic has a natural batch size limit
+  (e.g. a database bulk insert that accepts at most 1000 rows).
+
+  With `:dynamic`, `max_queue_size` defaults to 5. With a fixed batch size, it defaults
+  to 20 to compensate for the smaller batches.
+
+  ### Reducing fetch idle time
+
+  The consumer pre-fetches the next batch when the internal queue drops to 3 or fewer
+  entries. Two options control the timing:
+
+  - `fetch_interval_ms` (default: 1000) — how long to wait before retrying when a fetch
+  returns no records. Empty fetches use a progressive backoff up to this value: the first
+  empty response waits `fetch_interval_ms / 10`, the second `fetch_interval_ms / 5`, and
+  so on up to `fetch_interval_ms` after 10 consecutive empty responses. Lower values
+  reduce latency for bursty topics at the cost of more broker requests during idle periods.
+
+  - `max_queue_size` — the maximum number of record batches the consumer can buffer.
+  Higher values let the consumer pre-fetch more aggressively, reducing the chance of
+  the queue draining completely. But larger queues also mean more records in memory and
+  a longer gap between fetched and committed data.
+
+  ### Handler cooldown
+
+  `handler_cooldown_ms` (default: 0) adds a fixed delay between processing cycles. This
+  is rarely needed, but can be useful to throttle processing rate — for example, if your
+  handler calls a rate-limited external API.
+
+  The cooldown can also be dynamically overridden for one cycle by returning `callback_opts`
+  from `handle_record_batch/4`. This enables backoff strategies:
+
+  ```elixir
+  def handle_record_batch(_topic, _partition, _group_name, records) do
+    case process(records) do
+      :ok -> :commit
+      :transient_error -> {:retry, handler_cooldown_ms: 5_000}
+    end
+  end
+  ```
+
+  ## Fetch strategy
+
+  The `fetch_strategy` option controls how the consumer group fetches records from
+  Kafka. It can be set at the group level and overridden per topic.
+
+  - `{:exclusive, fetcher_options}` (default) — creates a dedicated `Klife.Consumer.Fetcher`
+  for this consumer group (or topic). The consumer group's fetch traffic is fully isolated
+  from other consumers and standalone fetch calls. This is the default because consumer
+  groups typically have predictable, continuous fetch patterns that benefit from dedicated
+  resources.
+
+  - `{:shared, fetcher_name}` — uses a pre-existing fetcher configured in the
+  `Klife.Client`. Multiple consumer groups (or standalone consumers) sharing
+  the same fetcher benefit from better batch efficiency since their requests
+  are combined into fewer TCP calls. This is useful when you have many consumer
+  groups with low throughput and want to minimize the number of fetcher processes.
+
+  When overriding at the topic level, the topic gets its own dedicated fetcher even if the
+  group uses a shared one. This is useful when a single topic has very different throughput
+  or latency requirements from the rest of the group.
+
+  See the `Klife.Consumer.Fetcher` docs for the available fetcher options and their
+  trade-offs.
+
+  ## Static membership
+
+  By default, each time a consumer group process restarts it gets a new member identity.
+  Kafka sees this as a new member joining and triggers a rebalance, which reassigns all
+  partitions across the group — even if the same partitions end up assigned to the same
+  members.
+
+  Setting `instance_id` enables static membership (KIP-345). When a consumer restarts
+  with the same `instance_id`, Kafka recognizes it as the same member and skips the
+  rebalance. This significantly reduces partition shuffling during rolling deployments:
+
+  ```elixir
+  use Klife.Consumer.ConsumerGroup,
+    client: MyApp.MyClient,
+    group_name: "my_group",
+    instance_id: "my-app-instance-1",
+    topics: [[name: "orders"]]
+  ```
+
+  For deployments with multiple instances, each instance must have a unique `instance_id`.
+  A common pattern is to derive it from the hostname or pod name.
+
+  ## Isolation level
+
+  The `isolation_level` option controls whether records from uncommitted transactions
+  are delivered to the handler:
+
+  - `:read_committed` (default) — only delivers records from committed transactions.
+  Records from aborted transactions are automatically filtered out.
+  - `:read_uncommitted` — delivers all records, including those from transactions that
+  may later be aborted. Use this only when you need the lowest possible latency and
+  your handler can tolerate processing records that were never committed by the producer.
+
+  This can be overridden per topic via the topic-level `isolation_level` option in
+  `Klife.Consumer.ConsumerGroup.TopicConfig`.
+  """
+
+  @type action :: :commit | :retry
+
+  @type callback_opts :: [
+          {:handler_cooldown_ms, non_neg_integer()}
+        ]
+
+  @doc """
+  Called for each batch of records delivered to the consumer.
+
+  Receives the topic name, partition, group name, and a list of `Klife.Record` structs.
+  The return value controls what happens with the records.
+
+  ## Batch-level control
+
+  Return a single action to apply to the entire batch:
+
+  - `:commit` — commits all records in the batch.
+  - `:retry` — retries the entire batch.
+  - `{action, callback_opts}` — same as above, with options.
+
+  ## Per-record control
+
+  Return a list of `{action, record}` tuples for fine-grained control. Records
+  tagged with `:commit` have their offsets advanced; records tagged with `:retry`
+  are re-delivered in the next batch.
+
+  ```elixir
+  def handle_record_batch(_topic, _partition, _group_name, records) do
+    Enum.map(records, fn record ->
+      case process(record) do
+        :ok -> {:commit, record}
+        :error -> {:retry, record}
+      end
+    end)
+  end
+  ```
+
+  ## Callback options
+
+  Both batch-level and per-record return values can be wrapped in a tuple with
+  `callback_opts` as the second element. The available options:
+
+  - `handler_cooldown_ms`: overrides the topic-level `handler_cooldown_ms` for the
+    next processing cycle only. Useful for implementing backoff on transient failures.
+  """
+  @callback handle_record_batch(
+              topic :: String.t(),
+              partition :: integer,
+              group_name :: String.t(),
+              list(Klife.Record.t())
+            ) ::
+              action
+              | {action, callback_opts}
+              | list({action, Klife.Record.t()})
+              | {list({action, Klife.Record.t()}), callback_opts}
+
+  @doc """
+  Called when a consumer process is started for a topic-partition after assignment.
+  """
+  @callback handle_consumer_start(
+              topic :: String.t(),
+              partition :: integer,
+              group_name :: String.t()
+            ) :: :ok
+
+  @doc """
+   Called when a consumer process is stopped for a topic-partition (due to revocation,
+   shutdown, or crash). The revocation reason is
+   `{:shutdown, {:assignment_revoked, topic_id, partition_index}}`.
+  """
+  @callback handle_consumer_stop(
+              topic :: String.t(),
+              partition :: integer,
+              group_name :: String.t(),
+              reason :: term
+            ) :: :ok
+
+  @optional_callbacks [handle_consumer_start: 3, handle_consumer_stop: 4]
 
   defstruct Keyword.keys(@consumer_group_opts) ++
               [
@@ -97,7 +452,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     quote bind_quoted: [opts: opts] do
       use GenServer
 
-      @behaviour Klife.Behaviours.ConsumerGroup
+      @behaviour Klife.Consumer.ConsumerGroup
 
       def klife_client(), do: unquote(opts[:client])
 

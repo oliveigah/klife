@@ -24,28 +24,37 @@ defmodule Klife.MixProject do
       ],
       docs: [
         main: "readme",
-        assets: "assets",
+        assets: %{"assets" => "assets"},
         extras: [
           "README.md",
+          "benchmarks.md",
           "guides/examples/client_configuration.md"
         ],
         groups_for_extras: [
           Examples: Path.wildcard("guides/examples/*.md")
         ],
         groups_for_docs: [
+          groups_for_docs("Consumer API"),
           groups_for_docs("Producer API"),
-          groups_for_docs("Transaction API")
+          groups_for_docs("Transaction API"),
+          groups_for_docs("Behaviours")
         ],
         groups_for_modules: [
           Client: [Klife.Client, Klife.Topic, Klife.Record],
+          Fetcher: [
+            Klife.Consumer.Fetcher
+          ],
+          "Consumer Group": [
+            Klife.Consumer.ConsumerGroup,
+            Klife.Consumer.ConsumerGroup.TopicConfig
+          ],
           Producer: [
             Klife.Producer,
             Klife.Producer.DefaultPartitioner,
-            Klife.TxnProducerPool
+            Klife.TxnProducerPool,
+            Klife.Behaviours.Partitioner
           ],
-          Testing: [Klife.Testing],
-          Behaviours: [Klife.Behaviours.Partitioner],
-          Example: [MyClient]
+          Testing: [Klife.Testing]
         ]
       ]
     ]

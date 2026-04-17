@@ -1,4 +1,6 @@
 defmodule Klife.Helpers do
+  @moduledoc false
+
   def with_timeout!(fun, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_with_timeout!(deadline, fun)
