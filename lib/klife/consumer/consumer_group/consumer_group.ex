@@ -51,9 +51,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       type: {:custom, __MODULE__, :validate_fetch_strategy, []},
       default: {:exclusive, []},
       doc: """
-      Fetch strategy for this topic. Can be either:
-      - `{:exclusive, fetcher_options}` - Will create an exclusive fetcher to be used for this consumer group
-      - `{:shared, fetcher_name}` - Will use a pre existing fetcher that will batch requests from different sources
+      Define the fetcher strategy for this group.
+      - `{:exclusive, fetcher_options}` - Will create an exclusive fetcher to be used for this consumer group, all topics that does not explicitly
+      set a new fetch strategy will reuse this fetcher.
+      - `{:shared, fetcher_name}` - Will use a pre existing fetcher, all topics that does not explicitly set a new fetch strategy will reuse this fetcher.
+
+      Defaults to shared, sharing the client's default fetcher
       """
     ],
     committers_count: [
