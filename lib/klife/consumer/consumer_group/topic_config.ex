@@ -91,49 +91,11 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     # ]
   ]
 
-  @moduledoc """
-  Defines per-topic configuration for a `Klife.Consumer.ConsumerGroup`.
-
-  Each entry in the consumer group's `:topics` list is validated against these options.
-  Topic-level settings override the corresponding group-level defaults when provided
-  (e.g. `fetch_strategy`, `isolation_level`).
-
-  ## Options
-
-  #{NimbleOptions.docs(@opts)}
-
-  ## Fetch strategy override
-
-  By default each topic inherits the consumer group's `fetch_strategy`. Setting it
-  at the topic level creates (or shares) a fetcher exclusively for that topic,
-  which is useful when a single topic has very different throughput or latency
-  requirements from the rest of the group.
-
-  ## Batch size and queue depth
-
-  The `handler_max_batch_size` and `max_queue_size` options work together to control
-  memory usage and processing granularity:
-
-  - With `handler_max_batch_size: :dynamic` (default), the consumer delivers all
-  records from a single fetch response as one batch, and `max_queue_size` defaults
-  to 5.
-  - With a fixed `handler_max_batch_size`, fetched records are chunked into smaller
-  batches, and `max_queue_size` defaults to 20 to compensate for the smaller batches.
-
-  ## Pipelining with `handler_max_unacked_commits`
-
-  Setting `handler_max_unacked_commits` to a value greater than 0 allows the consumer
-  to process new batches while previous commits are still in flight. This increases
-  throughput but means more records may be re-processed after a crash, since uncommitted
-  offsets are lost.
-
-  With the default of `0`, each batch must be fully committed before the next one is
-  processed — the safest option.
-  """
-
   defstruct Keyword.keys(@opts)
 
   def get_opts, do: @opts
+
+  def get_opts_for_group, do: Keyword.drop(@opts, [:name])
 
   def from_map(map, cg_data) do
     to_merge = Map.take(map, Keyword.keys(@opts))
@@ -149,6 +111,8 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       end
     end)
     |> Map.update!(:fetch_strategy, fn v ->
+      # At this point the consumer group fetch strategy is already parsed to
+      # a name instead of a configuration, so it is safe to just reuse its value
       if v == nil, do: cg_data.fetch_strategy, else: v
     end)
   end
