@@ -27,7 +27,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       doc: "The name of the klife client to be used by the consumer group"
     ],
     topics: [
-      type_doc: "List of ` Klife.Consumer.ConsumerGroup.TopicConfig` configurations",
+      type_doc: "List of `Klife.Consumer.ConsumerGroup.TopicConfig` configurations",
       type: {:list, {:keyword_list, TopicConfig.get_opts()}},
       required: true,
       doc: "List of topic configurations that will be handled by the consumer group"
@@ -56,14 +56,18 @@ defmodule Klife.Consumer.ConsumerGroup do
     # it would start a new fetcher for every topic on the group.
     fetch_strategy: [
       type: {:custom, __MODULE__, :validate_fetch_strategy, []},
-      default: {:exclusive, []},
+      type_doc: "`{:exclusive, fetcher_options}` or `{:shared, fetcher_name}`",
       doc: """
-      Define the fetcher strategy for this group.
-      - `{:exclusive, fetcher_options}` - Will create an exclusive fetcher to be used for this consumer group, all topics that does not explicitly
-      set a new fetch strategy will reuse this fetcher.
-      - `{:shared, fetcher_name}` - Will use a pre existing fetcher, all topics that does not explicitly set a new fetch strategy will reuse this fetcher.
+      Defines which `Klife.Consumer.Fetcher` is used by topics in this group that
+      do not override the strategy in their own `Klife.Consumer.ConsumerGroup.TopicConfig`.
 
-      Defaults to shared, sharing the client's default fetcher
+      - `{:exclusive, fetcher_options}`: starts a new fetcher dedicated to this group.
+        `fetcher_options` follows `Klife.Consumer.Fetcher` configuration (`:name` is
+        managed automatically and cannot be set here).
+      - `{:shared, fetcher_name}`: reuses an existing fetcher (one already started
+        by the client). All topics that do not override their strategy share it.
+
+      Defaults to `{:shared, <client default fetcher>}`.
       """
     ],
     committers_count: [
@@ -77,9 +81,184 @@ defmodule Klife.Consumer.ConsumerGroup do
       keys: Klife.Consumer.ConsumerGroup.TopicConfig.get_opts_for_group(),
       default: [],
       doc:
-        "Topic configuration that will serve as default for every topic on the group that does not explicitly set it. If not specified anywhere, the topic config common default will be used."
+        "`Klife.Consumer.ConsumerGroup.TopicConfig` that will serve as default for every topic on the group that does not explicitly set it."
     ]
   ]
+
+  @moduledoc """
+  Defines a consumer group.
+
+  A consumer group coordinates the consumption of one or more topics across a set
+  of cooperating member processes. Klife implements the new
+  [KIP-848 rebalance protocol](https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol)
+  introduced in Kafka 4.0, so partition assignment, heartbeats, and rebalances are
+  handled by the broker coordinator and do not require any user-managed state machine.
+
+  Each `use Klife.Consumer.ConsumerGroup` defines one consumer group module. The
+  module is started under your supervision tree and, once running, the broker
+  coordinator assigns it topic-partitions. For each assigned partition, the group
+  starts a dedicated consumer process that fetches records and delivers them to
+  your `c:handle_record_batch/4` callback.
+
+  ## Defining a consumer group
+
+  ```elixir
+  defmodule MyApp.MyConsumerGroup do
+    use Klife.Consumer.ConsumerGroup,
+      client: MyApp.MyClient,
+      group_name: "my_group_name",
+      topics: [
+        [name: "my_topic_1"],
+        [name: "my_topic_2"]
+      ]
+
+    @impl true
+    def handle_record_batch(_topic, _partition, _group_name, records) do
+      Enum.each(records, &IO.inspect(&1.value))
+      :commit
+    end
+  end
+  ```
+
+  > #### `use Klife.Consumer.ConsumerGroup` {: .info}
+  >
+  > When you `use Klife.Consumer.ConsumerGroup`, it will extend your module in two ways:
+  >
+  > - Implement the `Klife.Consumer.ConsumerGroup` behaviour, requiring at least
+  > the `c:handle_record_batch/4` callback.
+  >
+  > - Define it as a `GenServer` that runs the consumer group machinery (heartbeats,
+  > assignment handling, fetcher and committer lifecycle) and can be started under
+  > your application's supervision tree.
+
+  All options passed to `use` are merged with the options passed to `start_link/1`,
+  with `start_link/1` arguments taking precedence. This allows the most common
+  configuration to live alongside the module definition while still enabling
+  per-instance overrides at startup time.
+
+  ## Configuration options
+
+  #{NimbleOptions.docs(@consumer_group_opts)}
+
+  ## Topic configuration
+
+  Each entry of `:topics` is a `Klife.Consumer.ConsumerGroup.TopicConfig`. The
+  group's `:default_topic_config` provides defaults applied to every topic that
+  does not explicitly override them:
+
+  ```elixir
+  use Klife.Consumer.ConsumerGroup,
+    client: MyApp.MyClient,
+    group_name: "my_group",
+    default_topic_config: [
+      handler_max_unacked_commits: 100,
+      offset_reset_policy: :earliest
+    ],
+    topics: [
+      [name: "topic_a"],
+      [name: "topic_b", offset_reset_policy: :latest]
+    ]
+  ```
+
+  Above, `topic_a` inherits both defaults, while `topic_b` overrides
+  `:offset_reset_policy` and inherits `:handler_max_unacked_commits`.
+
+  ## Delivery semantics
+
+  Klife provides at-least-once delivery: every record is guaranteed to be
+  delivered to `c:handle_record_batch/4` at least once, but may be delivered
+  more than once after a hard failure (member crash, network split, liveness
+  timeout). Handlers must be idempotent to tolerate duplicates.
+
+  Graceful partition revocation does not cause reprocessing: the consumer
+  waits for every in-flight record to be committed before releasing the
+  partition. Reprocessing only occurs when the consumer is unable to commit
+  before losing the assignment.
+
+  The window of records exposed to reprocessing is bounded by
+  `:handler_max_unacked_commits` (a `TopicConfig` option):
+
+  - `0` (default): each batch must be fully committed before the next is
+  delivered. Reprocessing on failure is limited to the records of the most
+  recent in-flight batch.
+  - `N > 0`: up to `N` processed records may be waiting for commit at any
+  time. This unlocks commit pipelining and higher throughput, but on a hard
+  failure those records may be redelivered.
+
+  ### Retrying records
+
+  Klife's per-record `:commit`/`:retry` control on `c:handle_record_batch/4`
+  is more granular than what Kafka itself tracks: Kafka stores a single
+  committed offset per partition for each consumer group, and on resume the
+  consumer always picks up from there.
+
+  This gap leaves room for a misuse pattern where a batch returns `:commit`
+  for a record and `:retry` for one with a lower offset in the same
+  partition. For example, committing record `2` while asking record `1`
+  to be retried. While the consumer is running, Klife keeps `1` in its
+  in-process queue and re-delivers it on the next cycle. But if the
+  consumer restarts or the partition is revoked before `1` is committed,
+  the broker only knows about the commit of `2`: the retry queue is lost
+  and `1` would be silently skipped. To prevent this, Klife detects the
+  pattern and raises.
+
+  To stay aligned with Kafka semantics, never retry a record whose offset
+  is lower than any record committed in the same batch. When a record
+  fails, choose one of:
+
+  - Retry the failing record together with every successful record after
+  it, accepting that the successful ones will be reprocessed once the
+  failing one eventually succeeds.
+  - Commit the failing record and route it elsewhere (e.g. a dead-letter
+  topic) so processing can move forward.
+
+  ## Fetch strategies
+
+  Every partition consumer fetches records through a `Klife.Consumer.Fetcher`,
+  and which fetcher serves a topic is decided in two layers: the consumer
+  group's `:fetch_strategy` sets a default for all its topics, and any
+  `TopicConfig` can override that default for itself.
+
+  The same two strategies, `{:shared, fetcher_name}` and
+  `{:exclusive, fetcher_options}`, are accepted at both levels, but the
+  *scope* of `:exclusive` differs:
+
+  - `{:exclusive, opts}` at the **group level** starts one new fetcher
+  dedicated to the consumer group. Every topic that does not override the
+  strategy shares it.
+  - `{:exclusive, opts}` at the **topic level** starts one new fetcher
+  dedicated to that single topic, not shared with anything else.
+
+  `{:shared, fetcher_name}` behaves identically at both levels: it reuses an
+  existing fetcher (one already started by the client) for whatever scope it
+  is set on.
+
+  When the group's `:fetch_strategy` is unset, it falls back to
+  `{:shared, <client default fetcher>}`, so topics in the group share the
+  client's default fetcher with every other consumer of it.
+
+  Override at the group level when the entire group needs an isolated fetch
+  pipeline (e.g. its own batchers or `max_bytes_per_request`). Override at
+  the topic level when a single noisy or latency-sensitive topic should not
+  share its fetcher with the rest of the group.
+
+  ## How many committers?
+
+  Offset commits are dispatched by dedicated committer processes shared across
+  the partitions of the group. A single committer is enough for most workloads.
+
+  Before raising `:committers_count`, check whether the apparent bottleneck is
+  committer dispatch or simply commit RTT pacing the handler, see
+  [Tuning for throughput](`m:Klife.Consumer.ConsumerGroup.TopicConfig#tuning-for-throughput`).
+  Raising `:handler_max_unacked_commits` decouples handler cadence from commit
+  latency and resolves most apparent "commit bottleneck" symptoms without
+  adding parallelism.
+
+  Increase `:committers_count` only when the committer process itself can't
+  keep up, typically a group with many actively committing partitions where
+  profiling shows the committer as the bottleneck. This comes at the cost of
+  per-commit batching efficiency, since partitions are split across committers.
+  """
 
   @type action :: :commit | :retry
 
@@ -97,9 +276,9 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   Return a single action to apply to the entire batch:
 
-  - `:commit` — commits all records in the batch.
-  - `:retry` — retries the entire batch.
-  - `{action, callback_opts}` — same as above, with options.
+  - `:commit`: commits all records in the batch.
+  - `:retry`: retries the entire batch.
+  - `{action, callback_opts}`: same as above, with options.
 
   ## Per-record control
 
@@ -107,14 +286,21 @@ defmodule Klife.Consumer.ConsumerGroup do
   tagged with `:commit` have their offsets advanced; records tagged with `:retry`
   are re-delivered in the next batch.
 
+  The list must not commit any record at a higher offset than a retried one
+  in the same batch — Klife raises in that case. See
+  [Retrying records](`m:Klife.Consumer.ConsumerGroup#module-retrying-records`)
+  in the moduledoc for the rationale and safe patterns. The example below
+  applies the standard "stop on first failure" shape:
+
   ```elixir
   def handle_record_batch(_topic, _partition, _group_name, records) do
-    Enum.map(records, fn record ->
-      case process(record) do
-        :ok -> {:commit, record}
-        :error -> {:retry, record}
-      end
-    end)
+    case Enum.split_while(records, fn record -> process(record) == :ok end) do
+      {_ok, []} ->
+        :commit
+
+      {ok, retry} ->
+        Enum.map(ok, &{:commit, &1}) ++ Enum.map(retry, &{:retry, &1})
+    end
   end
   ```
 
@@ -147,9 +333,16 @@ defmodule Klife.Consumer.ConsumerGroup do
             ) :: :ok
 
   @doc """
-   Called when a consumer process is stopped for a topic-partition (due to revocation,
-   shutdown, or crash). The revocation reason is
-   `{:shutdown, {:assignment_revoked, topic_id, partition_index}}`.
+  Called when a consumer process is stopped for a topic-partition.
+
+  The `reason` reflects why the consumer terminated and depends on the trigger:
+
+  - On a partition revocation initiated by the group, the reason is
+    `{:shutdown, {:assignment_revoked, topic_id, partition_index}}`.
+  - On a normal group shutdown, it follows the standard GenServer termination
+    semantics (e.g. `:normal`, `:shutdown`).
+  - On unexpected termination (callback raise, liveness timeout, internal error),
+    it carries the underlying exit reason.
   """
   @callback handle_consumer_stop(
               topic :: String.t(),
@@ -225,8 +418,10 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
+  @doc false
   def get_opts(), do: @consumer_group_opts
 
+  @doc false
   def validate_fetch_strategy({:shared, fetcher_name}) when is_atom(fetcher_name) do
     {:ok, {:shared, fetcher_name}}
   end
@@ -246,6 +441,7 @@ defmodule Klife.Consumer.ConsumerGroup do
      "expected :fetch_strategy to be either {:shared, atom} or {:exclusive, keyword_list}, got: #{inspect(value)}"}
   end
 
+  @doc false
   def start_link(cg_mod, args) do
     args =
       Keyword.put_new(
@@ -289,10 +485,12 @@ defmodule Klife.Consumer.ConsumerGroup do
     via_tuple({__MODULE__, client_name, cg_mod, group_name})
   end
 
+  @doc false
   def get_member_epoch(cg_pid) do
     GenServer.call(cg_pid, :member_epoch)
   end
 
+  @doc false
   def init(mod, args_map) do
     Process.flag(:trap_exit, true)
 
@@ -380,6 +578,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     |> :ets.delete_all_objects()
   end
 
+  @doc false
   def get_coordinator!(%__MODULE__{} = state) do
     content = %{
       key_type: 0,
@@ -433,16 +632,19 @@ defmodule Klife.Consumer.ConsumerGroup do
     Helpers.with_timeout!(fun, state.client_name.get_default_request_timeout_ms() * 2)
   end
 
+  @doc false
   def processing_allowed?(client_name, cg_mod, topic_id, partition, cg_name) do
     client_name
     |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.member({topic_id, partition})
   end
 
+  @doc false
   def handle_member_epoch(%__MODULE__{} = state) do
     {:reply, state.epoch, state}
   end
 
+  @doc false
   def handle_heartbeat(%__MODULE__{} = state) do
     case do_heartbeat(state) do
       {:ok, new_state} ->
@@ -753,6 +955,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     |> Map.new()
   end
 
+  @doc false
   def get_reset_offset(tname_p_list, client, tconfig_map) do
     grouped_by_broker =
       Enum.group_by(
@@ -892,6 +1095,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
+  @doc false
   def handle_consumer_down(%__MODULE__{consumers_monitor_map: cmap} = state, monitor_ref, reason) do
     case Map.get(cmap, monitor_ref) do
       nil ->
@@ -910,6 +1114,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     end
   end
 
+  @doc false
   def handle_terminate(%__MODULE__{} = state, reason) do
     true = unack_all_topic_partitions(state.client_name, state.mod, state.group_name)
 
@@ -966,7 +1171,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     topic_name = MetadataCache.get_topic_name_by_id!(state.client_name, topic_id)
 
     Logger.info(
-      "Assignment revoked #{topic_name}:#{partition} for consumer group #{state.group_name} running module #{state.mod}}",
+      "Assignment revoked #{topic_name}:#{partition} for consumer group #{state.group_name} running module #{state.mod}",
       client: state.client_name,
       group: state.group_name
     )
@@ -1024,7 +1229,7 @@ defmodule Klife.Consumer.ConsumerGroup do
     ref = Process.monitor(pid)
 
     Logger.info(
-      "Assignment received #{topic_name}:#{partition} for consumer group #{state.group_name} running module #{state.mod}}",
+      "Assignment received #{topic_name}:#{partition} for consumer group #{state.group_name} running module #{state.mod}",
       client: state.client_name,
       group: state.group_name
     )

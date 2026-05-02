@@ -7,10 +7,8 @@ defmodule Example.Consumers.SimplestConsumerGroup do
       [name: "my_consumer_topic_2"]
     ]
 
-  alias Klife.Record
-
   @impl true
-  def handle_record_batch(topic, partition, cg_name, record_list) do
+  def handle_record_batch(_topic, _partition, _cg_name, record_list) do
     Enum.map(record_list, fn %Klife.Record{} = rec ->
       IO.inspect("Consuming record with offset #{rec.offset} and value #{rec.value}!")
       {:commit, rec}

@@ -7,8 +7,19 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     ],
     fetch_strategy: [
       type: {:custom, Klife.Consumer.ConsumerGroup, :validate_fetch_strategy, []},
+      type_doc: "`{:exclusive, fetcher_options}` or `{:shared, fetcher_name}`",
       doc: """
-      May override the fetch_strategy defined on the consumer group
+      Overrides the fetch strategy defined at the consumer group level for this topic.
+
+      The override semantics differ slightly from the group-level option:
+
+      - `{:exclusive, fetcher_options}`: starts a new fetcher dedicated to this
+        single topic (not shared with other topics in the group).
+      - `{:shared, fetcher_name}`: uses the given pre-existing fetcher only for
+        this topic.
+
+      If not set, the topic uses the fetcher selected by the consumer group's
+      `:fetch_strategy`.
       """
     ],
     isolation_level: [
@@ -91,12 +102,58 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
     # ]
   ]
 
+  @moduledoc """
+  Defines a topic configuration for a `Klife.Consumer.ConsumerGroup`.
+
+  Each entry of the consumer group's `:topics` option is a `TopicConfig` keyword
+  list, controlling how a single topic is consumed inside the group.
+
+  ## Configuration options
+
+  #{NimbleOptions.docs(@opts)}
+
+  ## Configuration inheritance
+
+  Each option resolves in the following order, from highest to lowest precedence:
+
+  1. The value set directly on the topic entry inside `:topics`.
+  2. The value set on the consumer group's `:default_topic_config`.
+  3. The built-in default shown above.
+
+  ## Tuning for throughput
+
+  Effective throughput is the product of how many records each handler call
+  processes (`:handler_max_batch_size`) and how often the handler runs. With
+  the default `:handler_max_unacked_commits` of `0`, each batch must be fully
+  committed before the next is delivered, so every batch incurs one commit
+  roundtrip to the coordinator. This means small batches under the default
+  commit policy degenerate into one network roundtrip per record.
+
+  Two ways to keep throughput up:
+
+  - Leave `:handler_max_batch_size` as `:dynamic` (the default) or a high value,
+  amortizing the commit roundtrip across many records.
+  - Raise `:handler_max_unacked_commits` when smaller, fixed-size batches are
+  required for memory or latency reasons. The handler keeps processing while
+  a commit is in flight, and pending higher offsets are coalesced into the
+  next commit request, decoupling handler cadence from commit latency.
+
+  `:max_queue_size` caps how many fetched batches the consumer may buffer
+  in-process before throttling further fetches. Its default is paired with
+  `:handler_max_batch_size`: `5` for dynamic batches (each can be large), `20`
+  for fixed-size ones. Override it when you need a tighter memory bound or
+  deeper prefetch.
+  """
+
   defstruct Keyword.keys(@opts)
 
+  @doc false
   def get_opts, do: @opts
 
+  @doc false
   def get_opts_for_group, do: Keyword.drop(@opts, [:name])
 
+  @doc false
   def from_map(map, cg_data) do
     to_merge = Map.take(map, Keyword.keys(@opts))
 

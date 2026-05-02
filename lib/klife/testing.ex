@@ -37,7 +37,7 @@ defmodule Klife.Testing do
   - `key`: binary
   - `headers`: list of `%{key: binary, value: binary}` maps
 
-  All provided filters are combined with "and" semantics — only records matching
+  All provided filters are combined with "and" semantics, only records matching
   every filter are returned. The same applies within the headers list: a record
   must contain all specified headers to match.
 
@@ -227,6 +227,7 @@ defmodule Klife.Testing do
     end)
   end
 
+  @doc false
   def get_latest_offsets(leader_id, metas, client_name) do
     content = %{
       replica_id: -1,

@@ -325,6 +325,21 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
                 topic_name: state.topic_name
               }
 
+              # user response ordering sanity check
+              case to_retry_recs do
+                [] ->
+                  :noop
+
+                retry_list ->
+                  case Enum.find(retry_list, fn retry_rec -> rec.offset > retry_rec.offset end) do
+                    nil ->
+                      :ok
+
+                    invalid_rec ->
+                      raise "handle_record_batch/4 returned :commit for offset #{rec.offset} and :retry for lower offset #{invalid_rec.offset} on #{topic_name}:#{partition_idx}. See `Klife.Consumer.ConsumerGroup` delivery semantics."
+                  end
+              end
+
               :ok =
                 Committer.commit(
                   commit_data,

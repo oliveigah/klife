@@ -363,10 +363,6 @@ defmodule Simulator.EngineConfig do
     weighted_random_opt([{5, base_val}, 1, 2, 4, 8])
   end
 
-  defp random_value({:consumer_group, :isolation_level}, base_val) do
-    weighted_random_opt([{5, base_val}, :read_committed, :read_uncommitted])
-  end
-
   defp random_value({:exclusive_fetcher, :max_wait_ms}, base_val) do
     weighted_random_opt([{5, base_val}, 0, 100, 500, 1000, 5000])
   end

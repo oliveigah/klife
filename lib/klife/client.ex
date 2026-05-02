@@ -219,7 +219,7 @@ defmodule Klife.Client do
   tpo_list = [{"my_topic_1", 0, 42}, {"my_topic_2", 3, 0}]
   %{{"my_topic_1", 0, 42} => {:ok, _}} = MyClient.fetch(tpo_list)
 
-  # Async fetch — result delivered as a message to the calling process
+  # Async fetch result delivered as a message to the calling process
   {:ok, _pid} = MyClient.fetch_async("my_topic_1", 0, 42)
   ```
   """
@@ -537,7 +537,7 @@ defmodule Klife.Client do
       {:klife_fetch_response, {topic, partition, offset}, {:ok, records} | {:error, reason}}
 
   This is useful for building standalone consumers or any process that needs non-blocking
-  fetch semantics — the same primitive that `Klife.Consumer.ConsumerGroup` uses internally.
+  fetch semantics. The same primitive that `Klife.Consumer.ConsumerGroup` uses internally.
 
   ## Options
 
