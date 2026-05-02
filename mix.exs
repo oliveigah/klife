@@ -4,7 +4,7 @@ defmodule Klife.MixProject do
   def project do
     [
       app: :klife,
-      version: "0.5.1",
+      version: "1.0.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -15,7 +15,7 @@ defmodule Klife.MixProject do
       ],
       # docs
       name: "Klife",
-      description: "Kafka client focused on performance",
+      description: "Modern, ergonomic and high-performance Kafka client",
       source_url: "https://github.com/oliveigah/klife",
       extras: [],
       package: [
