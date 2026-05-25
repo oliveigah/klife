@@ -66,6 +66,77 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     end
   end
 
+  defmodule ManualCGTest do
+    defmacro __using__(opts) do
+      quote bind_quoted: [opts: opts] do
+        use Klife.Consumer.ConsumerGroup, client: MyClient
+
+        # Intentionally no handle_record_batch/4: proves it is optional when
+        # every topic runs in :manual mode.
+
+        @impl true
+        def handle_consumer_start(topic, partition, cg_name) do
+          send(
+            unquote(opts[:parent_pid]),
+            {__MODULE__, :started_consumer, topic, partition, cg_name}
+          )
+
+          :ok
+        end
+
+        @impl true
+        def handle_consumer_stop(topic, partition, cg_name, reason) do
+          send(
+            unquote(opts[:parent_pid]),
+            {__MODULE__, :stopped_consumer, topic, partition, cg_name, reason}
+          )
+
+          :ok
+        end
+      end
+    end
+  end
+
+  defp pull_until_records(mod, cg, topic, partition, timeout \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_pull_until_records(mod, cg, topic, partition, deadline)
+  end
+
+  defp do_pull_until_records(mod, cg, topic, partition, deadline) do
+    case mod.pull(cg, topic, partition) do
+      {:ok, [_ | _] = recs} ->
+        recs
+
+      {:ok, :empty} ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(50)
+          do_pull_until_records(mod, cg, topic, partition, deadline)
+        else
+          flunk("timed out waiting for records on #{topic}:#{partition}")
+        end
+    end
+  end
+
+  defp assert_pull_empty_for(mod, cg, topic, partition, duration) do
+    deadline = System.monotonic_time(:millisecond) + duration
+    do_assert_pull_empty(mod, cg, topic, partition, deadline)
+  end
+
+  defp do_assert_pull_empty(mod, cg, topic, partition, deadline) do
+    case mod.pull(cg, topic, partition) do
+      {:ok, :empty} ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(100)
+          do_assert_pull_empty(mod, cg, topic, partition, deadline)
+        else
+          :ok
+        end
+
+      {:ok, recs} ->
+        flunk("expected no records but pulled offsets #{inspect(Enum.map(recs, & &1.offset))}")
+    end
+  end
+
   defp create_test_topics(count, opts \\ []) do
     partitions = Keyword.get(opts, :partitions, 4)
 
@@ -1006,5 +1077,99 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     TestUtils.assert_records(recv_rec4, exp_rec4)
 
     refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+  end
+
+  test "manual mode: pull returns :empty when there is nothing to pull", ctx do
+    parent_pid = self()
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    [topic1] = create_test_topics(1)
+
+    consumer_opts = [
+      topics: [
+        [name: topic1, mode: :manual, fetch_strategy: {:exclusive, []}]
+      ],
+      group_name: Base.encode16(:rand.bytes(10))
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, id: :mcg1, restart: :temporary)
+    cg_name = consumer_opts[:group_name]
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :started_consumer, ^topic1, ^p, ^cg_name}, 5_000
+    end
+
+    assert {:ok, :empty} = mod_name.pull(cg_name, topic1, 0)
+    assert_pull_empty_for(mod_name, cg_name, topic1, 0, 2_000)
+  end
+
+  test "manual mode: pull delivers records and commit is persisted across restart", ctx do
+    parent_pid = self()
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    [topic1] = create_test_topics(1)
+
+    consumer_opts = [
+      topics: [
+        [name: topic1, mode: :manual, fetch_strategy: {:exclusive, []}]
+      ],
+      group_name: Base.encode16(:rand.bytes(10))
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, id: :mcg1, restart: :temporary)
+    cg_name = consumer_opts[:group_name]
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :started_consumer, ^topic1, ^p, ^cg_name}, 5_000
+    end
+
+    [{:ok, r1}, {:ok, r2}, {:ok, r3}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)}
+      ])
+
+    recs = pull_until_records(mod_name, cg_name, topic1, 0)
+    pulled_offsets = Enum.map(recs, & &1.offset)
+
+    assert r1.offset in pulled_offsets
+    assert r2.offset in pulled_offsets
+    assert r3.offset in pulled_offsets
+
+    last_offset = List.last(recs).offset
+    assert last_offset == r3.offset
+
+    assert :ok = mod_name.commit(cg_name, topic1, 0, last_offset)
+
+    :ok = stop_supervised(:mcg1)
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :stopped_consumer, ^topic1, ^p, ^cg_name, _reason}, 10_000
+    end
+
+    start_supervised!({mod_name, consumer_opts}, id: :mcg2, restart: :temporary)
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :started_consumer, ^topic1, ^p, ^cg_name}, 5_000
+    end
+
+    assert_pull_empty_for(mod_name, cg_name, topic1, 0, 3_000)
+
+    [{:ok, r4}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)}
+      ])
+
+    resumed = pull_until_records(mod_name, cg_name, topic1, 0)
+    assert Enum.map(resumed, & &1.offset) == [r4.offset]
   end
 end

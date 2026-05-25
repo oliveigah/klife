@@ -351,7 +351,7 @@ defmodule Klife.Consumer.ConsumerGroup do
               reason :: term
             ) :: :ok
 
-  @optional_callbacks [handle_consumer_start: 3, handle_consumer_stop: 4]
+  @optional_callbacks [handle_record_batch: 4, handle_consumer_start: 3, handle_consumer_stop: 4]
 
   defstruct Keyword.keys(@consumer_group_opts) ++
               [
@@ -383,6 +383,39 @@ defmodule Klife.Consumer.ConsumerGroup do
       @behaviour Klife.Consumer.ConsumerGroup
 
       def klife_client(), do: unquote(opts[:client])
+
+      @doc """
+      Pulls the next buffered batch from a `:manual` mode topic-partition.
+
+      See `Klife.Consumer.ConsumerGroup.pull/5`. The client and consumer group
+      module are filled in automatically.
+      """
+      def pull(group_name, topic, partition) do
+        Klife.Consumer.ConsumerGroup.pull(
+          klife_client(),
+          __MODULE__,
+          group_name,
+          topic,
+          partition
+        )
+      end
+
+      @doc """
+      Commits an offset for a `:manual` mode topic-partition.
+
+      See `Klife.Consumer.ConsumerGroup.commit/6`. The client and consumer group
+      module are filled in automatically.
+      """
+      def commit(group_name, topic, partition, offset) do
+        Klife.Consumer.ConsumerGroup.commit(
+          klife_client(),
+          __MODULE__,
+          group_name,
+          topic,
+          partition,
+          offset
+        )
+      end
 
       def start_link(args) do
         cg_opts = unquote(opts)
@@ -483,6 +516,68 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   defp get_process_name(client_name, cg_mod, group_name) do
     via_tuple({__MODULE__, client_name, cg_mod, group_name})
+  end
+
+  @doc """
+  Pulls the next buffered batch of records from a `:manual` mode topic-partition consumer.
+
+  Only valid for topic-partitions whose `Klife.Consumer.ConsumerGroup.TopicConfig`
+  has `mode: :manual`. The reply is one of:
+
+  - `{:ok, [%Klife.Record{}, ...]}`: the next batch from the consumer's internal queue.
+    `latest_processed_offset` advances to the last offset of the returned batch.
+  - `{:ok, :empty}`: the queue is empty or the partition is not currently allowed
+    to deliver (e.g. assignment not yet acked by the coordinator). Callers should
+    reschedule.
+
+  Pulled records must be committed via `commit/6` once processed. The consumer's
+  revoke handshake waits for all pulled offsets to be committed before releasing
+  the partition.
+  """
+  @spec pull(
+          client :: atom(),
+          cg_mod :: module(),
+          group_name :: String.t(),
+          topic :: String.t(),
+          partition :: integer()
+        ) :: {:ok, [Klife.Record.t()] | :empty}
+  def pull(client_name, cg_mod, group_name, topic_name, partition) do
+    topic_id =
+      MetadataCache.get_metadata_attribute(client_name, topic_name, partition, :topic_id)
+
+    client_name
+    |> Consumer.get_process_name(cg_mod, topic_id, partition, group_name)
+    |> GenServer.call(:pull)
+  end
+
+  @doc """
+  Commits an offset for a `:manual` mode topic-partition consumer.
+
+  Only valid for topic-partitions whose `Klife.Consumer.ConsumerGroup.TopicConfig`
+  has `mode: :manual`. The commit is dispatched through the consumer group's
+  shared `Klife.Consumer.Committer` and is fire-and-forget from the caller's
+  perspective — there is no synchronous confirmation that the offset reached
+  the coordinator. The returned `:ok` only means the commit request was queued.
+
+  The committed offset must not exceed the highest offset returned by `pull/5`
+  for this partition; passing an unprocessed offset will leak commits ahead of
+  what was actually processed.
+  """
+  @spec commit(
+          client :: atom(),
+          cg_mod :: module(),
+          group_name :: String.t(),
+          topic :: String.t(),
+          partition :: integer(),
+          offset :: integer()
+        ) :: :ok
+  def commit(client_name, cg_mod, group_name, topic_name, partition, offset) do
+    topic_id =
+      MetadataCache.get_metadata_attribute(client_name, topic_name, partition, :topic_id)
+
+    client_name
+    |> Consumer.get_process_name(cg_mod, topic_id, partition, group_name)
+    |> GenServer.call({:commit, offset})
   end
 
   @doc false

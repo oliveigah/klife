@@ -62,6 +62,9 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       default: 0,
       doc: """
       Time in milliseconds that the consumer will wait before handling new records. Can be overrided for one cycle by the handler return value.
+
+      Ignored when `:mode` is `:manual`: pacing between pulls is the external
+      driver's responsibility.
       """
     ],
     handler_max_unacked_commits: [
@@ -73,6 +76,10 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       When this limit is reached, processing pauses until confirmations are received.
 
       Set it to 0 to process records one batch at a time so each processing cycle must be fully committed before starting the next.
+
+      Ignored when `:mode` is `:manual`: the external driver controls how many
+      uncommitted batches it pulls, so the consumer never throttles pulls on
+      pending commits.
       """
     ],
     handler_max_batch_size: [
@@ -82,6 +89,30 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
       The maximum amount of records that will be delivered to the handler in each processing cycle. If `:dynamic` all records retrieved
       in the fetch request will be delivered as one single batch to the handler. If positive integer, retrieved records will be chunked
       into the provided size.
+
+      In `:manual` mode this still applies: it controls the size of each batch
+      returned by `pull/5` (chunking happens at fetch time, before the queue).
+      """
+    ],
+    mode: [
+      type: {:in, [:auto, :manual]},
+      default: :auto,
+      doc: """
+      Controls how records are delivered to user code.
+
+      - `:auto` (default): the consumer drives `c:Klife.Consumer.ConsumerGroup.handle_record_batch/4`
+        and routes its return value into commits and retries.
+      - `:manual`: the consumer fetches and buffers records but does not invoke any
+        callback. An external driver pulls batches via
+        `Klife.Consumer.ConsumerGroup.pull/5` and triggers commits via
+        `Klife.Consumer.ConsumerGroup.commit/6`. The `:handler_cooldown_ms` and
+        `:handler_max_unacked_commits` options are ignored in this mode;
+        `:handler_max_batch_size` still applies and controls the size of each
+        batch returned by `pull/5`.
+
+      Manual mode exists so external pipelines (e.g. a Broadway producer) can
+      reuse Klife's fetch, buffering, membership and rebalance machinery while
+      driving processing themselves.
       """
     ]
     # TODO: Implement transactional true
@@ -143,6 +174,47 @@ defmodule Klife.Consumer.ConsumerGroup.TopicConfig do
   `:handler_max_batch_size`: `5` for dynamic batches (each can be large), `20`
   for fixed-size ones. Override it when you need a tighter memory bound or
   deeper prefetch.
+
+  ## Tuning for memory
+
+  A separate consumer process is started for **every topic/partition assigned
+  to this node**, and each one buffers records independently. The total memory
+  footprint of a consumer group on a node is therefore roughly:
+
+      assigned_partitions * per_consumer_buffer
+
+  where `per_consumer_buffer` is dominated by the in-process records queue.
+  When sizing, remember that partition assignments shift as members join and
+  leave the group: a node may transiently hold many more partitions than its
+  steady-state share, so budget for the worst case rather than the average.
+
+  The per-consumer upper bound depends on `:handler_max_batch_size`:
+
+  - **`:dynamic`** (default): each fetch produces a single batch enqueued as-is.
+    The queue can hold up to `:max_queue_size` such batches, each up to
+    `:fetch_max_bytes` in size, so the worst-case buffer is
+    `max_queue_size * fetch_max_bytes` bytes per consumer.
+
+  - **Fixed integer**: records from a fetch are chunked into batches of that
+    size and pushed onto the queue. Bytes still come from fetches, but the
+    queue cap is enforced in chunks, so the worst-case buffer is roughly
+    `max_queue_size * handler_max_batch_size * avg_record_size` bytes (and is
+    additionally bounded by what a single fetch can deliver).
+
+  Levers to reduce memory pressure, in order of impact:
+
+  1. Lower `:fetch_max_bytes` to shrink each fetch payload. This is the most
+    direct knob since it caps the bytes pulled per request.
+  2. Lower `:max_queue_size` to reduce how many batches sit in-process at once.
+    Setting it too low can make consumers idle between fetch requests.
+  3. With a fixed `:handler_max_batch_size`, smaller batches reduce per-chunk
+    memory but increase commit overhead unless `:handler_max_unacked_commits`
+    is also raised (see "Tuning for throughput").
+
+  Note that `:handler_max_unacked_commits` does not add buffered records on
+  top of the queue: records being processed have already been dequeued, so
+  raising it trades commit-roundtrip latency for throughput without changing
+  the buffer ceiling.
   """
 
   defstruct Keyword.keys(@opts)

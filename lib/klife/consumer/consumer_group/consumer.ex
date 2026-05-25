@@ -41,7 +41,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :fetch_ref,
     :fetch_batcher_monitor_ref,
     :leader_epoch,
-    :idle_timeout
+    :idle_timeout,
+    :mode
   ]
 
   def start_link(args) do
@@ -92,7 +93,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
             topic_name,
             args_map.partition_idx,
             :leader_epoch
-          )
+          ),
+        mode: args_map.topic_config.mode
       }
 
     send(self(), :poll_records)
@@ -127,6 +129,14 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   # multiple other process colaborate properly (fetcher, batcher, dispatcher, commiter)
   # any unexpected error on them may cause the consumer be forever waiting
   # for a message that may never arrive!
+  #
+  # In :manual mode this safety mechanism is disabled: pull and commit are
+  # driven by an external process whose pacing we do not control (it may
+  # legitimately pause for arbitrarily long under downstream backpressure
+  # or zero demand), so any chosen timeout would produce false-positive
+  # restarts, and also, restarts on our side do not solve any problem.
+  defp get_idle_timeout(%__MODULE__{mode: :manual}), do: :infinity
+
   defp get_idle_timeout(%__MODULE__{} = state) do
     # TODO: Use fetcher and commiter request timeout here instead of the client default
     3 *
@@ -232,53 +242,24 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
+  def handle_info(:handle_records, %__MODULE__{mode: :manual} = state) do
+    {:noreply, state, state.idle_timeout}
+  end
+
+  @impl true
   def handle_info(:handle_records, %__MODULE__{} = state) do
-    %__MODULE__{
-      cg_mod: cg_mod,
-      client_name: client_name,
-      topic_id: topic_id,
-      topic_name: topic_name,
-      partition_idx: partition_idx,
-      records_batch_queue: rec_queue,
-      records_batch_queue_count: records_batch_queue_count,
-      topic_config: %TopicConfig{
-        handler_max_unacked_commits: max_unacked
-      },
-      latest_committed_offset: latest_committed_offset,
-      latest_processed_offset: latest_processed_offset,
-      cg_name: cg_name
-    } = state
-
-    processing_allowed? =
-      ConsumerGroup.processing_allowed?(
-        client_name,
-        cg_mod,
-        topic_id,
-        partition_idx,
-        cg_name
-      )
-
-    has_records_to_process? = records_batch_queue_count > 0
-    curr_unacked = latest_processed_offset - latest_committed_offset
-
-    cond do
-      not processing_allowed? ->
+    case dequeue_next_batch(state) do
+      {:wait_assignment, state} ->
         Process.send_after(self(), :handle_records, 100)
         {:noreply, state, state.idle_timeout}
 
-      not has_records_to_process? ->
-        if state.fetch_ref == nil do
-          Process.send_after(self(), :poll_records, 0)
-        end
-
+      {:wait_fetch, state} ->
         {:noreply, state, state.idle_timeout}
 
-      curr_unacked > max_unacked ->
+      {:wait_unacked, state} ->
         {:noreply, state, state.idle_timeout}
 
-      true ->
-        {{:value, rec_batch}, new_queue} = :queue.out(rec_queue)
-
+      {:batch, rec_batch, state} ->
         # TODO: There is a bug when user's callback raises, because
         # it is not guarantee that the new consumer will be started
         # only after the commit happens.
@@ -287,7 +268,12 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         # how to proper implement it right now.
         # This problem may cause records to be processed twice unecessarly
         {parsed_user_result, usr_opts} =
-          case cg_mod.handle_record_batch(topic_name, partition_idx, cg_name, rec_batch) do
+          case state.cg_mod.handle_record_batch(
+                 state.topic_name,
+                 state.partition_idx,
+                 state.cg_name,
+                 rec_batch
+               ) do
             [_ | _] = result -> {result, []}
             {[_ | _] = result, opts} -> {result, opts}
             {action, opts} -> {Enum.map(rec_batch, fn rec -> {action, rec} end), opts}
@@ -304,14 +290,22 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         to_commit_recs = groupped_recs[:commit] || []
         to_retry_recs = groupped_recs[:retry] || []
 
-        new_queue =
-          to_retry_recs
-          |> Enum.map(fn rec ->
-            Map.update(rec, :consumer_attempts, 1, fn att -> att + 1 end)
-          end)
-          |> case do
-            [] -> new_queue
-            list -> :queue.in_r(list, new_queue)
+        state =
+          case to_retry_recs do
+            [] ->
+              state
+
+            retries ->
+              bumped =
+                Enum.map(retries, fn rec ->
+                  Map.update(rec, :consumer_attempts, 1, fn att -> att + 1 end)
+                end)
+
+              %__MODULE__{
+                state
+                | records_batch_queue: :queue.in_r(bumped, state.records_batch_queue),
+                  records_batch_queue_count: state.records_batch_queue_count + 1
+              }
           end
 
         latest_processed_offset =
@@ -336,7 +330,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
                       :ok
 
                     invalid_rec ->
-                      raise "handle_record_batch/4 returned :commit for offset #{rec.offset} and :retry for lower offset #{invalid_rec.offset} on #{topic_name}:#{partition_idx}. See `Klife.Consumer.ConsumerGroup` delivery semantics."
+                      raise "handle_record_batch/4 returned :commit for offset #{rec.offset} and :retry for lower offset #{invalid_rec.offset} on #{state.topic_name}:#{state.partition_idx}. See `Klife.Consumer.ConsumerGroup` delivery semantics."
                   end
               end
 
@@ -355,22 +349,11 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
               state.latest_processed_offset
           end
 
-        new_queue_size =
-          if to_retry_recs == [],
-            do: records_batch_queue_count - 1,
-            else: records_batch_queue_count
+        state = %__MODULE__{state | latest_processed_offset: latest_processed_offset}
 
-        if new_queue_size <= 3 do
+        if state.records_batch_queue_count <= 3 do
           Process.send_after(self(), :poll_records, 0)
         end
-
-        new_state =
-          %__MODULE__{
-            state
-            | records_batch_queue: new_queue,
-              records_batch_queue_count: new_queue_size,
-              latest_processed_offset: latest_processed_offset
-          }
 
         next_handle_delay = Keyword.get(usr_opts, :handler_cooldown_ms, 0)
         # TODO: Proper implement cooldown! The send_after approach does not guarantee
@@ -378,7 +361,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         # from the commit or poll message handling
         Process.send_after(self(), :handle_records, next_handle_delay)
 
-        {:noreply, new_state, state.idle_timeout}
+        {:noreply, state, state.idle_timeout}
     end
   end
 
@@ -390,6 +373,45 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   @impl true
   def handle_call(:assignment_revoked, from, %__MODULE__{} = state) do
     do_handle_revoke(state, from)
+  end
+
+  @impl true
+  def handle_call(:pull, _from, %__MODULE__{mode: :manual} = state) do
+    case dequeue_next_batch(state) do
+      {:batch, batch, state} ->
+        state = %__MODULE__{state | latest_processed_offset: List.last(batch).offset}
+
+        if state.records_batch_queue_count <= 3 do
+          Process.send_after(self(), :poll_records, 0)
+        end
+
+        {:reply, {:ok, batch}, state, state.idle_timeout}
+
+      {_status, state} ->
+        {:reply, {:ok, :empty}, state, state.idle_timeout}
+    end
+  end
+
+  @impl true
+  def handle_call({:commit, offset}, _from, %__MODULE__{mode: :manual} = state) do
+    commit_data = %Committer.BatchItem{
+      callback_pid: self(),
+      leader_epoch: state.leader_epoch,
+      offset_to_commit: offset,
+      partition: state.partition_idx,
+      topic_name: state.topic_name
+    }
+
+    :ok =
+      Committer.commit(
+        commit_data,
+        state.client_name,
+        state.cg_mod,
+        state.cg_name,
+        state.committer_id
+      )
+
+    {:reply, :ok, state, state.idle_timeout}
   end
 
   @impl true
@@ -405,6 +427,51 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     else
       Process.send_after(self(), {:assignment_revoked, waiting_pid}, 100)
       {:noreply, state, state.idle_timeout}
+    end
+  end
+
+  defp dequeue_next_batch(%__MODULE__{} = state) do
+    processing_allowed? =
+      ConsumerGroup.processing_allowed?(
+        state.client_name,
+        state.cg_mod,
+        state.topic_id,
+        state.partition_idx,
+        state.cg_name
+      )
+
+    max_unacked =
+      case state.mode do
+        :manual -> :infinity
+        :auto -> state.topic_config.handler_max_unacked_commits
+      end
+
+    curr_unacked = state.latest_processed_offset - state.latest_committed_offset
+
+    cond do
+      not processing_allowed? ->
+        {:wait_assignment, state}
+
+      state.records_batch_queue_count == 0 ->
+        if state.fetch_ref == nil do
+          Process.send_after(self(), :poll_records, 0)
+        end
+
+        {:wait_fetch, state}
+
+      curr_unacked > max_unacked ->
+        {:wait_unacked, state}
+
+      true ->
+        {{:value, batch}, new_queue} = :queue.out(state.records_batch_queue)
+
+        new_state = %__MODULE__{
+          state
+          | records_batch_queue: new_queue,
+            records_batch_queue_count: state.records_batch_queue_count - 1
+        }
+
+        {:batch, batch, new_state}
     end
   end
 
