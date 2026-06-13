@@ -34,6 +34,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :cg_pid,
     :latest_committed_offset,
     :latest_processed_offset,
+    :latest_issued_commit_offset,
     :latest_fetched_offset,
     :records_batch_queue,
     :records_batch_queue_count,
@@ -42,7 +43,9 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :fetch_batcher_monitor_ref,
     :leader_epoch,
     :idle_timeout,
-    :mode
+    :mode,
+    :puller_pid,
+    :puller_ref
   ]
 
   def start_link(args) do
@@ -82,6 +85,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         latest_fetched_offset: -1,
         latest_processed_offset: args_map.init_offset,
         latest_committed_offset: args_map.init_offset,
+        latest_issued_commit_offset: args_map.init_offset,
         empty_fetch_results_count: 0,
         fetch_ref: nil,
         records_batch_queue: :queue.new(),
@@ -242,6 +246,26 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %__MODULE__{puller_ref: ref} = state)
+      when ref != nil do
+    state = %__MODULE__{state | puller_pid: nil, puller_ref: nil}
+
+    # Part of the pulled window died with its owner before a commit was even
+    # issued for it, so it can never be committed. Restart so the next
+    # assignment redelivers from the last committed offset.
+    #
+    # This intentionally compares against the issued commits, not the
+    # confirmed ones: an owner that committed everything before dying may
+    # still have confirmations in flight, which arrive from the committer
+    # regardless of the owner being gone so we do not need to shutdown.
+    if state.latest_issued_commit_offset < state.latest_processed_offset do
+      {:stop, {:shutdown, :puller_down}, state}
+    else
+      {:noreply, state, state.idle_timeout}
+    end
+  end
+
+  @impl true
   def handle_info(:handle_records, %__MODULE__{mode: :manual} = state) do
     {:noreply, state, state.idle_timeout}
   end
@@ -366,29 +390,44 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
   end
 
   @impl true
-  def handle_info({:assignment_revoked, waiting_pid}, %__MODULE__{} = state) do
-    do_handle_revoke(state, waiting_pid)
+  def handle_info({:assignment_revoked, waiting_pid, deadline}, %__MODULE__{} = state) do
+    do_handle_revoke(state, waiting_pid, deadline)
   end
 
   @impl true
   def handle_call(:assignment_revoked, from, %__MODULE__{} = state) do
-    do_handle_revoke(state, from)
+    do_handle_revoke(state, from, revoke_timeout())
   end
 
   @impl true
-  def handle_call(:pull, _from, %__MODULE__{mode: :manual} = state) do
-    case dequeue_next_batch(state) do
-      {:batch, batch, state} ->
-        state = %__MODULE__{state | latest_processed_offset: List.last(batch).offset}
+  def handle_call({:pull, opts}, {caller_pid, _tag}, %__MODULE__{mode: :manual} = state) do
+    owner = Keyword.get(opts, :owner) || caller_pid
 
-        if state.records_batch_queue_count <= 3 do
-          Process.send_after(self(), :poll_records, 0)
+    case check_puller(state, owner) do
+      :dirty_handover ->
+        # A new owner is pulling while the previous one still has uncommitted
+        # offsets. Those records exist only in the previous owner's memory, so
+        # serving the new owner could lead to commits skipping them. Restart
+        # from the last committed offset so they are redelivered instead.
+        {:stop, {:shutdown, :dirty_puller_handover}, {:error, :restarting}, state}
+
+      :ok ->
+        case dequeue_next_batch(state) do
+          {:batch, batch, state} ->
+            state = %__MODULE__{
+              pin_puller(state, owner)
+              | latest_processed_offset: List.last(batch).offset
+            }
+
+            if state.records_batch_queue_count <= 3 do
+              Process.send_after(self(), :poll_records, 0)
+            end
+
+            {:reply, {:ok, batch}, state, state.idle_timeout}
+
+          {_status, state} ->
+            {:reply, {:ok, :empty}, state, state.idle_timeout}
         end
-
-        {:reply, {:ok, batch}, state, state.idle_timeout}
-
-      {_status, state} ->
-        {:reply, {:ok, :empty}, state, state.idle_timeout}
     end
   end
 
@@ -411,23 +450,60 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         state.committer_id
       )
 
+    state = %__MODULE__{
+      state
+      | latest_issued_commit_offset: max(state.latest_issued_commit_offset, offset)
+    }
+
     {:reply, :ok, state, state.idle_timeout}
   end
 
   @impl true
   def handle_cast(:assignment_revoked, %__MODULE__{} = state) do
-    do_handle_revoke(state, nil)
+    do_handle_revoke(state, nil, revoke_timeout())
   end
 
-  defp do_handle_revoke(%__MODULE__{} = state, waiting_pid) do
-    if state.latest_committed_offset == state.latest_processed_offset do
+  defp do_handle_revoke(%__MODULE__{} = state, waiting_pid, deadline) do
+    # We do not have any deadline for this check because it is controlled by the
+    # consumer group module. It waits
+    if state.latest_committed_offset == state.latest_processed_offset or
+         puller_abandoned?(state) or System.monotonic_time(:millisecond) > deadline do
       if waiting_pid, do: GenServer.reply(waiting_pid, :ok)
 
       {:stop, {:shutdown, {:assignment_revoked, state.topic_id, state.partition_idx}}, state}
     else
-      Process.send_after(self(), {:assignment_revoked, waiting_pid}, 100)
+      Process.send_after(self(), {:assignment_revoked, waiting_pid, deadline}, 100)
       {:noreply, state, state.idle_timeout}
     end
+  end
+
+  # In manual mode, commits for the pulled window can only be issued by the
+  # owner of the pulled records. If it is gone with part of the window never
+  # committed, waiting is pointless: release the partition now and let the next
+  # assignee redeliver from the last committed offset. Already-issued commits
+  # awaiting confirmation are not abandoned (the committer delivers them
+  # regardless), so those keep the regular wait below.
+  defp puller_abandoned?(%__MODULE__{mode: :manual} = state) do
+    puller_gone? = state.puller_pid == nil or not Process.alive?(state.puller_pid)
+    puller_gone? and state.latest_issued_commit_offset < state.latest_processed_offset
+  end
+
+  defp puller_abandoned?(%__MODULE__{}), do: false
+
+  defp check_puller(%__MODULE__{puller_pid: nil}, _owner), do: :ok
+  defp check_puller(%__MODULE__{puller_pid: pid}, pid), do: :ok
+
+  defp check_puller(%__MODULE__{} = state, _owner) do
+    if state.latest_issued_commit_offset < state.latest_processed_offset,
+      do: :dirty_handover,
+      else: :ok
+  end
+
+  defp pin_puller(%__MODULE__{puller_pid: pid} = state, pid), do: state
+
+  defp pin_puller(%__MODULE__{} = state, owner) do
+    if state.puller_ref, do: Process.demonitor(state.puller_ref, [:flush])
+    %__MODULE__{state | puller_pid: owner, puller_ref: Process.monitor(owner)}
   end
 
   defp dequeue_next_batch(%__MODULE__{} = state) do
@@ -643,4 +719,6 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         fetch_ref: nil
     }
   end
+
+  defp revoke_timeout(), do: System.monotonic_time(:millisecond) + 10_000
 end

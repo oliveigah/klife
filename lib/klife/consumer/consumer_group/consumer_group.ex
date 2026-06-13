@@ -24,7 +24,10 @@ defmodule Klife.Consumer.ConsumerGroup do
     client: [
       type: :atom,
       required: true,
-      doc: "The name of the klife client to be used by the consumer group"
+      doc:
+        "The name of the klife client to be used by the consumer group. May be set on " <>
+          "`use` (binding the module at compile time) or passed to `start_link/1` " <>
+          "(binding it on first start). See \"Consumer group module bindings\" in the moduledoc."
     ],
     topics: [
       type_doc: "List of `Klife.Consumer.ConsumerGroup.TopicConfig` configurations",
@@ -135,6 +138,46 @@ defmodule Klife.Consumer.ConsumerGroup do
   with `start_link/1` arguments taking precedence. This allows the most common
   configuration to live alongside the module definition while still enabling
   per-instance overrides at startup time.
+
+  ## Consumer group module bindings
+
+  A consumer group module relates very differently to the `group_name` it runs
+  under and the `Klife.Client` it talks to: the group name can vary freely from
+  one start to the next, while the client is fixed for the life of the module.
+
+  ### Group name: one module, many groups
+
+  A module is not tied to a single group name. The `:group_name` may be set on
+  `use` or passed to `start_link/1` (which takes precedence), and you can start
+  the same module more than once with a different `:group_name` each time. Each
+  instance runs as an independent group member with its own process, keyed by
+  `{client, module, group_name}`, and its own assignments, consumer, and
+  committer processes. This lets a single module definition serve several
+  independently tracked groups (each group has its own committed offsets in
+  Kafka) without defining a new module per group.
+
+  ### Client: one module, one client
+
+  Every consumer group module is bound to exactly one `Klife.Client`, exposed
+  through the generated `klife_client/0`. There are two ways to establish the binding:
+
+  - **At compile time**, passing `:client` to `use` as in the example above.
+    `klife_client/0` is then a constant function.
+
+  - **At start time**, omitting `:client` from `use` and passing it to
+    `start_link/1` instead. On the first start the module is bound to that
+    client through a [persistent term](`:persistent_term`) whose key is
+    `{Klife.Consumer.ConsumerGroup, YourModule}`, and `klife_client/0` reads
+    it (returning `nil` before the first start). This exists so libraries can
+    ship a single consumer group module that works with whatever client the
+    host application configures (e.g. `broadway_klife`). Do not write to that
+    persistent term yourself.
+
+  Unlike the group name, this binding is permanent: starting the module with a
+  `:client` different from the one it is bound to raises an `ArgumentError`,
+  since the running machinery and the module wrappers would otherwise disagree
+  about which client to talk to. To consume through a different client, define
+  another consumer group module.
 
   ## Configuration options
 
@@ -369,34 +412,37 @@ defmodule Klife.Consumer.ConsumerGroup do
               ]
 
   defmacro __using__(opts) do
-    if !Keyword.has_key?(opts, :client) do
-      raise ArgumentError, """
-      client option is required when using Klife.Consumer.ConsumerGroup.
-
-      use Klife.Consumer.ConsumerGroup, client: MyKlifeClient
-      """
-    end
-
     quote bind_quoted: [opts: opts] do
       use GenServer
 
       @behaviour Klife.Consumer.ConsumerGroup
 
-      def klife_client(), do: unquote(opts[:client])
+      # klife_client/0 is called on every pull/commit/assigned_partitions, so
+      # it must stay cheap. When :client is given to `use` it is a constant
+      # function; otherwise it reads the persistent term populated by the first
+      # start_link/1 (nil until then), so a single module can be bound to a
+      # client chosen at runtime. See "Consumer group module bindings" in the moduledoc.
+      if opts[:client] do
+        def klife_client(), do: unquote(opts[:client])
+      else
+        def klife_client(),
+          do: :persistent_term.get({Klife.Consumer.ConsumerGroup, __MODULE__}, nil)
+      end
 
       @doc """
       Pulls the next buffered batch from a `:manual` mode topic-partition.
 
-      See `Klife.Consumer.ConsumerGroup.pull/5`. The client and consumer group
+      See `Klife.Consumer.ConsumerGroup.pull/6`. The client and consumer group
       module are filled in automatically.
       """
-      def pull(group_name, topic, partition) do
+      def pull(group_name, topic, partition, opts \\ []) do
         Klife.Consumer.ConsumerGroup.pull(
           klife_client(),
           __MODULE__,
           group_name,
           topic,
-          partition
+          partition,
+          opts
         )
       end
 
@@ -414,6 +460,20 @@ defmodule Klife.Consumer.ConsumerGroup do
           topic,
           partition,
           offset
+        )
+      end
+
+      @doc """
+      Returns the `{topic, partition}` tuples currently assigned to this node.
+
+      See `Klife.Consumer.ConsumerGroup.assigned_partitions/3`. The client and
+      consumer group module are filled in automatically.
+      """
+      def assigned_partitions(group_name) do
+        Klife.Consumer.ConsumerGroup.assigned_partitions(
+          klife_client(),
+          __MODULE__,
+          group_name
         )
       end
 
@@ -476,13 +536,6 @@ defmodule Klife.Consumer.ConsumerGroup do
 
   @doc false
   def start_link(cg_mod, args) do
-    args =
-      Keyword.put_new(
-        args,
-        :fetch_strategy,
-        {:shared, cg_mod.klife_client().get_default_fetcher()}
-      )
-
     group_defaults = Keyword.get(args, :default_topic_config, [])
 
     # This has to be done here, because nimble options populate the defaults automatically on validate!
@@ -496,6 +549,17 @@ defmodule Klife.Consumer.ConsumerGroup do
     base_validated_args =
       NimbleOptions.validate!(args, @consumer_group_opts)
 
+    client = Keyword.fetch!(base_validated_args, :client)
+
+    validate_topic_modes!(cg_mod, base_validated_args)
+
+    :ok = bind_client!(cg_mod, client)
+
+    base_validated_args =
+      Keyword.put_new_lazy(base_validated_args, :fetch_strategy, fn ->
+        {:shared, client.get_default_fetcher()}
+      end)
+
     map_args = Helpers.keyword_list_to_map(base_validated_args)
 
     validated_args =
@@ -505,13 +569,68 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Map.put(:mod, cg_mod)
       |> Map.put(:member_id, UUID.uuid4())
 
-    if ConnController.disabled_feature?(cg_mod.klife_client(), :consumer_group) do
-      raise "Consumer Group was started but consumer_group feature is disabled for client #{inspect(cg_mod.klife_client())}. Check logs for details."
+    if ConnController.disabled_feature?(client, :consumer_group) do
+      raise "Consumer Group was started but consumer_group feature is disabled for client #{inspect(client)}. Check logs for details."
     end
 
     GenServer.start_link(cg_mod, validated_args,
-      name: get_process_name(cg_mod.klife_client(), cg_mod, validated_args.group_name)
+      name: get_process_name(client, cg_mod, validated_args.group_name)
     )
+  end
+
+  # :auto mode delivers records through handle_record_batch/4, so it only makes
+  # sense when the consumer group module actually implements it. Callback-less
+  # modules (e.g. the one broadway_klife ships) are manual-only.
+  defp validate_topic_modes!(cg_mod, validated_args) do
+    non_manual_topics =
+      validated_args
+      |> Keyword.fetch!(:topics)
+      |> Enum.reject(fn tc -> tc[:mode] == :manual end)
+      |> Enum.map(fn tc -> tc[:name] end)
+
+    cond do
+      non_manual_topics == [] ->
+        :ok
+
+      not handle_record_batch_exported?(cg_mod) ->
+        raise ArgumentError,
+              "#{inspect(cg_mod)} does not implement handle_record_batch/4, which is " <>
+                "required to consume topics in :auto mode " <>
+                "(#{inspect(non_manual_topics)}). Implement the callback or set " <>
+                "mode: :manual on these topics."
+
+      true ->
+        :ok
+    end
+  end
+
+  defp handle_record_batch_exported?(cg_mod) do
+    Code.ensure_loaded?(cg_mod) and function_exported?(cg_mod, :handle_record_batch, 4)
+  end
+
+  # A consumer group module is permanently bound to a single client: everything
+  # the group runs resolves the client through klife_client/0, so accepting a
+  # divergent :client at start would split the group between two clients.
+  defp bind_client!(cg_mod, client) do
+    case cg_mod.klife_client() do
+      nil ->
+        :persistent_term.put({__MODULE__, cg_mod}, client)
+
+      ^client ->
+        :ok
+
+      # There is a bug here! If 2 processes run start_link at the same time
+      # passing different clients, this validation wont catch it! This should be very unlikely
+      # to happen and documentation is already explicit that this should not be done and this
+      # check is just a guardrail so I wont solve the problem now.
+      other_client ->
+        raise ArgumentError,
+              "#{inspect(cg_mod)} is already bound to the client " <>
+                "#{inspect(other_client)} and cannot be started with client: " <>
+                "#{inspect(client)}. A consumer group module is permanently bound " <>
+                "to a single client; define another consumer group module to " <>
+                "consume through a different client."
+    end
   end
 
   defp get_process_name(client_name, cg_mod, group_name) do
@@ -522,32 +641,47 @@ defmodule Klife.Consumer.ConsumerGroup do
   Pulls the next buffered batch of records from a `:manual` mode topic-partition consumer.
 
   Only valid for topic-partitions whose `Klife.Consumer.ConsumerGroup.TopicConfig`
-  has `mode: :manual`. The reply is one of:
-
-  - `{:ok, [%Klife.Record{}, ...]}`: the next batch from the consumer's internal queue.
-    `latest_processed_offset` advances to the last offset of the returned batch.
-  - `{:ok, :empty}`: the queue is empty or the partition is not currently allowed
-    to deliver (e.g. assignment not yet acked by the coordinator). Callers should
-    reschedule.
+  has `mode: :manual`.
 
   Pulled records must be committed via `commit/6` once processed. The consumer's
-  revoke handshake waits for all pulled offsets to be committed before releasing
-  the partition.
+  revoke handshake waits for all pulled offsets to be committed or timeout before releasing
+  the partition, this behaviour may lead to slower rebalances if not handled correctly.
+
+  ## Ownership
+
+  Pulled records exist only in the receiving process memory until their offsets
+  are committed, so the consumer treats them as leased to an owner process:
+
+  - The owner defaults to the calling process and can be overridden with the
+    `:owner` option (e.g. pull from a helper process while a long-lived process
+    owns the lease and issues the commits).
+  - The consumer monitors the owner. If the owner dies while the lease has
+    uncommitted offsets, the consumer restarts and the records are redelivered
+    from the last committed offset (at-least-once is preserved). If the owner
+    dies with everything committed, the lease is simply released.
+  - One owner per topic-partition at a time: pulling from a new owner while a
+    previous owner still has uncommitted offsets restarts the consumer the same
+    way, returning `{:error, :restarting}` to the new owner.
+
+  ## Options
+
+  - `:owner` - pid that owns the pulled records lease. Defaults to the caller.
   """
   @spec pull(
           client :: atom(),
           cg_mod :: module(),
           group_name :: String.t(),
           topic :: String.t(),
-          partition :: integer()
-        ) :: {:ok, [Klife.Record.t()] | :empty}
-  def pull(client_name, cg_mod, group_name, topic_name, partition) do
+          partition :: integer(),
+          opts :: [{:owner, pid()}]
+        ) :: {:ok, [Klife.Record.t()] | :empty} | {:error, :restarting}
+  def pull(client_name, cg_mod, group_name, topic_name, partition, opts \\ []) do
     topic_id =
       MetadataCache.get_metadata_attribute(client_name, topic_name, partition, :topic_id)
 
     client_name
     |> Consumer.get_process_name(cg_mod, topic_id, partition, group_name)
-    |> GenServer.call(:pull)
+    |> GenServer.call({:pull, opts})
   end
 
   @doc """
@@ -580,6 +714,31 @@ defmodule Klife.Consumer.ConsumerGroup do
     |> GenServer.call({:commit, offset})
   end
 
+  @doc """
+  Returns the `{topic_name, partition}` tuples currently assigned to this node
+  for the given consumer group.
+  """
+  @spec assigned_partitions(
+          client :: atom(),
+          cg_mod :: module(),
+          group_name :: String.t()
+        ) :: [{String.t(), integer()}]
+  def assigned_partitions(client_name, cg_mod, group_name) do
+    table = get_acked_topic_partitions_table(client_name, cg_mod, group_name)
+
+    case :ets.whereis(table) do
+      :undefined ->
+        []
+
+      tid ->
+        tid
+        |> :ets.tab2list()
+        |> Enum.map(fn {{topic_id, partition}} ->
+          {MetadataCache.get_topic_name_by_id!(client_name, topic_id), partition}
+        end)
+    end
+  end
+
   @doc false
   def get_member_epoch(cg_pid) do
     GenServer.call(cg_pid, :member_epoch)
@@ -591,7 +750,7 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     {:ok, consumer_sup_pid} = DynamicSupervisor.start_link([])
 
-    :ets.new(get_acked_topic_partitions_table(mod.klife_client(), mod, args_map.group_name), [
+    :ets.new(get_acked_topic_partitions_table(args_map.client, mod, args_map.group_name), [
       :set,
       :public,
       :named_table,
@@ -604,7 +763,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         group_name: args_map.group_name,
         instance_id: args_map.instance_id,
         rebalance_timeout_ms: args_map.rebalance_timeout_ms,
-        client_name: mod.klife_client(),
+        client_name: args_map.client,
         member_id: args_map.member_id,
         epoch: 0,
         heartbeat_interval_ms: 1_000,
@@ -1226,7 +1385,15 @@ defmodule Klife.Consumer.ConsumerGroup do
     state.consumers_monitor_map
     |> Task.async_stream(
       fn {_k, {tid, p}} ->
-        :ok = Consumer.revoke_assignment(state.client_name, state.mod, tid, p, state.group_name)
+        try do
+          :ok =
+            Consumer.revoke_assignment(state.client_name, state.mod, tid, p, state.group_name)
+        catch
+          # The consumer is already gone (e.g. stopped after its puller died) or
+          # died mid-handshake. There is nothing left to wait for and the leave
+          # heartbeat below must still go out, so treat it as revoked.
+          :exit, _reason -> :ok
+        end
       end,
       timeout: 5_000,
       on_timeout: :kill_task

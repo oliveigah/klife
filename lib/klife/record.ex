@@ -24,6 +24,7 @@ defmodule Klife.Record do
   Records returned by the fetch functions or delivered to a consumer group
   callback are fully populated structs. In addition to the fields listed above,
   the following are also set:
+  - `:timestamp`: the record timestamp in milliseconds since the Unix epoch
   - `:batch_attributes`: metadata about the record batch (see [Kafka protocol record batch](https://kafka.apache.org/documentation/#recordbatch))
   - `:is_aborted`: `true` if the record belongs to an aborted transaction
   - `:consumer_attempts`: number of times this record has been delivered to a
@@ -36,6 +37,7 @@ defmodule Klife.Record do
     :topic,
     :partition,
     :offset,
+    :timestamp,
     :error_code,
     :value,
     :batch_attributes,
@@ -54,6 +56,7 @@ defmodule Klife.Record do
           topic: String.t(),
           partition: non_neg_integer(),
           offset: non_neg_integer(),
+          timestamp: nil | integer(),
           consumer_attempts: nil | non_neg_integer(),
           error_code: integer()
         }
@@ -111,6 +114,7 @@ defmodule Klife.Record do
   @doc false
   def parse_from_protocol(t, p, record_batch, opts \\ []) do
     base_offset = record_batch[:base_offset]
+    base_timestamp = record_batch[:base_timestamp]
     record_list = Enum.with_index(record_batch[:records])
     batch_attributes = KlifeProtocol.RecordBatch.decode_attributes(record_batch[:attributes])
     first_aborted_offset = opts[:first_aborted_offset] || :infinity
@@ -123,11 +127,16 @@ defmodule Klife.Record do
         topic: t,
         partition: p,
         offset: base_offset + idx,
+        timestamp: record_timestamp(base_timestamp, rec[:timestamp_delta]),
         batch_attributes: batch_attributes,
         is_aborted: base_offset + idx >= first_aborted_offset
       }
     end)
   end
+
+  defp record_timestamp(nil, _delta), do: nil
+  defp record_timestamp(_base, nil), do: nil
+  defp record_timestamp(base, delta), do: base + delta
 
   @doc """
   Filters a list of `Klife.Record` structs returned by the fetch API.

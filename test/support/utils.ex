@@ -260,61 +260,6 @@ defmodule Klife.TestUtils do
     end)
   end
 
-  def create_topics(client_name, tp_list) do
-    # This must be done in a separate process because
-    # of how the PubSub works.
-    Task.async(fn -> do_create_topics(client_name, tp_list) end)
-    |> Task.await(:infinity)
-    # This sleep is needed because we must
-    # give some time to the producer system react to the cluster
-    # change. One way to avoid this, would be having pubsub
-    # events related to the producer system but it does not
-    # exists yet.
-    |> tap(fn _ -> Process.sleep(:timer.seconds(2)) end)
-  end
-
-  defp do_create_topics(client, tp_list) do
-    cb_ref = make_ref()
-    Klife.PubSub.subscribe({:metadata_updated, client}, cb_ref)
-
-    content = %{
-      topics:
-        Enum.map(tp_list, fn tp_map ->
-          %{
-            name: tp_map.name,
-            num_partitions: tp_map[:partitions] || 3,
-            replication_factor: 2,
-            assignments: [],
-            configs: []
-          }
-        end),
-      timeout_ms: 15_000,
-      validate_only: false
-    }
-
-    {:ok, %{content: %{topics: t_resp}}} =
-      Klife.Connection.Broker.send_message(
-        KlifeProtocol.Messages.CreateTopics,
-        client,
-        :controller,
-        content
-      )
-
-    if Enum.any?(t_resp, fn t -> t.error_code not in [0, 36] end) do
-      raise "Unexpected error creating topic #{t_resp}"
-    end
-
-    receive do
-      {{:metadata_updated, ^client}, _event_data, ^cb_ref} ->
-        :ok
-    after
-      60_000 ->
-        {:error, :timeout}
-    end
-
-    :ok
-  end
-
   def make_fetch_req(client, {t, p, o}, opts \\ []) do
     {:ok,
      %{

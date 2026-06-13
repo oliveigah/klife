@@ -64,15 +64,25 @@ if Mix.env() in [:dev] do
     end
 
     def do_run_bench("test", parallel) do
+      client = MyConsumerGroup.klife_client()
+      :persistent_term.put(MyConsumerGroup, client)
+
       Benchee.run(
         %{
-          "phash2" => fn _ -> :erlang.phash2(self(), 100) end,
-          "pget" => fn _ -> Process.get(:my_key) end
+          "persistent term" => fn ->
+            Enum.map(1..1000, fn _ ->
+              :persistent_term.get(MyConsumerGroup)
+            end)
+          end,
+          "defmodule" => fn ->
+            Enum.map(1..1000, fn _ ->
+              MyConsumerGroup.klife_client()
+            end)
+          end
         },
         time: 10,
         memory_time: 2,
-        parallel: parallel |> String.to_integer(),
-        before_scenario: fn _ -> Process.put(:my_key, :rand.bytes(10)) end
+        parallel: parallel |> String.to_integer()
       )
     end
 
@@ -497,7 +507,7 @@ if Mix.env() in [:dev] do
     end
 
     defp prepare_topic(topic, partitions, recs_per_partition, rec_size) do
-      :ok = Klife.TestUtils.create_topics(MyClient, [%{name: topic, partitions: partitions}])
+      :ok = Klife.Utils.create_topics(MyClient, [%{name: topic, partitions: partitions}])
       Process.sleep(5000)
       bytes = :rand.bytes(rec_size)
 

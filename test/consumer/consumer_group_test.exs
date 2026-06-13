@@ -97,6 +97,27 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     end
   end
 
+  defp wait_for_assignment(mod, cg, expected_tps, timeout \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_assignment(mod, cg, expected_tps, deadline)
+  end
+
+  defp do_wait_for_assignment(mod, cg, expected_tps, deadline) do
+    assigned = mod.assigned_partitions(cg)
+
+    cond do
+      Enum.all?(expected_tps, fn tp -> tp in assigned end) ->
+        :ok
+
+      System.monotonic_time(:millisecond) < deadline ->
+        Process.sleep(50)
+        do_wait_for_assignment(mod, cg, expected_tps, deadline)
+
+      true ->
+        flunk("timed out waiting for assignment of #{inspect(expected_tps)}")
+    end
+  end
+
   defp pull_until_records(mod, cg, topic, partition, timeout \\ 10_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_pull_until_records(mod, cg, topic, partition, deadline)
@@ -149,7 +170,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     tp_list = Enum.map(topics, &%{name: &1, partitions: partitions})
 
-    :ok = TestUtils.create_topics(MyClient, tp_list)
+    :ok = Klife.Utils.create_topics(MyClient, tp_list)
     topics
   end
 
@@ -206,6 +227,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
       TestUtils.assert_records(recv_rec4, exp_rec4)
       TestUtils.assert_records(recv_rec5, exp_rec5)
       TestUtils.assert_records(recv_rec6, exp_rec6)
+
+      assert {t, p} in mod.assigned_partitions(cg_name)
     end)
   end
 
@@ -1171,5 +1194,148 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     resumed = pull_until_records(mod_name, cg_name, topic1, 0)
     assert Enum.map(resumed, & &1.offset) == [r4.offset]
+  end
+
+  test "runtime-bound module: pull delivers records and commit is persisted across restart" do
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use Klife.Consumer.ConsumerGroup
+    end
+
+    assert mod_name.klife_client() == nil
+
+    [topic1] = create_test_topics(1)
+
+    consumer_opts = [
+      client: MyClient,
+      topics: [
+        [name: topic1, mode: :manual, fetch_strategy: {:exclusive, []}]
+      ],
+      group_name: Base.encode16(:rand.bytes(10))
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, id: :rbcg1, restart: :temporary)
+    cg_name = consumer_opts[:group_name]
+
+    assert mod_name.klife_client() == MyClient
+
+    expected_tps = for p <- 0..3, do: {topic1, p}
+    wait_for_assignment(mod_name, cg_name, expected_tps)
+
+    [{:ok, r1}, {:ok, r2}, {:ok, r3}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)}
+      ])
+
+    recs = pull_until_records(mod_name, cg_name, topic1, 0)
+    pulled_offsets = Enum.map(recs, & &1.offset)
+
+    assert r1.offset in pulled_offsets
+    assert r2.offset in pulled_offsets
+    assert r3.offset in pulled_offsets
+
+    last_offset = List.last(recs).offset
+    assert last_offset == r3.offset
+
+    assert :ok = mod_name.commit(cg_name, topic1, 0, last_offset)
+
+    :ok = stop_supervised(:rbcg1)
+
+    start_supervised!({mod_name, consumer_opts}, id: :rbcg2, restart: :temporary)
+
+    wait_for_assignment(mod_name, cg_name, expected_tps)
+
+    assert_pull_empty_for(mod_name, cg_name, topic1, 0, 3_000)
+
+    [{:ok, r4}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)}
+      ])
+
+    resumed = pull_until_records(mod_name, cg_name, topic1, 0)
+    assert Enum.map(resumed, & &1.offset) == [r4.offset]
+  end
+
+  test "a runtime-bound module raises when started with a different client" do
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use Klife.Consumer.ConsumerGroup
+    end
+
+    [topic1] = create_test_topics(1)
+
+    consumer_opts = [
+      client: MyClient,
+      topics: [[name: topic1, mode: :manual]],
+      group_name: Base.encode16(:rand.bytes(10))
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, restart: :temporary)
+
+    assert_raise ArgumentError, ~r/already bound to the client MyClient/, fn ->
+      mod_name.start_link(Keyword.put(consumer_opts, :client, :some_other_client))
+    end
+  end
+
+  test "a compile-time bound module raises when started with a different client" do
+    parent_pid = self()
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    # The bind check runs before anything touches the broker, so the topic
+    # does not need to exist.
+    assert_raise ArgumentError, ~r/already bound to the client MyClient/, fn ->
+      mod_name.start_link(
+        client: :some_other_client,
+        group_name: Base.encode16(:rand.bytes(10)),
+        topics: [[name: "any_topic", mode: :manual]]
+      )
+    end
+  end
+
+  test "a client-less module without handle_record_batch/4 raises for non-manual topics" do
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use Klife.Consumer.ConsumerGroup
+    end
+
+    assert_raise ArgumentError, ~r/handle_record_batch\/4/, fn ->
+      mod_name.start_link(
+        client: MyClient,
+        group_name: Base.encode16(:rand.bytes(10)),
+        topics: [
+          [name: "any_topic", mode: :manual],
+          [name: "other_topic"]
+        ]
+      )
+    end
+  end
+
+  test "a module without handle_record_batch/4 raises for non-manual topics" do
+    parent_pid = self()
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      # No handle_record_batch/4 (manual-only module)
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    assert_raise ArgumentError, ~r/handle_record_batch\/4/, fn ->
+      mod_name.start_link(
+        group_name: Base.encode16(:rand.bytes(10)),
+        topics: [
+          [name: "any_topic", mode: :manual],
+          [name: "other_topic"]
+        ]
+      )
+    end
   end
 end
