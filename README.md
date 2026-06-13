@@ -33,7 +33,7 @@ Klife is a modern, ergonomic and high-performance Kafka client built from the gr
 ```elixir
 def deps do
   [
-    {:klife, "~> 1.0"}
+    {:klife, "~> 1.1"}
   ]
 end
 ```
