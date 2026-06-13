@@ -25,6 +25,7 @@ Klife is a modern, ergonomic and high-performance Kafka client built from the gr
 - **Transactional Support**: Ecto-like transaction API for producing records.
 - **Testing Utilities**: Helpers for testing against a real broker without mocking.
 - **SASL Authentication**: Plain authentication support.
+- **Broadway Support**: Supported via [off_broadway_klife](https://github.com/oliveigah/off_broadway_klife) connector
 
 ## Installation and Base setup
 
