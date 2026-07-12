@@ -4,7 +4,7 @@ defmodule Klife.MixProject do
   def project do
     [
       app: :klife,
-      version: "1.1.0",
+      version: "1.2.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -77,7 +77,7 @@ defmodule Klife.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:klife_protocol, "~> 0.10.0"},
+      {:klife_protocol, "~> 1.0"},
       {:nimble_options, "~> 1.0"},
       {:nimble_pool, "~> 1.1"},
       {:uuid, "~> 1.1"},
@@ -85,10 +85,10 @@ defmodule Klife.MixProject do
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       # Benchmarks and tests
       {:benchee, "~> 1.0", only: :dev, runtime: false},
-      {:kafka_ex, "~> 0.13", only: :dev},
-      {:brod, "~> 4.4", only: :dev},
-      {:erlkaf, "~> 2.2", only: :dev},
-      {:observer_cli, "~> 1.7", only: :dev},
+      # {:kafka_ex, "~> 0.13", only: :dev},
+      # {:brod, "~> 4.4", only: :dev},
+      # {:erlkaf, "~> 2.2", only: :dev},
+      # {:observer_cli, "~> 1.7", only: :dev},
       # dev
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
