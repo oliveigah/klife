@@ -25,6 +25,7 @@ defmodule Klife.Producer.Dispatcher do
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
   alias Klife.Connection.Broker
+  alias Klife.MetadataCache
   alias Klife.Producer
   alias KlifeProtocol.Messages, as: M
 
@@ -208,6 +209,11 @@ defmodule Klife.Producer.Dispatcher do
   # TODO: Handle more specific codes
   @delivery_success_codes [0, 46]
   @delivery_discard_codes [18, 47, 10]
+  # UNKNOWN_TOPIC_OR_PARTITION (3), LEADER_NOT_AVAILABLE (5) and
+  # NOT_LEADER_OR_FOLLOWER (6) indicate the local metadata is stale
+  # (e.g. a partition leadership change), so a refresh is triggered
+  # instead of waiting for the next periodic check.
+  @stale_metadata_codes [3, 5, 6]
   def handle_info(
         {:async_broker_response, req_ref, binary_resp, M.Produce = msg_mod, msg_version},
         %__MODULE__{} = state
@@ -264,6 +270,10 @@ defmodule Klife.Producer.Dispatcher do
 
     success_list = grouped_results[true] || []
     failure_list = grouped_results[false] || []
+
+    if Enum.any?(failure_list, fn {_t, _p, ec, _bo} -> ec in @stale_metadata_codes end) do
+      :ok = MetadataCache.trigger_check_metadata(client_name)
+    end
 
     success_list
     |> Enum.each(fn {topic, partition, _code, base_offset} ->
@@ -377,10 +387,17 @@ defmodule Klife.Producer.Dispatcher do
     to_retry_keys = Enum.map(to_retry, fn {t, p, _, _} -> {t, p} end)
     new_data_to_send = Map.take(data_to_send, to_retry_keys)
 
+    # Any discarded batch consumed sequence numbers that the broker will never
+    # accept, so the epoch must be bumped for those partitions. Otherwise the
+    # next batches would be stuck retrying OUT_OF_ORDER_SEQUENCE_NUMBER until
+    # the delivery deadline. Partitions discarded because of a previous bump
+    # already had their sequences rewritten and must be skipped.
     to_bump =
       to_discard
-      |> Enum.filter(fn {_t, _p, ec, _bo} -> ec == 47 end)
-      |> Enum.map(fn {t, p, 47, _bo} -> {t, p} end)
+      |> Enum.filter(fn {t, p, ec, _bo} ->
+        ec in @delivery_discard_codes and not MapSet.member?(bumped_tp_set, {t, p})
+      end)
+      |> Enum.map(fn {t, p, _ec, _bo} -> {t, p} end)
 
     if to_bump != [] do
       send(state.batcher_pid, {:bump_epoch, to_bump})

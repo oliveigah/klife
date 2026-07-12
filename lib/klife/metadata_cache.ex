@@ -17,7 +17,9 @@ defmodule Klife.MetadataCache do
     :client_name,
     :next_check_ref,
     :topics,
-    :enable_unkown_topics
+    :enable_unkown_topics,
+    :check_interval_ms,
+    :triggered_check?
   ]
 
   @check_interval_ms Application.compile_env(:klife, :metadata_check_interval_ms, 30_000)
@@ -35,7 +37,9 @@ defmodule Klife.MetadataCache do
     state = %__MODULE__{
       client_name: args.client_name,
       topics: Enum.map(args.topics, fn t -> {t.name, t} end) |> Map.new(),
-      enable_unkown_topics: args.enable_unkown_topics
+      enable_unkown_topics: args.enable_unkown_topics,
+      check_interval_ms: Map.get(args, :metadata_check_interval_ms) || @check_interval_ms,
+      triggered_check?: false
     }
 
     :ets.new(metadata_table(state.client_name), [
@@ -49,9 +53,26 @@ defmodule Klife.MetadataCache do
 
     :ok = PubSub.subscribe({:cluster_change, args.client_name})
 
-    new_ref = Process.send_after(self(), :check_metadata, @check_interval_ms)
+    new_ref = Process.send_after(self(), :check_metadata, state.check_interval_ms)
 
     {:ok, %__MODULE__{state | next_check_ref: new_ref}}
+  end
+
+  # Used to react to broker responses that indicate stale metadata (e.g.
+  # produce/fetch hitting a broker that is no longer the partition leader),
+  # instead of waiting for the next periodic check.
+  def trigger_check_metadata(client_name) do
+    GenServer.cast(process_name(client_name), :trigger_check_metadata)
+  end
+
+  @impl true
+  def handle_cast(:trigger_check_metadata, %__MODULE__{triggered_check?: true} = state) do
+    {:noreply, state}
+  end
+
+  def handle_cast(:trigger_check_metadata, %__MODULE__{} = state) do
+    Process.send_after(self(), :check_metadata, 0)
+    {:noreply, %__MODULE__{state | triggered_check?: true}}
   end
 
   @impl true
@@ -63,14 +84,14 @@ defmodule Klife.MetadataCache do
 
     case do_check_metadata(state) do
       :ok ->
-        new_ref = Process.send_after(self(), :check_metadata, @check_interval_ms)
-        {:noreply, %__MODULE__{state | next_check_ref: new_ref}}
+        new_ref = Process.send_after(self(), :check_metadata, state.check_interval_ms)
+        {:noreply, %__MODULE__{state | next_check_ref: new_ref, triggered_check?: false}}
 
       {:error, _} ->
         :ok = ConnController.trigger_brokers_verification(state.client_name)
 
         new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
-        {:noreply, %__MODULE__{state | next_check_ref: new_ref}}
+        {:noreply, %__MODULE__{state | next_check_ref: new_ref, triggered_check?: false}}
     end
   end
 

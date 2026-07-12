@@ -14,11 +14,20 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
+  require Logger
+
   alias Klife.Record
   alias Klife.GenBatcher
   alias Klife.Connection.Broker
+  alias Klife.MetadataCache
   alias KlifeProtocol.Messages, as: M
   alias Klife.Consumer.Fetcher.Batcher
+
+  # NOT_LEADER_OR_FOLLOWER (6), FENCED_LEADER_EPOCH (74), UNKNOWN_LEADER_EPOCH (75),
+  # UNKNOWN_TOPIC_ID (100) and INCONSISTENT_TOPIC_ID (103) indicate the local
+  # metadata is stale (e.g. a partition leadership change), so a refresh is
+  # triggered instead of waiting for the next periodic check.
+  @stale_metadata_codes [6, 74, 75, 100, 103]
 
   def start_link(args) do
     %{
@@ -100,10 +109,68 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         {:async_broker_response, req_ref, binary_resp, M.Fetch = msg_mod, msg_version},
         %__MODULE__{} = state
       ) do
-    # TODO: Handle other error codes
-    {:ok, %{content: %{error_code: 0, responses: resp_list}}} =
-      msg_mod.deserialize_response(binary_resp, msg_version)
+    parsed_resp =
+      try do
+        msg_mod.deserialize_response(binary_resp, msg_version)
+      rescue
+        error -> {:deserialize_error, error}
+      end
 
+    case parsed_resp do
+      {:ok, %{content: %{error_code: 0, responses: resp_list}}} ->
+        handle_fetch_broker_response(state, req_ref, resp_list)
+
+      unexpected_resp ->
+        # A response that cannot be parsed or that carries a top level error
+        # must not crash the dispatcher, otherwise all in flight fetches on
+        # this batcher hang until their timeouts. Known case: brokers >= 3.7
+        # attach KIP-951 tagged fields (the new leader endpoint) on
+        # NOT_LEADER_OR_FOLLOWER responses, which the current protocol
+        # deserialization does not support yet. Fail the batch as retryable
+        # and refresh metadata, since stale leadership is the likely cause.
+        Logger.error(
+          "Unexpected fetch response from broker #{state.broker_id}, failing the batch as retryable (client=#{inspect(state.fetcher_config.client_name)}, reason=#{inspect(unexpected_resp)})",
+          client: state.fetcher_config.client_name,
+          broker_id: state.broker_id,
+          reason: inspect(unexpected_resp)
+        )
+
+        :ok = MetadataCache.trigger_check_metadata(state.fetcher_config.client_name)
+
+        case Map.get(state.requests, req_ref) do
+          nil ->
+            {:noreply, state}
+
+          %Batcher.Batch{} = batch ->
+            resp =
+              batch.data
+              |> Enum.map(fn {{t, p}, _item} -> {{t, p}, {:error, :unexpected_resp}} end)
+              |> Map.new()
+
+            {:noreply, complete_batch(state, batch, resp)}
+        end
+    end
+  end
+
+  def handle_info(
+        {:async_broker_response, req_ref, :timeout},
+        %__MODULE__{requests: reqs} = state
+      ) do
+    case Map.get(reqs, req_ref) do
+      nil ->
+        {:noreply, state}
+
+      %Batcher.Batch{} = batch ->
+        resp =
+          batch.data
+          |> Enum.map(fn {{t, p}, _item} -> {{t, p}, {:error, :timeout}} end)
+          |> Map.new()
+
+        {:noreply, complete_batch(state, batch, resp)}
+    end
+  end
+
+  defp handle_fetch_broker_response(%__MODULE__{} = state, req_ref, resp_list) do
     req_data = state.requests[req_ref].data
 
     result =
@@ -158,27 +225,17 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
         end
       end
 
+    stale_metadata? =
+      Enum.any?(result, fn {_key, resp} ->
+        match?({:error, ec} when ec in @stale_metadata_codes, resp)
+      end)
+
+    if stale_metadata? do
+      :ok = MetadataCache.trigger_check_metadata(state.fetcher_config.client_name)
+    end
+
     {:noreply, complete_batch(state, state.requests[req_ref], result)}
   end
-
-  def handle_info(
-        {:async_broker_response, req_ref, :timeout},
-        %__MODULE__{requests: reqs} = state
-      ) do
-    case Map.get(reqs, req_ref) do
-      nil ->
-        {:noreply, state}
-
-      %Batcher.Batch{} = batch ->
-        resp =
-          batch.data
-          |> Enum.map(fn {{t, p}, _item} -> {{t, p}, {:error, :timeout}} end)
-          |> Map.new()
-
-        {:noreply, complete_batch(state, batch, resp)}
-    end
-  end
-
   defp complete_batch(%__MODULE__{} = state, %Batcher.Batch{} = batch, resp_map) do
     Enum.each(batch.data, fn {{t, p}, %Batcher.BatchItem{} = item} ->
       case Map.get(resp_map, {t, p}) do

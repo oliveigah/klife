@@ -181,7 +181,11 @@ defmodule Klife.Consumer.Committer do
                 Enum.map(partition_list, fn {p, %BatchItem{} = batch_item} ->
                   %{
                     partition_index: p,
-                    committed_offset: batch_item.offset_to_commit,
+                    # Kafka convention: the committed offset is the NEXT offset
+                    # to be consumed, while internally we track the last
+                    # processed one. Committing the raw value would be off by
+                    # one for external tooling and other clients.
+                    committed_offset: batch_item.offset_to_commit + 1,
                     committed_leader_epoch: batch_item.leader_epoch,
                     # TODO: Implement user defined metadata
                     committed_metadata: nil

@@ -92,6 +92,12 @@ defmodule Klife.Client do
       default: true,
       doc:
         "Define if the client will be able to work with non configured topics. When `true` the client will collect metadata for all known topics of the cluster, this may have performance impacts on large clusters. When set to `false` the client will collect metadata only for topics defined on the `topics` options."
+    ],
+    metadata_check_interval_ms: [
+      type: :pos_integer,
+      required: false,
+      doc:
+        "Interval in milliseconds between automatic metadata refreshes. Defaults to the `:metadata_check_interval_ms` application environment value or 30 seconds. Metadata is also refreshed reactively when brokers reply with stale metadata errors (e.g. after a partition leadership change)."
     ]
   ]
 
@@ -723,7 +729,7 @@ defmodule Klife.Client do
 
     metadata_cache_opts =
       parsed_opts
-      |> Map.take([:topics, :enable_unkown_topics])
+      |> Map.take([:topics, :enable_unkown_topics, :metadata_check_interval_ms])
       |> Map.put(:client_name, module)
 
     children = [

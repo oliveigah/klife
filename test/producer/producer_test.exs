@@ -36,6 +36,28 @@ defmodule Klife.ProducerTest do
     {:ok, _} = MyClient.produce(rec, client: client)
   end
 
+  # Abort markers are written by the coordinator asynchronously, so the
+  # record may not be readable right after the transaction ends.
+  defp wait_txn_status(rec, offset, status) do
+    deadline = System.monotonic_time(:millisecond) + 10_000
+    do_wait_txn_status(rec, offset, status, deadline)
+  end
+
+  defp do_wait_txn_status(rec, offset, status, deadline) do
+    case TestUtils.assert_offset(MyClient, rec, offset, txn_status: status, isolation: :committed) do
+      :ok ->
+        :ok
+
+      :not_found ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(50)
+          do_wait_txn_status(rec, offset, status, deadline)
+        else
+          flunk("timed out waiting for record at offset #{offset} to become #{status}")
+        end
+    end
+  end
+
   test "produce message sync no batching" do
     record = %Record{
       value: :rand.bytes(10),
@@ -68,6 +90,50 @@ defmodule Klife.ProducerTest do
     assert :ok = TestUtils.assert_offset(MyClient, record, offset)
     record_batch = TestUtils.get_record_batch_by_offset(MyClient, record.topic, 1, offset)
     assert length(record_batch) == 1
+  end
+
+  @tag capture_log: true
+  @tag timeout: 90_000
+  test "produce keeps working on a partition after a discarded batch (message too large)" do
+    topic = "test_no_batch_topic"
+    partition = 3
+
+    # First produce must succeed so the broker holds producer state for this
+    # partition. Only then a discarded batch leaves a sequence gap behind.
+    rec_first = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: topic,
+      partition: partition
+    }
+
+    assert {:ok, %Record{}} = MyClient.produce(rec_first)
+
+    rec_too_large = %Record{
+      value: :rand.bytes(2_000_000),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: topic,
+      partition: partition
+    }
+
+    assert {:error, %Record{error_code: 10}} = MyClient.produce(rec_too_large)
+
+    # The discarded batch consumed sequence numbers. The next produce to the
+    # same partition must succeed right away instead of getting stuck
+    # retrying sequence errors until the delivery timeout.
+    rec_ok = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: topic,
+      partition: partition
+    }
+
+    assert {:ok, %Record{offset: offset}} = MyClient.produce(rec_ok)
+
+    assert :ok = TestUtils.assert_offset(MyClient, rec_ok, offset)
   end
 
   test "produce message sync using non default producer" do
@@ -151,6 +217,48 @@ defmodule Klife.ProducerTest do
 
     assert length(batch_1) == 3
     assert batch_1 == batch_2 and batch_2 == batch_3
+  end
+
+  test "produce async callbacks must receive the record they were called for" do
+    topic = "test_batch_topic"
+    parent = self()
+
+    [rec_1, rec_2, rec_3] =
+      Enum.map(1..3, fn _ ->
+        %Record{
+          value: :rand.bytes(10),
+          key: :rand.bytes(10),
+          headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+          topic: topic,
+          partition: 1
+        }
+      end)
+
+    wait_batch_cycle(MyClient, topic, 1)
+
+    :ok = MyClient.produce_async(rec_1, callback: fn resp -> send(parent, {:cb_1, resp}) end)
+    :ok = MyClient.produce_async(rec_2, callback: fn resp -> send(parent, {:cb_2, resp}) end)
+    :ok = MyClient.produce_async(rec_3, callback: fn resp -> send(parent, {:cb_3, resp}) end)
+
+    assert_receive {:cb_1, {:ok, %Record{} = resp_rec_1}}, 8_000
+    assert_receive {:cb_2, {:ok, %Record{} = resp_rec_2}}, 8_000
+    assert_receive {:cb_3, {:ok, %Record{} = resp_rec_3}}, 8_000
+
+    # All 3 records must have been batched together, otherwise
+    # this test proves nothing about callback/record matching.
+    batch = TestUtils.get_record_batch_by_offset(MyClient, topic, 1, resp_rec_1.offset)
+    assert length(batch) == 3
+
+    assert_resp_record(rec_1, resp_rec_1)
+    assert_resp_record(rec_2, resp_rec_2)
+    assert_resp_record(rec_3, resp_rec_3)
+
+    assert resp_rec_2.offset == resp_rec_1.offset + 1
+    assert resp_rec_3.offset == resp_rec_2.offset + 1
+
+    assert :ok = TestUtils.assert_offset(MyClient, rec_1, resp_rec_1.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec_2, resp_rec_2.offset)
+    assert :ok = TestUtils.assert_offset(MyClient, rec_3, resp_rec_3.offset)
   end
 
   test "produce message sync with batching and compression" do
@@ -1199,6 +1307,70 @@ defmodule Klife.ProducerTest do
              )
 
     TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :committed)
+  end
+
+  @tag capture_log: true
+  test "txn produce message - a failed transaction must not poison the next one on the same worker" do
+    topic = "test_no_batch_topic"
+    # Partition without traffic from other tests, since the abort markers
+    # written here shift the partition LSO and read_committed fetches from
+    # other tests could transiently miss records because of it.
+    partition = 5
+
+    rec1 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: topic,
+      partition: partition
+    }
+
+    assert {:error, %RuntimeError{message: "txn worker poison test"}} =
+             MyClient.transaction(
+               fn ->
+                 assert {:ok, %Record{offset: offset1}} = MyClient.produce(rec1)
+                 Process.put(:poison_test_offset, offset1)
+                 raise "txn worker poison test"
+               end,
+               pool_name: :my_test_pool_1
+             )
+
+    offset1 = Process.get(:poison_test_offset)
+
+    # The broker side transaction must be aborted before the worker goes
+    # back to the pool, so the record must become readable as aborted
+    # instead of staying pending behind the LSO.
+    assert :ok = wait_txn_status(rec1, offset1, :aborted)
+
+    # The pool has a single worker, so this transaction necessarily reuses
+    # the worker from the failed one and must commit only its own records.
+    rec2 = %Record{
+      value: :rand.bytes(10),
+      key: :rand.bytes(10),
+      headers: [%{key: :rand.bytes(10), value: :rand.bytes(10)}],
+      topic: topic,
+      partition: partition
+    }
+
+    assert {:ok, {:ok, %Record{offset: offset2}}} =
+             MyClient.transaction(
+               fn ->
+                 resp = MyClient.produce(rec2)
+                 assert {:ok, %Record{}} = resp
+                 {:ok, resp}
+               end,
+               pool_name: :my_test_pool_1
+             )
+
+    assert :ok = TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :committed)
+
+    # The first record must remain aborted even after the second transaction
+    # commits on the same worker.
+    assert :ok =
+             TestUtils.assert_offset(MyClient, rec1, offset1,
+               txn_status: :aborted,
+               isolation: :committed
+             )
   end
 
   test "txn produce batch txn" do

@@ -140,6 +140,10 @@ Throughout all of this, the framework asserts three core invariants that must ne
 
 The full simulator source code is available in the `simulator` directory.
 
+## Upgrade from 1.1.x
+
+- **Committed offset convention**: Consumer group committed offsets now follow the standard Kafka convention (the committed value is the next offset to be consumed) instead of the last processed offset. This makes lag reporting, `kafka-consumer-groups.sh` tooling, and migrations to/from other clients behave correctly. On the first deploy after upgrading, offsets committed by older versions are interpreted under the new convention, which causes **one already-processed record per partition to be redelivered** (consistent with at-least-once semantics). No action is needed if your handlers are idempotent, as at-least-once delivery already requires.
+
 ## Upgrade from 0.x to 1.x
 
 - **Default partitioner**: The default partitioner changed from `phash2` to `murmur2` to improve compatibility with Kafka standards. To avoid the change, you can define a custom partitioner that uses the old `phash2` behavior.

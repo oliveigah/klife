@@ -115,21 +115,23 @@ defmodule Klife.Record do
   def parse_from_protocol(t, p, record_batch, opts \\ []) do
     base_offset = record_batch[:base_offset]
     base_timestamp = record_batch[:base_timestamp]
-    record_list = Enum.with_index(record_batch[:records])
+    records = record_batch[:records]
     batch_attributes = KlifeProtocol.RecordBatch.decode_attributes(record_batch[:attributes])
     first_aborted_offset = opts[:first_aborted_offset] || :infinity
 
-    Enum.map(record_list, fn {rec, idx} ->
+    Enum.map(records, fn rec ->
+      offset = base_offset + rec[:offset_delta]
+
       %__MODULE__{
         key: rec[:key],
         headers: rec[:headers],
         value: rec[:value],
         topic: t,
         partition: p,
-        offset: base_offset + idx,
+        offset: offset,
         timestamp: record_timestamp(base_timestamp, rec[:timestamp_delta]),
         batch_attributes: batch_attributes,
-        is_aborted: base_offset + idx >= first_aborted_offset
+        is_aborted: offset >= first_aborted_offset
       }
     end)
   end

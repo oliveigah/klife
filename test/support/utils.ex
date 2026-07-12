@@ -185,6 +185,39 @@ defmodule Klife.TestUtils do
     offset
   end
 
+  # Reads the group committed offset directly from the coordinator, the same
+  # way external tooling does (observer read, no member id or epoch). The
+  # returned value follows the Kafka convention: next offset to be consumed.
+  def get_committed_offset(client, group_name, topic, partition) do
+    find_coordinator_content = %{
+      key_type: 0,
+      coordinator_keys: [group_name]
+    }
+
+    {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: coordinator_id}]}}} =
+      Broker.send_message(M.FindCoordinator, client, :any, find_coordinator_content)
+
+    content = %{
+      groups: [
+        %{
+          group_id: group_name,
+          member_id: nil,
+          member_epoch: -1,
+          topics: [%{name: topic, partition_indexes: [partition]}]
+        }
+      ],
+      require_stable: true
+    }
+
+    {:ok, %{content: %{groups: [group_resp]}}} =
+      Broker.send_message(M.OffsetFetch, client, coordinator_id, content)
+
+    %{error_code: 0, topics: [%{partitions: [pdata]}]} = group_resp
+    %{error_code: 0, committed_offset: committed_offset} = pdata
+
+    committed_offset
+  end
+
   def assert_offset(
         client,
         %Record{topic: topic} = expected_record,

@@ -190,6 +190,53 @@ defmodule Klife.Connection.SystemTest do
     Enum.each(brokers_list_3, &check_broker_connection(client_name_3, &1))
   end
 
+  test "sync calls must not consume broker responses from other correlation ids" do
+    client_name = MyClient
+    broker_id = ConnController.get_known_brokers(client_name) |> List.first()
+
+    # Simulates stale responses sitting on the mailbox, as left behind by a
+    # previous call of this process that gave up waiting on them.
+    stale_untagged = {:broker_response, <<0, 0, 0, 99, 1, 2, 3>>}
+    stale_tagged = {:broker_response, 999_999_999, <<0, 0, 0, 99, 1, 2, 3>>}
+
+    send(self(), stale_untagged)
+    send(self(), stale_tagged)
+
+    assert {:ok, %{content: resp_content}} =
+             Broker.send_message(ApiVersions, client_name, broker_id)
+
+    assert is_list(resp_content.api_keys)
+
+    # The stale messages must remain untouched on the mailbox
+    assert_receive ^stale_untagged, 0
+    assert_receive ^stale_tagged, 0
+  end
+
+  @tag capture_log: true
+  test "sync calls that time out do not leak responses to subsequent calls" do
+    client_name = MyClient
+    broker_id = ConnController.get_known_brokers(client_name) |> List.first()
+
+    case Broker.send_message(ApiVersions, client_name, broker_id, %{}, %{}, timeout_ms: 0) do
+      {:error, :timeout} ->
+        :ok
+
+      # If the response arrives while the timeout is being handled, it is
+      # reaped and returned as a normal response instead of leaking to the
+      # mailbox, so this outcome is also valid.
+      {:ok, %{content: resp_content}} ->
+        assert is_list(resp_content.api_keys)
+    end
+
+    assert {:ok, %{content: resp_content}} =
+             Broker.send_message(ApiVersions, client_name, broker_id)
+
+    assert is_list(resp_content.api_keys)
+
+    refute_receive {:broker_response, _, _}, 200
+    refute_receive {:broker_response, _}, 0
+  end
+
   @tag cluster_change: true, capture_log: true, timeout: 90_000
   test "cluster changes events" do
     config = [

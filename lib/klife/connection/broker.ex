@@ -136,22 +136,33 @@ defmodule Klife.Connection.Broker do
 
     case Connection.write(raw_data, conn) do
       :ok ->
+        # The receive must be selective on the correlation id, otherwise a
+        # response that arrives after a previous call of this process timed
+        # out could be consumed here as if it belonged to this request.
         receive do
-          {:broker_response, response} ->
+          {:broker_response, ^correlation_id, response} ->
             message_mod.deserialize_response(response, msg_version)
         after
           timeout ->
-            Controller.take_from_in_flight(client_name, correlation_id)
+            case Controller.take_from_in_flight(client_name, correlation_id) do
+              nil ->
+                # The broker process took the in flight entry first, which
+                # means the response is being routed to this process right
+                # now. Reap it here, otherwise it would stay on the mailbox
+                # until a future call selectively receives it.
+                receive do
+                  {:broker_response, ^correlation_id, response} ->
+                    message_mod.deserialize_response(response, msg_version)
+                after
+                  1000 ->
+                    log_sync_timeout(message_mod, client_name, broker_id, conn)
+                    {:error, :timeout}
+                end
 
-            Logger.error(
-              "Timeout waiting for #{inspect(message_mod)} response from broker #{broker_id} (client=#{inspect(client_name)})",
-              client: client_name,
-              broker_id: broker_id,
-              host: conn.host,
-              message: inspect(message_mod)
-            )
-
-            {:error, :timeout}
+              _entry ->
+                log_sync_timeout(message_mod, client_name, broker_id, conn)
+                {:error, :timeout}
+            end
         end
 
       {:error, reason} ->
@@ -228,7 +239,7 @@ defmodule Klife.Connection.Broker do
     case Controller.take_from_in_flight(client_name, correlation_id) do
       # sync send
       {^correlation_id, waiting_pid} when is_pid(waiting_pid) ->
-        send(waiting_pid, {:broker_response, reply})
+        send(waiting_pid, {:broker_response, correlation_id, reply})
 
       # async send function callback
       {^correlation_id, {callback_pid, callback_ref, msg_mod, msg_version, timeout_ref}} ->
@@ -285,6 +296,16 @@ defmodule Klife.Connection.Broker do
     )
 
     :ok
+  end
+
+  defp log_sync_timeout(message_mod, client_name, broker_id, conn) do
+    Logger.error(
+      "Timeout waiting for #{inspect(message_mod)} response from broker #{broker_id} (client=#{inspect(client_name)})",
+      client: client_name,
+      broker_id: broker_id,
+      host: conn.host,
+      message: inspect(message_mod)
+    )
   end
 
   defp get_reconnect_delay(%__MODULE__{reconnect_attempts: attempts}) do

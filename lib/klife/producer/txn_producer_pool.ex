@@ -167,6 +167,8 @@ defmodule Klife.TxnProducerPool do
               stacktrace: inspect(__STACKTRACE__)
             )
 
+            :ok = recover_worker(client_name, state)
+
             {:error, reason}
         end
 
@@ -174,6 +176,35 @@ defmodule Klife.TxnProducerPool do
 
       {result, state}
     end)
+  end
+
+  # A failure inside the transaction (a user callback raise or an end_txn
+  # error) may leave the broker-side transaction open. If the worker went
+  # back to the pool like this, the next transaction to use it would join
+  # the leftover transaction and commit its records along with its own.
+  # Abort it before reuse. If even the abort fails, restart the producer:
+  # its init issues InitProducerId with the same transactional id, which
+  # makes the broker abort any pending transaction and bump the epoch.
+  defp recover_worker(client_name, %WorkerState{} = state) do
+    try do
+      :ok = end_txn(client_name, :abort)
+    catch
+      _kind, _reason ->
+        case Producer.get_pid(state.client_name, state.producer_name) do
+          {pid, _} when is_pid(pid) ->
+            try do
+              GenServer.stop(pid, :shutdown, 5_000)
+            catch
+              # Producer already stopping or restarting, nothing else to do
+              :exit, _reason -> :ok
+            end
+
+          _ ->
+            :ok
+        end
+    end
+
+    :ok
   end
 
   defp end_txn(client_name, action) do

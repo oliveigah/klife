@@ -158,6 +158,28 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     end
   end
 
+  defp wait_committed_offset(client, group_name, topic, partition, expected, timeout \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_committed_offset(client, group_name, topic, partition, expected, deadline)
+  end
+
+  defp do_wait_committed_offset(client, group_name, topic, partition, expected, deadline) do
+    case TestUtils.get_committed_offset(client, group_name, topic, partition) do
+      ^expected ->
+        :ok
+
+      other ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(50)
+          do_wait_committed_offset(client, group_name, topic, partition, expected, deadline)
+        else
+          flunk(
+            "expected committed offset #{expected} on #{topic}:#{partition} but got #{inspect(other)}"
+          )
+        end
+    end
+  end
+
   defp create_test_topics(count, opts \\ []) do
     partitions = Keyword.get(opts, :partitions, 4)
 
@@ -699,6 +721,84 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     refute_receive {^mod_name, :processed, _any_topic, _any_p, _any_cg, _recv_rec1}, 5_000
 
     assert_assignment(cg_assignments, mod_name, consumer_opts[:group_name])
+  end
+
+  test "committed offsets follow the kafka convention (next record to consume)", _ctx do
+    parent_pid = self()
+
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use CGTest, parent_pid: parent_pid
+    end
+
+    [topic1] = create_test_topics(1)
+
+    consumer_opts = [
+      topics: [
+        [name: topic1]
+      ],
+      group_name: Base.encode16(:rand.bytes(10))
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, id: :cg1, restart: :temporary)
+
+    cg_name = consumer_opts[:group_name]
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :started_consumer, ^topic1, ^p, ^cg_name}, 5_000
+    end
+
+    [
+      {:ok, %Record{offset: offset1}},
+      {:ok, %Record{offset: offset2}},
+      {:ok, %Record{offset: offset3}}
+    ] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)}
+      ])
+
+    assert_receive {^mod_name, :processed, ^topic1, 0, ^cg_name, %Record{offset: ^offset1}}, 5_000
+    assert_receive {^mod_name, :processed, ^topic1, 0, ^cg_name, %Record{offset: ^offset2}}, 5_000
+    assert_receive {^mod_name, :processed, ^topic1, 0, ^cg_name, %Record{offset: ^offset3}}, 5_000
+
+    # Kafka convention: the committed offset stored on the broker must be the
+    # NEXT offset to be consumed, not the last processed one. This is what
+    # external tooling (kafka-consumer-groups.sh) and other clients rely on.
+    assert :ok = wait_committed_offset(MyClient, cg_name, topic1, 0, offset3 + 1)
+
+    # Round trip: a restart must resume exactly after the last processed
+    # record, neither reprocessing old records nor skipping the next one.
+    :ok = stop_supervised(:cg1)
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :stopped_consumer, ^topic1, ^p, ^cg_name, _reason}, 10_000
+    end
+
+    start_supervised!({mod_name, consumer_opts}, id: :cg2, restart: :temporary)
+
+    for p <- 0..3 do
+      assert_receive {^mod_name, :started_consumer, ^topic1, ^p, ^cg_name}, 5_000
+    end
+
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_cg, _any_rec}, 5_000
+
+    [{:ok, %Record{offset: offset4} = exp_rec4}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)}
+      ])
+
+    assert offset4 == offset3 + 1
+
+    assert_receive {^mod_name, :processed, ^topic1, 0, ^cg_name,
+                    %Record{offset: ^offset4} = recv_rec4},
+                   5_000
+
+    TestUtils.assert_records(recv_rec4, exp_rec4)
+
+    assert :ok = wait_committed_offset(MyClient, cg_name, topic1, 0, offset4 + 1)
   end
 
   @tag capture_log: true

@@ -610,6 +610,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :timeout,
     :batcher_down,
     :broker_removed,
+    :unexpected_resp,
     -1,
     3,
     5,

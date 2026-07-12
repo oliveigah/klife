@@ -537,8 +537,11 @@ defmodule Klife.Producer.Batcher do
   defp build_records_map(batch_data_to_send) do
     batch_data_to_send
     |> Enum.map(fn {{t, p}, batch} ->
+      # batch.records holds records newest-first (they are prepended on insert
+      # and only reversed at serialization time), so they must be reversed here
+      # as well for the index to match each record's offset_delta.
       rec_map =
-        Record.parse_from_protocol(t, p, batch)
+        Record.parse_from_protocol(t, p, %{batch | records: Enum.reverse(batch.records)})
         |> Enum.with_index(fn rec, offset_delta -> {offset_delta, rec} end)
         |> Map.new()
 

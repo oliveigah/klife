@@ -1202,9 +1202,19 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     reset_offset_map = get_reset_offset(missing_resp_tp, state.client_name, state.topics)
 
+    # OffsetFetch returns offsets on the Kafka convention (the next offset to
+    # be consumed), while internally the consumer tracks the last processed
+    # one, so committed values are shifted back by 1. Entries without a
+    # committed offset (-1) are replaced by the reset map on the merge below.
+    parsed_offset_fetch_result =
+      Map.new(offset_fetch_result, fn
+        {tp, offset} when offset >= 0 -> {tp, offset - 1}
+        {tp, offset} -> {tp, offset}
+      end)
+
     tid_map = tname_map |> Enum.map(fn {tname, tid} -> {tid, tname} end) |> Map.new()
 
-    Map.merge(offset_fetch_result, reset_offset_map)
+    Map.merge(parsed_offset_fetch_result, reset_offset_map)
     |> Enum.map(fn {{tname, p}, offset} -> {{tid_map[tname], p}, offset} end)
     |> Map.new()
   end
