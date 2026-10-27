@@ -77,9 +77,10 @@ defmodule Klife.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:klife_protocol, git: "git@github.com:hengestone/klife_protocol.git",
-      branch: "sasl_auth_support",
-      override: "true"},
+      {:klife_protocol,
+       git: "git@github.com:hengestone/klife_protocol.git",
+       branch: "sasl_auth_support",
+       override: "true"},
       {:nimble_options, "~> 1.0"},
       {:nimble_pool, "~> 1.1"},
       {:uuid, "~> 1.1"},
