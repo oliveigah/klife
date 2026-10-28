@@ -77,7 +77,7 @@ defmodule Klife.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:klife_protocol, "~> 1.0"},
+      {:klife_protocol, "~> 2.0"},
       {:nimble_options, "~> 1.0"},
       {:nimble_pool, "~> 1.1"},
       {:uuid, "~> 1.1"},
