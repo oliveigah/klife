@@ -87,39 +87,41 @@ defmodule Klife.Connection.SystemTest do
     Enum.each(brokers_list, &check_broker_connection(client_name, &1))
   end
 
-  test "setup ssl with sasl auth", %{test: test_name} do
-    client_name = :"#{__MODULE__}.#{test_name}"
+  for mechanism <- ["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"] do
+    test "setup ssl with sasl #{mechanism} auth", %{test: test_name} do
+      client_name = :"#{__MODULE__}.#{test_name}"
 
-    input =
-      [
-        client_name: client_name,
-        bootstrap_servers: ["localhost:19094", "localhost:29094"],
-        ssl: true,
-        connect_opts: [
-          verify: :verify_peer,
-          cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-        ],
-        socket_opts: [
-          delay_send: true
-        ],
-        sasl_opts: [
-          mechanism: "PLAIN",
-          mechanism_opts: [
-            username: "klifeusr",
-            password: "klifepwd"
-          ]
-        ],
-        connection_count: 1,
-        default_request_timeout_ms: 30_000
-      ]
-      |> Map.new()
+      input =
+        [
+          client_name: client_name,
+          bootstrap_servers: ["localhost:19094", "localhost:29094"],
+          ssl: true,
+          connect_opts: [
+            verify: :verify_peer,
+            cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+          ],
+          socket_opts: [
+            delay_send: true
+          ],
+          sasl_opts: [
+            mechanism: unquote(mechanism),
+            mechanism_opts: [
+              username: "klifeusr",
+              password: "klifepwd"
+            ]
+          ],
+          connection_count: 1,
+          default_request_timeout_ms: 30_000
+        ]
+        |> Map.new()
 
-    assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
+      assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
-    brokers_list = Utils.get_brokers(client_name)
-    assert length(brokers_list) == 3
+      brokers_list = Utils.get_brokers(client_name)
+      assert length(brokers_list) == 3
 
-    Enum.each(brokers_list, &check_broker_connection(client_name, &1))
+      Enum.each(brokers_list, &check_broker_connection(client_name, &1))
+    end
   end
 
   test "multiple clients", %{test: test_name} do

@@ -13,6 +13,7 @@ defmodule Klife.Connection.Broker do
 
   @reconnect_delays_seconds [1, 1, 1, 1, 5, 5, 10]
 
+  @derive {Inspect, except: [:sasl_opts]}
   defstruct [
     :broker_id,
     :client_name,

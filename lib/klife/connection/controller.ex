@@ -64,7 +64,7 @@ defmodule Klife.Connection.Controller do
       required: false,
       default: [],
       doc:
-        "Options to configure SASL authentication, see SASL section for supported mechanisms and examples."
+        "Options to configure SASL authentication, see the [SASL section](guides/examples/client_configuration.md#sasl) for supported mechanisms and examples."
     ],
     default_request_timeout_ms: [
       type: :pos_integer,

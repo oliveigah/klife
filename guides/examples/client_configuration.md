@@ -38,6 +38,36 @@ This client will connect to brokers using non ssl connection and produce message
 
 This client will connect to brokers using ssl connection, `connect_opts` and `socket_opts` are forwarded to erlang module `:ssl` in order to proper configure the socket. See the documentation for more details.
 
+## SASL
+
+When `sasl_opts` is set, every broker connection authenticates with the given `mechanism`. The supported mechanisms are:
+
+- `"PLAIN"`: sends the password as is, so use it only with `ssl: true`
+- `"SCRAM-SHA-256"` and `"SCRAM-SHA-512"`: the password never leaves the client
+
+All of them take `username` and `password` as `mechanism_opts`:
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19094", "localhost:29094"],
+      ssl: true,
+      sasl_opts: [
+        mechanism: "SCRAM-SHA-512",
+        mechanism_opts: [
+          username: "klifeusr",
+          password: "klifepwd"
+        ]
+      ]
+    ]
+```
+
+> #### Session expiration {: .warning}
+>
+> Klife does not re-authenticate connections yet. If the broker sets `connections.max.reauth.ms`,
+> once a session expires the broker closes the connection on its next request without answering it:
+> that request fails with a timeout and Klife reconnects.
+
 ## Defining and using multiple producers
 
 ```elixir
