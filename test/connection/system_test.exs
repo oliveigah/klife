@@ -1,5 +1,6 @@
 defmodule Klife.Connection.SystemTest do
   use ExUnit.Case
+  import ExUnit.CaptureLog
   alias Klife.Utils
   alias Klife.PubSub
   alias Klife.TestUtils
@@ -122,6 +123,93 @@ defmodule Klife.Connection.SystemTest do
 
       Enum.each(brokers_list, &check_broker_connection(client_name, &1))
     end
+  end
+
+  # Brokers without a configured validator accept unsecured JWTs ("alg": "none"),
+  # and OAUTHBEARER sessions end when their token expires
+  def unsecured_jwt(expires_in_seconds) do
+    exp = System.os_time(:second) + expires_in_seconds
+    header = Base.url_encode64(~s({"alg":"none"}), padding: false)
+    claims = Base.url_encode64(~s({"sub":"klifeusr","exp":#{exp}}), padding: false)
+    "#{header}.#{claims}."
+  end
+
+  defp oauth_input(client_name, token_seconds) do
+    %{
+      client_name: client_name,
+      bootstrap_servers: ["localhost:19094", "localhost:29094"],
+      ssl: true,
+      connect_opts: [
+        verify: :verify_peer,
+        cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
+      ],
+      socket_opts: [],
+      sasl_opts: [
+        mechanism: "OAUTHBEARER",
+        mechanism_opts: [token_mfa: {__MODULE__, :unsecured_jwt, [token_seconds]}]
+      ],
+      connection_count: 2,
+      # sessions must outlast it + 5s
+      default_request_timeout_ms: 1_000
+    }
+  end
+
+  defp check_connections_until(client_name, deadline) do
+    if System.monotonic_time(:millisecond) < deadline do
+      Enum.each(Utils.get_brokers(client_name), &check_broker_connection(client_name, &1))
+      check_connections_until(client_name, deadline)
+    end
+  end
+
+  defp sockets(client_name, controller_pid) do
+    broker_sockets =
+      for broker_id <- Utils.get_brokers(client_name), idx <- 0..1 do
+        :persistent_term.get({Broker, client_name, broker_id, idx}).socket
+      end
+
+    [:sys.get_state(controller_pid).bootstrap_conn.socket | broker_sockets]
+  end
+
+  @tag timeout: 60_000
+  test "replaces connections before their sasl sessions end", %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    # The test config silences every log, but the warning refuted below must be seen
+    level = Logger.level()
+    Logger.configure(level: :warning)
+    on_exit(fn -> Logger.configure(level: level) end)
+
+    log =
+      capture_log(fn ->
+        # 8s tokens: sessions of 7-8s, replaced every 6-7.6s, about twice in the 16s below
+        pid = start_supervised!({ConnController, oauth_input(client_name, 8)})
+        first_sockets = sockets(client_name, pid)
+
+        # Many concurrent callers, so requests are in flight on every swap.
+        # Any request sent on an expired session gets no reply and fails here
+        deadline = System.monotonic_time(:millisecond) + 16_000
+
+        1..20
+        |> Enum.map(fn _ ->
+          Task.async(fn -> check_connections_until(client_name, deadline) end)
+        end)
+        |> Task.await_many(:infinity)
+
+        for {first, last} <- Enum.zip(first_sockets, sockets(client_name, pid)) do
+          assert first != last
+        end
+      end)
+
+    # An expired bootstrap connection is only noticed by failing the cluster check
+    refute log =~ "will re-initialize bootstrap connection"
+  end
+
+  @tag capture_log: true
+  test "refuses sasl sessions shorter than the request timeout + 5s", %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    assert {:error, reason} = start_supervised({ConnController, oauth_input(client_name, 3)})
+    assert inspect(reason) =~ "shorter than default_request_timeout_ms + 5000"
   end
 
   test "multiple clients", %{test: test_name} do

@@ -44,8 +44,9 @@ When `sasl_opts` is set, every broker connection authenticates with the given `m
 
 - `"PLAIN"`: sends the password as is, so use it only with `ssl: true`
 - `"SCRAM-SHA-256"` and `"SCRAM-SHA-512"`: the password never leaves the client
+- `"OAUTHBEARER"`: sends a token you provide
 
-All of them take `username` and `password` as `mechanism_opts`:
+`PLAIN` and `SCRAM` take `username` and `password` as `mechanism_opts`:
 
 ```elixir
   config :my_app, MyApp.Client,
@@ -62,11 +63,30 @@ All of them take `username` and `password` as `mechanism_opts`:
     ]
 ```
 
-> #### Session expiration {: .warning}
+`OAUTHBEARER` takes a `token_mfa`, applied on every authentication to get the token (a binary), and optional `extensions` (a map):
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19094", "localhost:29094"],
+      ssl: true,
+      sasl_opts: [
+        mechanism: "OAUTHBEARER",
+        mechanism_opts: [
+          token_mfa: {MyApp.TokenCache, :get_token, []}
+        ]
+      ]
+    ]
+```
+
+Fetching, caching and refreshing the token is up to you. Since every connection authenticates on its own, `token_mfa` should return a cached token, and refresh it before 80% of its lifetime: a session never outlives its token.
+
+> #### Session expiration {: .info}
 >
-> Klife does not re-authenticate connections yet. If the broker sets `connections.max.reauth.ms`,
-> once a session expires the broker closes the connection on its next request without answering it:
-> that request fails with a timeout and Klife reconnects.
+> Brokers may end sessions: after `connections.max.reauth.ms` if set, and when the token expires for `OAUTHBEARER`.
+> Shortly before that (between 85% and 95% of the session), Klife replaces each connection with a newly
+> authenticated one. The old one keeps receiving replies to requests already sent for
+> `default_request_timeout_ms` + 5 seconds, then it is closed. Sessions shorter than that are refused.
 
 ## Defining and using multiple producers
 

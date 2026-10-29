@@ -4,13 +4,14 @@ defmodule Klife.Connection do
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages, as: M
 
-  defstruct [:socket, :host, :port, :read_timeout, :ssl]
+  alias Klife.Connection.Controller
+
+  defstruct [:socket, :host, :port, :read_timeout, :ssl, :session_lifetime_ms]
 
   def new(url, ssl, connect_opts, socket_opts, sasl_opts) do
     %{host: host, port: port} = parse_url(url)
 
-    connect_opts =
-      Keyword.merge(connect_opts, backend: get_socket_backend(ssl), sasl_opts: sasl_opts)
+    connect_opts = Keyword.merge(connect_opts, backend: get_socket_backend(ssl))
 
     case Socket.connect(host, port, connect_opts) do
       {:ok, socket} ->
@@ -23,6 +24,7 @@ defmodule Klife.Connection do
             # TODO: Should we expose this?
             read_timeout: :timer.seconds(60)
           }
+          |> authenticate_sasl(sasl_opts)
 
         :ok = socket_opts(conn, socket_opts)
 
@@ -33,8 +35,35 @@ defmodule Klife.Connection do
     end
   end
 
+  # Raises if the broker refuses the credentials. `session_lifetime_ms` is how long
+  # the broker keeps the session, 0 when it never ends (also without SASL)
   def authenticate_sasl(%__MODULE__{socket: socket} = conn, sasl_opts) do
-    Socket.authenticate(socket, get_socket_backend(conn.ssl), sasl_opts)
+    {:ok, %{session_lifetime_ms: lifetime}} =
+      Socket.authenticate(socket, get_socket_backend(conn.ssl), sasl_opts)
+
+    %__MODULE__{conn | session_lifetime_ms: lifetime}
+  end
+
+  # A replaced connection keeps receiving replies this long, so requests sent
+  # before the swap can still finish
+  def drain_ms(client_name),
+    do: Controller.get_default_request_timeout_ms(client_name) + :timer.seconds(5)
+
+  # When to replace `conn` by a newly authenticated one, nil if its session never ends.
+  # Same window as Kafka's Java client: 85% of the session plus up to 10% of jitter,
+  # so connections opened together don't re-authenticate together
+  def reauth_in_ms(%__MODULE__{session_lifetime_ms: 0}, _drain_ms), do: nil
+
+  def reauth_in_ms(%__MODULE__{session_lifetime_ms: lifetime}, drain_ms)
+      when lifetime >= drain_ms,
+      do: round(lifetime * (0.85 + :rand.uniform() * 0.10))
+
+  def reauth_in_ms(%__MODULE__{session_lifetime_ms: lifetime} = conn, drain_ms) do
+    raise """
+    SASL session on #{conn.host}:#{conn.port} lasts #{lifetime}ms, shorter than \
+    default_request_timeout_ms + 5000 (#{drain_ms}ms): connections would expire \
+    before their requests could finish
+    """
   end
 
   def build_sasl_opts([], _), do: []

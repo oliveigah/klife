@@ -13,11 +13,19 @@ defmodule Klife.Connection.Broker do
 
   @reconnect_delays_seconds [1, 1, 1, 1, 5, 5, 10]
 
+  # Replies a socket delivers before going passive. Re-arming it once per reply
+  # (active: :once) costs a round trip with the socket for each of them
+  @active_n 100
+
+  # At most two connections at a time: `conn` is the active one, where callers send
+  # requests, and `draining_conn` the one it replaced on re-authentication, still
+  # receiving replies to requests sent before the swap
   @derive {Inspect, except: [:sasl_opts]}
   defstruct [
     :broker_id,
     :client_name,
     :conn,
+    :draining_conn,
     :ssl,
     :connect_opts,
     :socket_opts,
@@ -71,23 +79,66 @@ defmodule Klife.Connection.Broker do
 
   def handle_info(:connect, %__MODULE__{} = state), do: {:noreply, do_connect(state)}
 
-  def handle_info({:tcp, _port, msg}, %__MODULE__{} = state) do
-    :ok = reply_message(msg, state.client_name, state.conn)
+  def handle_info({:tcp, _socket, msg}, %__MODULE__{} = state) do
+    reply_message(msg, state)
     {:noreply, state}
   end
 
-  def handle_info({:ssl, _ssl_details, msg}, %__MODULE__{} = state) do
-    :ok = reply_message(msg, state.client_name, state.conn)
+  def handle_info({:ssl, _socket, msg}, %__MODULE__{} = state) do
+    reply_message(msg, state)
     {:noreply, state}
   end
 
-  def handle_info({:tcp_closed, _port}, %__MODULE__{} = state) do
-    {:noreply, do_connect(state)}
+  # The socket delivered its @active_n replies and waits to be re-armed
+  def handle_info({:tcp_passive, socket}, %__MODULE__{} = state) do
+    :ok = rearm(socket, state)
+    {:noreply, state}
   end
 
-  def handle_info({:ssl_closed, _ssl_details}, %__MODULE__{} = state) do
-    {:noreply, do_connect(state)}
+  def handle_info({:ssl_passive, socket}, %__MODULE__{} = state) do
+    :ok = rearm(socket, state)
+    {:noreply, state}
   end
+
+  # Unexpected disconnection of the active connection. It is dropped before reconnecting
+  # so its pending re-authentication can't fire if the reconnection fails
+  def handle_info({:tcp_closed, socket}, %__MODULE__{conn: %Connection{socket: socket}} = state),
+    do: {:noreply, do_connect(%__MODULE__{state | conn: nil})}
+
+  def handle_info({:ssl_closed, socket}, %__MODULE__{conn: %Connection{socket: socket}} = state),
+    do: {:noreply, do_connect(%__MODULE__{state | conn: nil})}
+
+  # The draining connection (or an older one): nothing depends on it anymore
+  def handle_info({:tcp_closed, _socket}, %__MODULE__{} = state), do: {:noreply, state}
+  def handle_info({:ssl_closed, _socket}, %__MODULE__{} = state), do: {:noreply, state}
+
+  # The session is about to end: callers move to a newly authenticated connection
+  # while the old one drains
+  def handle_info({:reauth, socket}, %__MODULE__{conn: %Connection{socket: socket} = old} = state) do
+    {:ok, conn} = open_conn(state)
+
+    # Only when sessions are barely longer than the drain: the previous draining
+    # connection has drained for 85% of a session by now, so it makes room
+    if state.draining_conn, do: Connection.close(state.draining_conn)
+
+    Process.send_after(self(), {:close_draining, socket}, Connection.drain_ms(state.client_name))
+
+    {:noreply, activate_conn(%__MODULE__{state | draining_conn: old}, conn)}
+  end
+
+  # Set for a connection that was replaced by a reconnection meanwhile
+  def handle_info({:reauth, _socket}, %__MODULE__{} = state), do: {:noreply, state}
+
+  def handle_info(
+        {:close_draining, socket},
+        %__MODULE__{draining_conn: %Connection{socket: socket} = conn} = state
+      ) do
+    Connection.close(conn)
+    {:noreply, %__MODULE__{state | draining_conn: nil}}
+  end
+
+  # Already closed to make room for a newer draining connection
+  def handle_info({:close_draining, _socket}, %__MODULE__{} = state), do: {:noreply, state}
 
   def terminate(reason, %__MODULE__{} = state) do
     :persistent_term.erase({__MODULE__, state.client_name, state.broker_id, state.broker_index})
@@ -236,7 +287,24 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  defp reply_message(<<correlation_id::32-signed, _rest::binary>> = reply, client_name, conn) do
+  # Replies arrive on the active connection or the draining one, so either may need
+  # re-arming. A connection closed by now has nothing left to receive
+  defp rearm(socket, %__MODULE__{} = state) do
+    case state do
+      %__MODULE__{conn: %Connection{socket: ^socket} = conn} ->
+        Connection.socket_opts(conn, active: @active_n)
+
+      %__MODULE__{draining_conn: %Connection{socket: ^socket} = conn} ->
+        Connection.socket_opts(conn, active: @active_n)
+
+      %__MODULE__{} ->
+        :ok
+    end
+  end
+
+  defp reply_message(<<correlation_id::32-signed, _rest::binary>> = reply, state) do
+    client_name = state.client_name
+
     case Controller.take_from_in_flight(client_name, correlation_id) do
       # sync send
       {^correlation_id, waiting_pid} when is_pid(waiting_pid) ->
@@ -257,7 +325,8 @@ defmodule Klife.Connection.Broker do
           Logger.warning(
             "Delivery confirmation arrived after timeout for #{inspect(msg_mod)} (client=#{inspect(client_name)})",
             client: client_name,
-            broker_id: conn.host,
+            broker_id: state.broker_id,
+            host: state.url,
             message: inspect(msg_mod)
           )
         end
@@ -285,18 +354,14 @@ defmodule Klife.Connection.Broker do
 
         nil
     end
-
-    Connection.socket_opts(conn, active: :once)
   end
 
-  defp reply_message(_, client_name, conn) do
+  defp reply_message(_, state) do
     Logger.warning(
-      "Unknown message received (missing correlation ID) (client=#{inspect(client_name)})",
-      client: client_name,
-      host: conn.host
+      "Unknown message received (missing correlation ID) (client=#{inspect(state.client_name)})",
+      client: state.client_name,
+      host: state.url
     )
-
-    :ok
   end
 
   defp log_sync_timeout(message_mod, client_name, broker_id, conn) do
@@ -339,37 +404,10 @@ defmodule Klife.Connection.Broker do
     end
   end
 
-  defp do_connect(
-         %__MODULE__{
-           url: url,
-           ssl: ssl,
-           connect_opts: connect_opts,
-           socket_opts: socket_opts,
-           sasl_opts: sasl_opts
-         } = state
-       ) do
-    case Connection.new(
-           url,
-           ssl,
-           # Here we need active false because the current
-           # SASL implementation rely on being able to manually
-           # control IO operations on the socket during authentication
-           Keyword.merge(connect_opts, active: false),
-           socket_opts,
-           sasl_opts
-         ) do
+  defp do_connect(%__MODULE__{} = state) do
+    case open_conn(state) do
       {:ok, conn} ->
-        # After authentication we can go back to once.
-        # The underlying socket is stateful, so that's why
-        # we don't care about the return value of `socket_opts`.
-        Connection.socket_opts(conn, active: :once)
-
-        :persistent_term.put(
-          {__MODULE__, state.client_name, state.broker_id, state.broker_index},
-          conn
-        )
-
-        %__MODULE__{state | conn: conn, reconnect_attempts: 0}
+        activate_conn(%__MODULE__{state | reconnect_attempts: 0}, conn)
 
       {:error, _reason} = res ->
         Logger.error(
@@ -386,5 +424,36 @@ defmodule Klife.Connection.Broker do
 
         %__MODULE__{state | reconnect_attempts: state.reconnect_attempts + 1}
     end
+  end
+
+  defp open_conn(%__MODULE__{} = state) do
+    # Here we need active false because the current
+    # SASL implementation rely on being able to manually
+    # control IO operations on the socket during authentication
+    connect_opts = Keyword.merge(state.connect_opts, active: false)
+
+    with {:ok, conn} <-
+           Connection.new(state.url, state.ssl, connect_opts, state.socket_opts, state.sasl_opts) do
+      # After authentication we can go back to active.
+      # The underlying socket is stateful, so that's why
+      # we don't care about the return value of `socket_opts`.
+      Connection.socket_opts(conn, active: @active_n)
+      {:ok, conn}
+    end
+  end
+
+  # Callers send their requests on `conn` from now on
+  defp activate_conn(%__MODULE__{} = state, %Connection{} = conn) do
+    # Raises on sessions too short to drain, before callers could use them
+    reauth_in_ms = Connection.reauth_in_ms(conn, Connection.drain_ms(state.client_name))
+
+    :persistent_term.put(
+      {__MODULE__, state.client_name, state.broker_id, state.broker_index},
+      conn
+    )
+
+    if reauth_in_ms, do: Process.send_after(self(), {:reauth, conn.socket}, reauth_in_ms)
+
+    %__MODULE__{state | conn: conn}
   end
 end
