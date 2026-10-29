@@ -13,17 +13,28 @@ inconclusive checks do not count as a pass.
    [test/compose_files](test/compose_files). Review changes since the previous
    release and ensure affected behavior has focused test coverage.
 
-3. **Compare performance.** Use [benchmarks.md](benchmarks.md),
-   [the benchmark task](lib/mix/tasks/benchmark.ex) and
-   [the async benchmark](test/support/async_producer_benchmark.ex) as starting points;
-   verify they support the comparison and metrics required. Compare sync/batch/async
-   production and shared/exclusive consumption, adding workloads for changed paths.
-   Keep host, runtime, brokers, data and settings identical. Warm up, then run at
-   least five samples per version, alternating order. Measure successful throughput,
-   p95/p99 latency at matched load, CPU, memory and queue growth. Validate completion
-   counts; randomized simulation rates and enqueue rates are insufficient.
+3. **Compare performance.** Follow [the release benchmark guide](bench/README.md)
+   and [task](lib/mix/tasks/release_benchmark.ex). Run
+   `mix release_benchmark --baseline <released-tag> --samples 5`; add
+   `--start-kafka` if needed. By default, this covers catch-up lag, heavy synchronous
+   production (single/batch), heavy asynchronous production and latency-sensitive
+   records, with increasing scales, default/optimized profiles and shared/exclusive
+   fetchers where applicable. Each scenario's README explains use cases and its
+   **Main metrics to observe**. Add workloads for changed paths when needed.
+   Use the same current harness, host, runtime, brokers, data and explicit settings
+   for both versions. The task builds each version with its own dependencies,
+   warms up and alternates version order across samples. Compare completed
+   records/s, acknowledgment/delivery p95/p99 at matched load and committed catch-up
+   time. Require correct completion counts, zero dropped offers and zero remaining
+   committed lag for catch-up. Increase `--seconds` for sparse tail-latency samples
+   and `--records-per-partition` when startup dominates backlog recovery.
+   Keep the scenario-grouped `report.md`, detailed samples and CSV under Git-ignored
+   `bench/results/`. Compare matching workload versions, variants, scales and
+   profiles; rerun both versions after workload changes. Collect CPU, memory and
+   queue growth separately; the task does not measure these.
    Default tolerances: at most 5% throughput loss or 10% latency/resource increase.
-   Investigate repeatable regressions; noisy results remain inconclusive.
+   Investigate repeatable regressions; overlapping sample ranges beyond tolerance
+   remain inconclusive. Short smoke checks do not establish release performance.
 
 4. **Run simulations.** Read [simulator/README.md](simulator/README.md) for
    startup, stable/chaos modes, client selection and replay controls.
