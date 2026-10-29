@@ -42,7 +42,11 @@ defmodule Klife.MetadataCache do
       triggered_check?: false
     }
 
-    :ets.new(metadata_table(state.client_name), [
+    # Built once: every produce call looks it up
+    table = :"metadata_cache.#{state.client_name}"
+    :persistent_term.put({__MODULE__, state.client_name, :table}, table)
+
+    :ets.new(table, [
       :set,
       :public,
       :named_table,
@@ -231,20 +235,23 @@ defmodule Klife.MetadataCache do
     :ok
   end
 
-  @metadata_table_name_to_idxs %{
-    key: 0,
-    topic_name: 1,
-    partition_idx: 2,
-    leader_id: 3,
-    leader_epoch: 4,
-    topic_id: 5,
-    max_partition: 6,
-    default_producer: 7,
-    default_partitioner: 8
-  }
+  # The order is the position of each field in the table's tuples
+  @metadata_fields [
+    :key,
+    :topic_name,
+    :partition_idx,
+    :leader_id,
+    :leader_epoch,
+    :topic_id,
+    :max_partition,
+    :default_producer,
+    :default_partitioner
+  ]
+
+  @metadata_table_name_to_idxs @metadata_fields |> Enum.with_index() |> Map.new()
 
   defp metadata_table(client_name),
-    do: :"metadata_cache.#{client_name}"
+    do: :persistent_term.get({__MODULE__, client_name, :table})
 
   def insert_on_metadata_table(client_name, vals) do
     table = metadata_table(client_name)
@@ -288,17 +295,14 @@ defmodule Klife.MetadataCache do
     |> :ets.lookup_element({topic, partition}, @metadata_table_name_to_idxs[attr] + 1)
   end
 
-  defp metadata_map_to_tuple(val) do
-    @metadata_table_name_to_idxs
-    |> Enum.map(fn {attr, idx} -> {idx, Map.fetch!(val, attr)} end)
-    |> Enum.sort_by(fn {k, _v} -> k end)
-    |> Enum.map(fn {_k, v} -> v end)
-    |> List.to_tuple()
-  end
+  # Both conversions are generated from @metadata_fields, so the tuple layout
+  # and the map keys can't drift apart, and each one is a single literal
+  # instead of rebuilding the map field by field on every read.
+  @metadata_vars Enum.map(@metadata_fields, &Macro.var(&1, __MODULE__))
 
-  defp metadata_tuple_to_map(val) do
-    @metadata_table_name_to_idxs
-    |> Enum.map(fn {attr, idx} -> {attr, elem(val, idx)} end)
-    |> Map.new()
-  end
+  defp metadata_map_to_tuple(%{unquote_splicing(Enum.zip(@metadata_fields, @metadata_vars))}),
+    do: {unquote_splicing(@metadata_vars)}
+
+  defp metadata_tuple_to_map({unquote_splicing(@metadata_vars)}),
+    do: %{unquote_splicing(Enum.zip(@metadata_fields, @metadata_vars))}
 end
