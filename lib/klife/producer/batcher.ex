@@ -206,11 +206,19 @@ defmodule Klife.Producer.Batcher do
     {new_pe, bump_map} =
       Enum.reduce(topics_partitions_list, {pe, %{}}, fn {topic, partition}, {acc_pe, acc_bump} ->
         key = {topic, partition}
-        new_pe_val = Producer.new_epoch(client_name, producer_name, topic, partition)
-        new_pe = Map.put(acc_pe, key, new_pe_val)
-        new_bump = Map.put(acc_bump, key, {new_pe_val, 0})
-        {new_pe, new_bump}
+
+        case Producer.bump_epoch(client_name, producer_name, topic, partition) do
+          {:ok, new_pe_val} ->
+            {Map.put(acc_pe, key, new_pe_val), Map.put(acc_bump, key, {new_pe_val, 0})}
+
+          # The partition moved to another batcher. Forget it, so if it comes
+          # back here it is claimed with a new epoch.
+          {:error, :stale} ->
+            {Map.delete(acc_pe, key), acc_bump}
+        end
       end)
+
+    stale_keys = Enum.reject(topics_partitions_list, &Map.has_key?(bump_map, &1))
 
     {new_queue, new_current_batch, rewritten_bs} =
       rewrite_batches_on_epoch_bump(
@@ -220,7 +228,7 @@ defmodule Klife.Producer.Batcher do
         bump_map
       )
 
-    new_bs = Map.merge(bs, rewritten_bs)
+    new_bs = bs |> Map.drop(stale_keys) |> Map.merge(rewritten_bs)
     new_state = %{state | producer_epochs: new_pe, base_sequences: new_bs}
 
     tp_set = MapSet.new(topics_partitions_list)
