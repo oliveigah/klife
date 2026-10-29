@@ -86,7 +86,9 @@ Fetching, caching and refreshing the token is up to you. Since every connection 
 > Brokers may end sessions: after `connections.max.reauth.ms` if set, and when the token expires for `OAUTHBEARER`.
 > Shortly before that (between 85% and 95% of the session), Klife replaces each connection with a newly
 > authenticated one. The old one keeps receiving replies to requests already sent for
-> `default_request_timeout_ms` + 5 seconds, then it is closed. Sessions shorter than that are refused.
+> `default_request_timeout_ms` + 5 seconds, then it is closed. That drain always fits in what is left of
+> the old session, so short sessions are replaced earlier, and sessions shorter than two drains
+> (70 seconds with the default request timeout) are refused.
 
 ## Defining and using multiple producers
 

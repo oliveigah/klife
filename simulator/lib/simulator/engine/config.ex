@@ -113,11 +113,11 @@ defmodule Simulator.EngineConfig do
   end
 
   # Short lived, so OAuthClient connections are replaced many times per run.
-  # Klife refuses sessions shorter than default_request_timeout_ms + 5s (35s), and
-  # below ~41s a connection may still be draining when its replacement is replaced
+  # Klife refuses sessions shorter than two drains, 2 * (default_request_timeout_ms + 5s)
+  # = 70s, and tokens expire on whole seconds, so a token of N seconds may give N - 1
   defp random_value(:oauth_token_lifetime_s, _config) do
     case System.get_env("OAUTH_TOKEN_LIFETIME_S") do
-      nil -> weighted_random_opt([{2, 40}, 60, 120])
+      nil -> weighted_random_opt([{2, 75}, 90, 120])
       lifetime_s -> String.to_integer(lifetime_s)
     end
   end
