@@ -333,6 +333,25 @@ defmodule Klife.Producer.Dispatcher do
 
             :discard
 
+          # The leader moved: retrying here would only hit this broker until the
+          # delivery deadline, and sending to the new leader could land these
+          # records after newer ones. No epoch bump, the partition's sequence
+          # belongs to the new leader's batcher now. Ours forgets it, so if it
+          # comes back here it is claimed with a new epoch.
+          error_code == 6 and leader_moved?(client_name, topic, partition, broker_id) ->
+            Logger.warning(
+              "Produce error on #{topic}:#{partition}, leader moved, message discarded (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
+              client: client_name,
+              producer: producer_name,
+              broker_id: broker_id,
+              topic: topic,
+              partition: partition,
+              error_code: error_code
+            )
+
+            send(state.batcher_pid, {:remove_topic_partition, topic, partition})
+            :discard
+
           true ->
             Logger.warning(
               "Produce error on #{topic}:#{partition}, message will be retried (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
@@ -424,6 +443,13 @@ defmodule Klife.Producer.Dispatcher do
       }
 
       {:noreply, new_state}
+    end
+  end
+
+  defp leader_moved?(client_name, topic, partition, broker_id) do
+    case MetadataCache.get_metadata(client_name, topic, partition) do
+      {:ok, %{leader_id: leader_id}} -> leader_id != broker_id
+      {:error, :not_found} -> false
     end
   end
 

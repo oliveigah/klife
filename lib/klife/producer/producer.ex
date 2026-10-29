@@ -311,6 +311,13 @@ defmodule Klife.Producer do
   end
 
   @doc false
+  def bump_epoch(client_name, producer_name, topic, partition) do
+    {__MODULE__, client_name, producer_name}
+    |> via_tuple()
+    |> GenServer.call({:bump_epoch, topic, partition})
+  end
+
+  @doc false
   def get_txn_pool_data(client_name, producer_name) do
     {__MODULE__, client_name, producer_name}
     |> via_tuple()
@@ -415,6 +422,26 @@ defmodule Klife.Producer do
         end
 
         {:reply, epoch, new_state}
+    end
+  end
+
+  # Only the batcher that last claimed the partition may bump its epoch. A bump
+  # from any other batcher is stale: the partition moved and the new batcher
+  # claimed it. Honoring it would take the partition back from the batcher
+  # receiving its records, resetting its sequences mid-batch.
+  def handle_call(
+        {:bump_epoch, topic, partition},
+        {called_pid, _tag},
+        %__MODULE__{epochs: epochs} = state
+      ) do
+    case Map.get(epochs, {topic, partition}) do
+      {curr_epoch, ^called_pid} ->
+        epoch = curr_epoch + 1
+        new_state = %{state | epochs: Map.put(epochs, {topic, partition}, {epoch, called_pid})}
+        {:reply, {:ok, epoch}, new_state}
+
+      _other_owner ->
+        {:reply, {:error, :stale}, state}
     end
   end
 

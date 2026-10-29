@@ -908,6 +908,57 @@ defmodule Klife.ProducerTest do
     assert [{:ok, %Record{}}] = MyClient.produce_batch([rec2])
   end
 
+  test "a bump from a batcher that lost the partition is refused" do
+    producer_name = Klife.Client.default_producer_name()
+    [{producer_pid, _}] = registry_lookup({Klife.Producer, MyClient, producer_name})
+    topic = "stale_bump_topic_#{System.unique_integer([:positive])}"
+
+    # This process plays the batcher that loses the partition, the task the
+    # batcher that claims it next.
+    _epoch = Producer.new_epoch(MyClient, producer_name, topic, 0)
+
+    {new_owner_pid, new_owner_epoch} =
+      Task.async(fn -> {self(), Producer.new_epoch(MyClient, producer_name, topic, 0)} end)
+      |> Task.await()
+
+    assert_receive {:remove_topic_partition, ^topic, 0}
+    assert {:error, :stale} = Producer.bump_epoch(MyClient, producer_name, topic, 0)
+
+    assert {^new_owner_epoch, ^new_owner_pid} =
+             producer_pid
+             |> :sys.get_state()
+             |> Map.get(:epochs)
+             |> Map.get({topic, 0})
+  end
+
+  @tag capture_log: true
+  test "records caught at the old leader of a moved partition fail fast" do
+    topic = "leader_move_topic_#{System.unique_integer([:positive])}"
+    :ok = Klife.Utils.create_topics(MyClient, [%{name: topic, partitions: 1}])
+
+    rec = fn -> %Record{value: :rand.bytes(10), topic: topic, partition: 0} end
+    assert {:ok, %Record{offset: first_offset}} = MyClient.produce(rec.())
+
+    {old_leader, _new_leader} = TestUtils.move_leader(MyClient, topic, 0)
+
+    # The client's view lags behind the move, as it does until the next
+    # metadata check, so the next record is sent to the old leader.
+    true = MetadataCache.update_metadata(MyClient, topic, 0, :leader_id, old_leader)
+
+    {elapsed_us, caught} = :timer.tc(fn -> MyClient.produce(rec.()) end)
+
+    assert {:error, %Record{error_code: 6}} = caught
+    assert elapsed_us < :timer.seconds(5) * 1000
+
+    offsets =
+      for _ <- 1..3 do
+        assert {:ok, %Record{offset: offset}} = MyClient.produce(rec.())
+        offset
+      end
+
+    assert [first_offset | offsets] == Enum.sort([first_offset | offsets])
+  end
+
   test "txn produce message - aborts" do
     rec1 = %Record{
       value: :rand.bytes(10),

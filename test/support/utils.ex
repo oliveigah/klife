@@ -344,6 +344,81 @@ defmodule Klife.TestUtils do
     )
   end
 
+  # Moves the partition's leadership to another of its replicas while both
+  # brokers stay alive, the way a preferred leader election does after a
+  # broker restart: reorders the replicas so the other one is preferred, runs
+  # the election and waits for the client metadata to see the new leader.
+  def move_leader(client_name, topic, partition) do
+    {:ok, %{content: %{topics: topics}}} =
+      Broker.send_message(M.Metadata, client_name, :controller, %{
+        topics: nil,
+        allow_auto_topic_creation: false,
+        include_topic_authorized_operations: false
+      })
+
+    %{leader_id: old_leader, replica_nodes: replicas} =
+      topics
+      |> Enum.find(&(&1.name == topic))
+      |> Map.fetch!(:partitions)
+      |> Enum.find(&(&1.partition_index == partition))
+
+    [new_leader | _] = replicas -- [old_leader]
+
+    reassignment = %{
+      timeout_ms: 15_000,
+      topics: [
+        %{
+          name: topic,
+          partitions: [
+            %{partition_index: partition, replicas: [new_leader | replicas -- [new_leader]]}
+          ]
+        }
+      ]
+    }
+
+    {:ok, %{content: %{error_code: 0, responses: [%{partitions: [%{error_code: 0}]}]}}} =
+      send_admin_message(M.AlterPartitionReassignments, 0, client_name, reassignment)
+
+    election = %{
+      election_type: 0,
+      topic_partitions: [%{topic: topic, partitions: [partition]}],
+      timeout_ms: 15_000
+    }
+
+    {:ok,
+     %{
+       content: %{
+         error_code: 0,
+         replica_election_results: [%{partition_result: [%{error_code: 0}]}]
+       }
+     }} = send_admin_message(M.ElectLeaders, 2, client_name, election)
+
+    :ok = wait_leader(client_name, topic, partition, new_leader, 100)
+
+    {old_leader, new_leader}
+  end
+
+  # Admin messages the client does not negotiate versions for
+  defp send_admin_message(message_mod, version, client_name, content) do
+    correlation_id = ConnController.get_next_correlation_id(client_name)
+    input = %{headers: %{correlation_id: correlation_id}, content: content}
+    data = message_mod.serialize_request(input, version)
+    Broker.send_raw_sync(data, message_mod, version, correlation_id, :controller, client_name, [])
+  end
+
+  defp wait_leader(_client_name, _topic, _partition, _leader, 0), do: {:error, :timeout}
+
+  defp wait_leader(client_name, topic, partition, leader, attempts) do
+    case Klife.MetadataCache.get_metadata_attribute(client_name, topic, partition, :leader_id) do
+      ^leader ->
+        :ok
+
+      _other ->
+        Process.sleep(100)
+        wait_leader(client_name, topic, partition, leader, attempts - 1)
+    end
+  end
+
   def setup() do
     :counters = :ets.new(:counters, [:set, :public, :named_table])
     :ok
