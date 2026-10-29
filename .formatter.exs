@@ -2,6 +2,6 @@
 [
   inputs: [
     "{mix,.formatter,.dialyzer_ignore}.exs",
-    "{config,lib,test,example,simulator}/**/*.{ex,exs}"
+    "{config,lib,test,example,simulator,bench}/**/*.{ex,exs}"
   ]
 ]
