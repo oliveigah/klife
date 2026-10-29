@@ -367,7 +367,7 @@ defmodule Klife.Producer.Batcher do
       last_offset_delta: -1,
       base_timestamp: nil,
       max_timestamp: nil,
-      producer_id: p_id,
+      producer_id: p_id || -1,
       producer_epoch: p_epoch,
       base_sequence: base_seq,
       records: [],
