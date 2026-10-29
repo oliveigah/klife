@@ -38,6 +38,56 @@ This client will connect to brokers using non ssl connection and produce message
 
 This client will connect to brokers using ssl connection, `connect_opts` and `socket_opts` are forwarded to erlang module `:ssl` in order to proper configure the socket. See the documentation for more details.
 
+## SASL
+
+When `sasl_opts` is set, every broker connection authenticates with the given `mechanism`. The supported mechanisms are:
+
+- `"PLAIN"`: sends the password as is, so use it only with `ssl: true`
+- `"SCRAM-SHA-256"` and `"SCRAM-SHA-512"`: the password never leaves the client
+- `"OAUTHBEARER"`: sends a token you provide
+
+`PLAIN` and `SCRAM` take `username` and `password` as `mechanism_opts`:
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19094", "localhost:29094"],
+      ssl: true,
+      sasl_opts: [
+        mechanism: "SCRAM-SHA-512",
+        mechanism_opts: [
+          username: "klifeusr",
+          password: "klifepwd"
+        ]
+      ]
+    ]
+```
+
+`OAUTHBEARER` takes a `token_mfa`, applied on every authentication to get the token (a binary), and optional `extensions` (a map):
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19094", "localhost:29094"],
+      ssl: true,
+      sasl_opts: [
+        mechanism: "OAUTHBEARER",
+        mechanism_opts: [
+          token_mfa: {MyApp.TokenCache, :get_token, []}
+        ]
+      ]
+    ]
+```
+
+Fetching, caching and refreshing the token is up to you. Since every connection authenticates on its own, `token_mfa` should return a cached token, and refresh it before 80% of its lifetime: a session never outlives its token.
+
+> #### Session expiration {: .info}
+>
+> Brokers may end sessions: after `connections.max.reauth.ms` if set, and when the token expires for `OAUTHBEARER`.
+> Shortly before that (between 85% and 95% of the session), Klife replaces each connection with a newly
+> authenticated one. The old one keeps receiving replies to requests already sent for
+> `default_request_timeout_ms` + 5 seconds, then it is closed. Sessions shorter than that are refused.
+
 ## Defining and using multiple producers
 
 ```elixir

@@ -24,7 +24,7 @@ Klife is a modern, ergonomic and high-performance Kafka client built from the gr
 - **Custom Partitioner per Topic**: Configurable partitioning strategy for each topic.
 - **Transactional Support**: Ecto-like transaction API for producing records.
 - **Testing Utilities**: Helpers for testing against a real broker without mocking.
-- **SASL Authentication**: Plain authentication support.
+- **SASL Authentication**: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512 and OAUTHBEARER mechanisms, re-authenticating before sessions expire.
 - **Broadway Support**: Supported via [off_broadway_klife](https://github.com/oliveigah/off_broadway_klife) connector
 
 ## Installation and Base setup

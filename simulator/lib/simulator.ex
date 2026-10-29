@@ -1,5 +1,15 @@
 defmodule Simulator do
-  @clients [Simulator.NormalClient, Simulator.TLSClient]
+  # Every client the application starts, a run uses some of them (see EngineConfig)
+  @clients [
+    Simulator.NormalClient,
+    Simulator.TLSClient,
+    Simulator.ScramSha256Client,
+    Simulator.ScramSha512Client,
+    Simulator.OAuthClient
+  ]
+
+  def clients, do: @clients
+
   def start_metrics() do
     spawn(fn ->
       :ets.new(:support_metrics, [:set, :public, :named_table])

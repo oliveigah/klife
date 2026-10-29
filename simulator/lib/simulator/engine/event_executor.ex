@@ -81,10 +81,8 @@ defmodule Simulator.Engine.EventExecutor do
   end
 
   defp do_wait_for_broker(broker_id, deadline) do
-    clients = [Simulator.NormalClient, Simulator.TLSClient]
-
     all_ready =
-      Enum.all?(clients, fn client ->
+      Enum.all?(Simulator.clients(), fn client ->
         known = ConnController.get_known_brokers(client)
 
         case broker_id do

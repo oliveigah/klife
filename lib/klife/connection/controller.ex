@@ -64,7 +64,7 @@ defmodule Klife.Connection.Controller do
       required: false,
       default: [],
       doc:
-        "Options to configure SASL authentication, see SASL section for supported mechanisms and examples."
+        "Options to configure SASL authentication, see the [SASL section](guides/examples/client_configuration.md#sasl) for supported mechanisms and examples."
     ],
     default_request_timeout_ms: [
       type: :pos_integer,
@@ -124,7 +124,11 @@ defmodule Klife.Connection.Controller do
     ssl = args.ssl
     client = args.client_name
 
-    :ets.new(get_in_flight_messages_table_name(client), [
+    # Built once: every request and reply looks it up
+    in_flight_table = :"in_flight_messages.#{client}"
+    :persistent_term.put({__MODULE__, client, :in_flight_table}, in_flight_table)
+
+    :ets.new(in_flight_table, [
       :set,
       :public,
       :named_table,
@@ -179,7 +183,8 @@ defmodule Klife.Connection.Controller do
 
     negotiate_api_versions(conn, state.client_name)
     new_sasl_opts = Connection.build_sasl_opts(state.sasl_opts, state.client_name)
-    {:ok, _session} = Connection.authenticate_sasl(conn, new_sasl_opts)
+    conn = Connection.authenticate_sasl(conn, new_sasl_opts)
+    :ok = schedule_bootstrap_reauth(conn, state.client_name)
 
     new_state = %__MODULE__{
       state
@@ -191,6 +196,31 @@ defmodule Klife.Connection.Controller do
 
     {:noreply, new_state}
   end
+
+  # The session is about to end. Requests on the bootstrap connection are sent and read
+  # inside this process, so nothing is in flight on it and it is replaced at once
+  def handle_info(
+        {:reauth_bootstrap_conn, socket},
+        %__MODULE__{bootstrap_conn: %Connection{socket: socket} = old} = state
+      ) do
+    {:ok, conn} =
+      Connection.new(
+        "#{old.host}:#{old.port}",
+        state.ssl,
+        Keyword.merge(state.connect_opts, active: false),
+        state.socket_opts,
+        state.sasl_opts
+      )
+
+    :ok = schedule_bootstrap_reauth(conn, state.client_name)
+    Connection.close(old)
+
+    {:noreply, %__MODULE__{state | bootstrap_conn: conn}}
+  end
+
+  # Set for a bootstrap connection that was initialized again meanwhile
+  def handle_info({:reauth_bootstrap_conn, _socket}, %__MODULE__{} = state),
+    do: {:noreply, state}
 
   def handle_info(:check_cluster, %__MODULE__{} = state) do
     # Prevent subtle edge case when
@@ -493,7 +523,7 @@ defmodule Klife.Connection.Controller do
   end
 
   defp get_in_flight_messages_table_name(client_name),
-    do: :"in_flight_messages.#{client_name}"
+    do: :persistent_term.get({__MODULE__, client_name, :in_flight_table})
 
   defp connect_bootstrap_server(servers, ssl, connect_opts, socket_opts) do
     conn =
@@ -521,6 +551,18 @@ defmodule Klife.Connection.Controller do
         Could not connect with any boostrap server provided on configuration.
         Errors: #{inspect(conn)}
         """)
+  end
+
+  # Raises on sessions shorter than the drain, the same rule broker connections follow
+  defp schedule_bootstrap_reauth(%Connection{} = conn, client_name) do
+    case Connection.reauth_in_ms(conn, Connection.drain_ms(client_name)) do
+      nil ->
+        :ok
+
+      reauth_in_ms ->
+        Process.send_after(self(), {:reauth_bootstrap_conn, conn.socket}, reauth_in_ms)
+        :ok
+    end
   end
 
   defp set_cluster_controller(broker_id, client_name),

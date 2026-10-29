@@ -4,6 +4,7 @@ defmodule Simulator.EngineConfig do
 
   defstruct [
     :clients,
+    :oauth_token_lifetime_s,
     :topics,
     :topics_replication_factor,
     :consumer_groups,
@@ -43,6 +44,7 @@ defmodule Simulator.EngineConfig do
       :root_seed,
       :force_stable,
       :clients,
+      :oauth_token_lifetime_s,
       :topics,
       :topics_replication_factor,
       :consumer_groups,
@@ -95,8 +97,29 @@ defmodule Simulator.EngineConfig do
     %{base_config | topics: new_topics, consumer_group_configs: new_consumer_group_configs}
   end
 
+  # SASL_MECHANISM pins runs to the client using that mechanism, otherwise
+  # each run uses a random subset of the clients
   defp random_value(:clients, _config) do
-    [Simulator.NormalClient, Simulator.TLSClient]
+    case System.get_env("SASL_MECHANISM") do
+      nil ->
+        Enum.take_random(Simulator.clients(), Enum.random(1..length(Simulator.clients())))
+
+      mechanism ->
+        case Enum.filter(Simulator.clients(), &(sasl_mechanism(&1) == mechanism)) do
+          [client] -> [client]
+          [] -> raise "SASL_MECHANISM=#{mechanism} matches no simulator client"
+        end
+    end
+  end
+
+  # Short lived, so OAuthClient connections are replaced many times per run.
+  # Klife refuses sessions shorter than default_request_timeout_ms + 5s (35s), and
+  # below ~41s a connection may still be draining when its replacement is replaced
+  defp random_value(:oauth_token_lifetime_s, _config) do
+    case System.get_env("OAUTH_TOKEN_LIFETIME_S") do
+      nil -> weighted_random_opt([{2, 40}, 60, 120])
+      lifetime_s -> String.to_integer(lifetime_s)
+    end
   end
 
   defp random_value(:root_seed, _config) do
@@ -184,15 +207,9 @@ defmodule Simulator.EngineConfig do
         idx <- 0..(mc - 1) do
       opts = random_value(:single_consumer_group, config)
 
-      cg_mod =
-        case opts[:client] do
-          Simulator.NormalClient -> :"#{Simulator.Engine.Consumer.NormalClient}#{idx}"
-          Simulator.TLSClient -> :"#{Simulator.Engine.Consumer.TLSClient}#{idx}"
-        end
-
       opts
       |> Keyword.replace(:group_name, cg_name)
-      |> Keyword.put(:cg_mod, cg_mod)
+      |> Keyword.put(:cg_mod, Simulator.Engine.Consumer.module(opts[:client], idx))
     end
   end
 
@@ -384,6 +401,10 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({_context, _key}, base_val), do: base_val
+
+  defp sasl_mechanism(client) do
+    Application.fetch_env!(:simulator, client)[:connection][:sasl_opts][:mechanism]
+  end
 
   defp weighted_random_opt(base_opts) do
     weighted_list =
