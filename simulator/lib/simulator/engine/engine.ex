@@ -10,7 +10,6 @@ defmodule Simulator.Engine do
     :total_consumed_counters,
     :sup_pid,
     :init_ts,
-    :cluster_log_pid,
     partition_counts: %{},
     partition_counts_updated_at: %{},
     last_partition_produced_counts: %{}
@@ -40,6 +39,7 @@ defmodule Simulator.Engine do
 
     :persistent_term.put(:total_produced_counter, total_produced_counter)
     :persistent_term.put(:simulation_start_ts, System.monotonic_time(:second))
+    :persistent_term.put(:simulation_wall_start, System.system_time(:second))
     Logger.info("Engine started with timestamp: #{:persistent_term.get(:simulation_timestamp)}")
     save_data(:"config.exs", inspect(config, limit: :infinity) |> Code.format_string!())
 
@@ -68,23 +68,11 @@ defmodule Simulator.Engine do
 
     send(self(), :invariants_check_loop)
 
-    ts = :persistent_term.get(:simulation_timestamp)
-    cluster_log_path = Path.relative("simulations_data/#{ts}/cluster.log")
-    compose_file = "../test/compose_files/docker-compose-kafka-4.1.yml"
-
-    {pid_str, 0} =
-      System.shell(
-        "docker compose -f #{compose_file} logs -f --since 0s > #{cluster_log_path} 2>&1 & echo $!"
-      )
-
-    cluster_log_pid = String.trim(pid_str)
-
     state = %__MODULE__{
       config: config,
       total_produced_counter: total_produced_counter,
       total_consumed_counters: consumed_counters,
       sup_pid: sup_pid,
-      cluster_log_pid: cluster_log_pid,
       partition_counts: partition_counts,
       partition_counts_updated_at: partition_counts_updated_at
     }
@@ -197,9 +185,7 @@ defmodule Simulator.Engine do
     ts = :persistent_term.get(:simulation_timestamp)
     :logger.remove_handler(:"engine_log_file_handler_#{ts}")
 
-    if state.cluster_log_pid do
-      System.shell("kill #{state.cluster_log_pid}")
-    end
+    :ok = Simulator.Cluster.save_logs(Path.relative("simulations_data/#{ts}/cluster.log"))
 
     # Need a last pass on the invariants_check_loopp in order
     # to guarantee that everything is properly save on files

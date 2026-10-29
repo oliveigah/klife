@@ -7,9 +7,9 @@ defmodule Simulator.Engine.EventExecutor do
 
   alias Simulator.Engine
   alias Simulator.EngineConfig
+  alias Simulator.Cluster
 
   alias Klife.Connection.Controller, as: ConnController
-  alias Klife.Connection.Broker
 
   @loop_interval_ms :timer.seconds(10)
 
@@ -20,18 +20,6 @@ defmodule Simulator.Engine.EventExecutor do
   @broker_kill_cooldown_ms :timer.minutes(2)
 
   @max_partitions 50
-
-  @port_to_service_name %{
-    19092 => "kafka1",
-    19093 => "kafka1",
-    19094 => "kafka1",
-    29092 => "kafka2",
-    29093 => "kafka2",
-    29094 => "kafka2",
-    39092 => "kafka3",
-    39093 => "kafka3",
-    39094 => "kafka3"
-  }
 
   @actions [
     :kill_consumer_group,
@@ -54,22 +42,15 @@ defmodule Simulator.Engine.EventExecutor do
     GenServer.call(via_tuple({__MODULE__}), :signal_shutdown, 120_000)
   end
 
-  @broker_count @port_to_service_name |> Map.values() |> Enum.uniq() |> length()
+  @broker_count 3
   @broker_check_interval_ms :timer.seconds(1)
   @broker_check_timeout_ms :timer.seconds(90)
 
   def ensure_all_brokers do
-    docker_compose_file = get_docker_compose_file()
-
-    @port_to_service_name
-    |> Map.values()
-    |> Enum.uniq()
-    |> Enum.each(fn service_name ->
+    Enum.each(Cluster.services(), fn service_name ->
       Logger.info("EventExecutor: ensuring broker #{service_name} is running")
 
-      System.shell(
-        "docker compose -f #{docker_compose_file} start #{service_name} > /dev/null 2>&1"
-      )
+      :ok = Cluster.start(service_name)
     end)
 
     :ok = wait_for_broker(:all)
@@ -241,17 +222,10 @@ defmodule Simulator.Engine.EventExecutor do
       |> Enum.map(fn {_time, _action, %{service_name: service_name}} -> service_name end)
       |> MapSet.new()
 
-    all_services = @port_to_service_name |> Map.values() |> Enum.uniq()
+    all_services = Cluster.services()
     services_to_check = Enum.reject(all_services, &(&1 in pending_restart_services))
 
-    docker_compose_file = get_docker_compose_file()
-
-    {output, _} =
-      System.shell(
-        "docker compose -f #{docker_compose_file} ps --status running --services 2>/dev/null"
-      )
-
-    running_services = output |> String.split("\n") |> Enum.map(&String.trim/1) |> MapSet.new()
+    running_services = Cluster.running_services()
 
     Enum.each(services_to_check, fn service_name ->
       if service_name not in running_services do
@@ -489,42 +463,14 @@ defmodule Simulator.Engine.EventExecutor do
     end
   end
 
-  defp do_stop_broker(client_name, broker_id) do
-    service_name = get_service_name(client_name, broker_id)
-
-    System.shell(
-      "docker compose -f #{get_docker_compose_file()} stop #{service_name} > /dev/null 2>&1"
-    )
-
+  defp do_stop_broker(_client_name, broker_id) do
+    service_name = Cluster.service(broker_id)
+    :ok = Cluster.stop(service_name)
     {:ok, service_name}
   end
 
   defp do_start_broker(service_name) do
-    System.shell(
-      "docker compose -f #{get_docker_compose_file()} start #{service_name} > /dev/null 2>&1"
-    )
-
-    :ok
-  end
-
-  defp get_service_name(client_name, broker_id) do
-    content = %{
-      include_topic_authorized_operations: true,
-      topics: [],
-      allow_auto_topic_creation: false
-    }
-
-    {:ok, resp} =
-      Broker.send_message(KlifeProtocol.Messages.Metadata, client_name, :any, content)
-
-    broker = Enum.find(resp.content.brokers, fn b -> b.node_id == broker_id end)
-
-    Map.fetch!(@port_to_service_name, broker.port)
-  end
-
-  defp get_docker_compose_file do
-    vsn = "4.1"
-    Path.relative("../test/compose_files/docker-compose-kafka-#{vsn}.yml")
+    Cluster.start(service_name)
   end
 
   # Rollbacks
