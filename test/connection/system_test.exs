@@ -149,7 +149,7 @@ defmodule Klife.Connection.SystemTest do
         mechanism_opts: [token_mfa: {__MODULE__, :unsecured_jwt, [token_seconds]}]
       ],
       connection_count: 2,
-      # sessions must outlast it + 5s
+      # drains last it + 5s, and sessions must last two drains (12s)
       default_request_timeout_ms: 1_000
     }
   end
@@ -181,13 +181,14 @@ defmodule Klife.Connection.SystemTest do
 
     log =
       capture_log(fn ->
-        # 8s tokens: sessions of 7-8s, replaced every 6-7.6s, about twice in the 16s below
-        pid = start_supervised!({ConnController, oauth_input(client_name, 8)})
+        # 14s tokens: sessions of 13-14s, replaced a drain (6s) before they end, so every
+        # 7-8s: about twice in the 18s below
+        pid = start_supervised!({ConnController, oauth_input(client_name, 14)})
         first_sockets = sockets(client_name, pid)
 
         # Many concurrent callers, so requests are in flight on every swap.
         # Any request sent on an expired session gets no reply and fails here
-        deadline = System.monotonic_time(:millisecond) + 16_000
+        deadline = System.monotonic_time(:millisecond) + 18_000
 
         1..20
         |> Enum.map(fn _ ->
@@ -205,11 +206,12 @@ defmodule Klife.Connection.SystemTest do
   end
 
   @tag capture_log: true
-  test "refuses sasl sessions shorter than the request timeout + 5s", %{test: test_name} do
+  test "refuses sasl sessions shorter than two drains", %{test: test_name} do
     client_name = :"#{__MODULE__}.#{test_name}"
 
-    assert {:error, reason} = start_supervised({ConnController, oauth_input(client_name, 3)})
-    assert inspect(reason) =~ "shorter than default_request_timeout_ms + 5000"
+    # Sessions of 8-9s: longer than one drain (6s), not two
+    assert {:error, reason} = start_supervised({ConnController, oauth_input(client_name, 9)})
+    assert inspect(reason) =~ "shorter than 2 * (default_request_timeout_ms + 5000)"
   end
 
   test "multiple clients", %{test: test_name} do

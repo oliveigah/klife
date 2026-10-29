@@ -115,11 +115,11 @@ defmodule Klife.Connection.Broker do
   # The session is about to end: callers move to a newly authenticated connection
   # while the old one drains
   def handle_info({:reauth, socket}, %__MODULE__{conn: %Connection{socket: socket} = old} = state) do
-    {:ok, conn} = open_conn(state)
+    # Re-authentication waits at least a drain (see Connection.reauth_in_ms/2),
+    # so the previous draining connection is closed by now
+    %__MODULE__{draining_conn: nil} = state
 
-    # Only when sessions are barely longer than the drain: the previous draining
-    # connection has drained for 85% of a session by now, so it makes room
-    if state.draining_conn, do: Connection.close(state.draining_conn)
+    {:ok, conn} = open_conn(state)
 
     Process.send_after(self(), {:close_draining, socket}, Connection.drain_ms(state.client_name))
 
@@ -136,9 +136,6 @@ defmodule Klife.Connection.Broker do
     Connection.close(conn)
     {:noreply, %__MODULE__{state | draining_conn: nil}}
   end
-
-  # Already closed to make room for a newer draining connection
-  def handle_info({:close_draining, _socket}, %__MODULE__{} = state), do: {:noreply, state}
 
   def terminate(reason, %__MODULE__{} = state) do
     :persistent_term.erase({__MODULE__, state.client_name, state.broker_id, state.broker_index})

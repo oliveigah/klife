@@ -50,19 +50,23 @@ defmodule Klife.Connection do
     do: Controller.get_default_request_timeout_ms(client_name) + :timer.seconds(5)
 
   # When to replace `conn` by a newly authenticated one, nil if its session never ends.
-  # Same window as Kafka's Java client: 85% of the session plus up to 10% of jitter,
-  # so connections opened together don't re-authenticate together
+  # Same window as Kafka's Java client, 85% of the session plus up to 10% of jitter so
+  # connections opened together don't re-authenticate together, but always a whole
+  # drain before the session ends: Kafka reads a connection's requests one at a time
+  # and drops it on the first one read after its session ended, with any still queued.
+  # Sessions of at least two drains also mean a connection drains completely before
+  # its replacement is replaced
   def reauth_in_ms(%__MODULE__{session_lifetime_ms: 0}, _drain_ms), do: nil
 
   def reauth_in_ms(%__MODULE__{session_lifetime_ms: lifetime}, drain_ms)
-      when lifetime >= drain_ms,
-      do: round(lifetime * (0.85 + :rand.uniform() * 0.10))
+      when lifetime >= 2 * drain_ms,
+      do: min(round(lifetime * (0.85 + :rand.uniform() * 0.10)), lifetime - drain_ms)
 
   def reauth_in_ms(%__MODULE__{session_lifetime_ms: lifetime} = conn, drain_ms) do
     raise """
     SASL session on #{conn.host}:#{conn.port} lasts #{lifetime}ms, shorter than \
-    default_request_timeout_ms + 5000 (#{drain_ms}ms): connections would expire \
-    before their requests could finish
+    2 * (default_request_timeout_ms + 5000) (#{2 * drain_ms}ms): connections would \
+    expire before their requests could finish
     """
   end
 
