@@ -32,6 +32,10 @@ config :klife, MyClient,
   ],
   producers: [
     [
+      name: :non_idempotent_producer,
+      enable_idempotence: false
+    ],
+    [
       name: :benchmark_producer,
       client_id: "my_custom_client_id"
     ],
