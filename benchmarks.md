@@ -1,5 +1,8 @@
 # Benchmarks
 
+For Klife release-to-release comparisons, use the separate
+[release benchmark suite](bench/README.md): `mix release_benchmark`.
+
 ## Producer
 
 (TODO: Update benchmarks with newer versions)

@@ -25,5 +25,7 @@ klife-*.tar
 # Temporary files, for example, from tests.
 /tmp/
 
+/bench/results/
+
 /simulator/simulations_data/_*
 /simulator/simulations_data/klife-sim-*/
