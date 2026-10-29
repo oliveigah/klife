@@ -328,6 +328,36 @@ defmodule Klife.Consumer.FetcherTest do
     TestUtils.assert_records(resp3_rec, rec3)
   end
 
+  test "read_uncommitted fetches across an abort marker without aborted transaction metadata" do
+    topic = "fetch_uncommitted_#{UUID.uuid4()}"
+    :ok = Klife.Utils.create_topics(MyClient, [%{name: topic, partitions: 1}])
+
+    assert {:error, %Record{} = aborted} =
+             MyClient.transaction(
+               fn ->
+                 {:ok, record} =
+                   MyClient.produce(%Record{topic: topic, partition: 0, value: "aborted"})
+
+                 {:error, record}
+               end,
+               pool_name: :my_test_pool_1
+             )
+
+    assert {:ok, %Record{} = sentinel} =
+             MyClient.produce(%Record{topic: topic, partition: 0, value: "after abort"})
+
+    :ok = TestUtils.wait_for_stable_offset(MyClient, topic, 0, sentinel.offset)
+
+    assert {:ok, records} =
+             MyClient.fetch(topic, 0, aborted.offset, isolation_level: :read_uncommitted)
+
+    assert [returned_aborted, returned_sentinel] =
+             Record.filter_records(records, exclude_control: true)
+
+    TestUtils.assert_records(returned_aborted, aborted)
+    TestUtils.assert_records(returned_sentinel, sentinel)
+  end
+
   test "aborted transaction should not impact future records" do
     topic = "test_no_batch_topic"
     partition = 1
