@@ -41,6 +41,31 @@ defmodule Klife.TestUtils do
   end
 
   def stop_broker(client_name, broker_id) do
+    service_name = get_service_name(client_name, broker_id)
+    compose_file = get_docker_compose_file()
+
+    ExUnit.Callbacks.on_exit(fn ->
+      {output, status} =
+        System.cmd(
+          "docker",
+          [
+            "compose",
+            "-f",
+            compose_file,
+            "up",
+            "-d",
+            "--no-deps",
+            "--wait",
+            "--wait-timeout",
+            "60",
+            service_name
+          ],
+          stderr_to_stdout: true
+        )
+
+      assert status == 0, output
+    end)
+
     # This must be done in a separate process because
     # of how the PubSub works.
     Task.async(fn -> do_stop_broker(client_name, broker_id) end)
@@ -65,9 +90,12 @@ defmodule Klife.TestUtils do
 
     service_name = get_service_name(client_name, broker_id)
 
-    System.shell(
-      "docker compose -f #{get_docker_compose_file()} stop #{service_name} > /dev/null 2>&1"
-    )
+    {output, status} =
+      System.cmd("docker", ["compose", "-f", get_docker_compose_file(), "stop", service_name],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, output
 
     result =
       receive do
@@ -111,9 +139,12 @@ defmodule Klife.TestUtils do
 
     old_brokers = ConnController.get_known_brokers(client_name)
 
-    System.shell(
-      "docker compose -f #{get_docker_compose_file()} start #{service_name} > /dev/null 2>&1"
-    )
+    {output, status} =
+      System.cmd("docker", ["compose", "-f", get_docker_compose_file(), "start", service_name],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, output
 
     result =
       receive do
@@ -183,6 +214,27 @@ defmodule Klife.TestUtils do
     [%{error_code: 0, offset: offset}] = partitions
 
     offset
+  end
+
+  def wait_for_stable_offset(client, topic, partition, offset, timeout \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_stable_offset(client, topic, partition, offset, deadline)
+  end
+
+  defp do_wait_for_stable_offset(client, topic, partition, offset, deadline) do
+    stable_offset = get_latest_offset(client, topic, partition, -1)
+
+    cond do
+      stable_offset > offset ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("stable offset for #{topic}:#{partition} is #{stable_offset}, expected > #{offset}")
+
+      true ->
+        Process.sleep(50)
+        do_wait_for_stable_offset(client, topic, partition, offset, deadline)
+    end
   end
 
   # Reads the group committed offset directly from the coordinator, the same

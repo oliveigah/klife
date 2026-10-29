@@ -1089,12 +1089,12 @@ defmodule Klife.ProducerTest do
                {:error, resp1 ++ resp2}
              end)
 
-    TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :aborted, isolation: :committed)
+    assert :ok = wait_txn_status(rec1, offset1, :aborted)
+    assert :ok = wait_txn_status(rec2, offset2, :aborted)
+    assert :ok = wait_txn_status(rec3, offset3, :aborted)
+    assert :ok = wait_txn_status(rec4, offset4, :aborted)
+    assert :ok = wait_txn_status(rec5, offset5, :aborted)
+    assert :ok = wait_txn_status(rec6, offset6, :aborted)
   end
 
   test "txn produce message - commits" do
@@ -1211,12 +1211,12 @@ defmodule Klife.ProducerTest do
                {:ok, resp1 ++ resp2}
              end)
 
-    TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :committed)
+    assert :ok = wait_txn_status(rec1, offset1, :committed)
+    assert :ok = wait_txn_status(rec2, offset2, :committed)
+    assert :ok = wait_txn_status(rec3, offset3, :committed)
+    assert :ok = wait_txn_status(rec4, offset4, :committed)
+    assert :ok = wait_txn_status(rec5, offset5, :committed)
+    assert :ok = wait_txn_status(rec6, offset6, :committed)
   end
 
   @tag capture_log: true
@@ -1304,8 +1304,8 @@ defmodule Klife.ProducerTest do
                pool_name: :my_test_pool_1
              )
 
-    TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :committed)
+    assert :ok = wait_txn_status(rec1, offset1, :committed)
+    assert :ok = wait_txn_status(rec2, offset2, :committed)
 
     assert {:error, %RuntimeError{message: "crazy error"}} =
              MyClient.transaction(
@@ -1349,9 +1349,9 @@ defmodule Klife.ProducerTest do
              )
 
     {offset3, offset4, offset5} = Process.get(:raised_offsets)
-    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :aborted, isolation: :committed)
-    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :aborted, isolation: :committed)
+    assert :ok = wait_txn_status(rec3, offset3, :aborted)
+    assert :ok = wait_txn_status(rec4, offset4, :aborted)
+    assert :ok = wait_txn_status(rec5, offset5, :aborted)
 
     assert {:ok, {:ok, %Record{offset: offset6}}} =
              MyClient.transaction(
@@ -1373,7 +1373,7 @@ defmodule Klife.ProducerTest do
                pool_name: :my_test_pool_1
              )
 
-    TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :committed)
+    assert :ok = wait_txn_status(rec6, offset6, :committed)
   end
 
   @tag capture_log: true
@@ -1429,15 +1429,11 @@ defmodule Klife.ProducerTest do
                pool_name: :my_test_pool_1
              )
 
-    assert :ok = TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :committed)
+    assert :ok = wait_txn_status(rec2, offset2, :committed)
 
     # The first record must remain aborted even after the second transaction
     # commits on the same worker.
-    assert :ok =
-             TestUtils.assert_offset(MyClient, rec1, offset1,
-               txn_status: :aborted,
-               isolation: :committed
-             )
+    assert :ok = wait_txn_status(rec1, offset1, :aborted)
   end
 
   test "txn produce batch txn" do
@@ -1496,9 +1492,9 @@ defmodule Klife.ProducerTest do
               %Record{offset: offset3}
             ]} = MyClient.produce_batch_txn([rec1, rec2, rec3])
 
-    TestUtils.assert_offset(MyClient, rec1, offset1, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec2, offset2, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec3, offset3, txn_status: :committed)
+    assert :ok = wait_txn_status(rec1, offset1, :committed)
+    assert :ok = wait_txn_status(rec2, offset2, :committed)
+    assert :ok = wait_txn_status(rec3, offset3, :committed)
 
     assert {:ok,
             [
@@ -1507,9 +1503,9 @@ defmodule Klife.ProducerTest do
               %Record{offset: offset6}
             ]} = MyClient.produce_batch_txn([rec4, rec5, rec6])
 
-    TestUtils.assert_offset(MyClient, rec4, offset4, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec5, offset5, txn_status: :committed)
-    TestUtils.assert_offset(MyClient, rec6, offset6, txn_status: :committed)
+    assert :ok = wait_txn_status(rec4, offset4, :committed)
+    assert :ok = wait_txn_status(rec5, offset5, :committed)
+    assert :ok = wait_txn_status(rec6, offset6, :committed)
 
     rec7 = %Record{
       value: :rand.bytes(10),

@@ -402,6 +402,10 @@ defmodule Klife.Consumer.FetcherTest do
         %Klife.Record{topic: topic, partition: partition, value: "l"}
       ])
 
+    # EndTxn replies before its markers reach the partition. Wait for the
+    # final record to become visible to read_committed before fetching once.
+    :ok = TestUtils.wait_for_stable_offset(MyClient, topic, partition, resp_check_rec1.offset)
+
     fetch_resp =
       Fetcher.fetch([{topic, partition, rec0.offset}], MyClient)
 
