@@ -179,7 +179,7 @@ defmodule Klife.Connection.Controller do
 
     negotiate_api_versions(conn, state.client_name)
     new_sasl_opts = Connection.build_sasl_opts(state.sasl_opts, state.client_name)
-    :ok = Connection.authenticate_sasl(conn, new_sasl_opts)
+    {:ok, _session} = Connection.authenticate_sasl(conn, new_sasl_opts)
 
     new_state = %__MODULE__{
       state
