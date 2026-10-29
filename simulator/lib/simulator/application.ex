@@ -12,11 +12,7 @@ defmodule Simulator.Application do
         do: Simulator.MultiRunner,
         else: Simulator.Engine
 
-    children = [
-      Simulator.NormalClient,
-      Simulator.TLSClient,
-      engine_child
-    ]
+    children = Simulator.clients() ++ [engine_child]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
