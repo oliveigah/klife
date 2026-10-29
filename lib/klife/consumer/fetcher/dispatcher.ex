@@ -210,7 +210,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
                       false
                   end
 
-                if is_abort_batch? do
+                if is_abort_batch? and aborted_offsets != [] do
                   [_head | rest] = aborted_offsets
                   {recs, Map.put(acc_abo, rec_batch.producer_id, rest)}
                 else
