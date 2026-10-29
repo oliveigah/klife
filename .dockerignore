@@ -1,0 +1,7 @@
+.git
+**/_build
+**/deps
+**/simulations_data
+doc
+tmp
+erl_crash.dump

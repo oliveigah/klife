@@ -4,6 +4,8 @@ defmodule Simulator.EngineConfig do
 
   defstruct [
     :clients,
+    :resources,
+    :run_seconds,
     :oauth_token_lifetime_s,
     :topics,
     :topics_replication_factor,
@@ -28,10 +30,47 @@ defmodule Simulator.EngineConfig do
   end
 
   def generate_config do
-    case :persistent_term.get(:rerun_timestamp, nil) do
-      nil -> generate_random()
-      rerun_ts -> generate_from_file(rerun_ts)
-    end
+    rerun_ts = :persistent_term.get(:rerun_timestamp, nil)
+
+    config =
+      cond do
+        System.get_env("SIM_CONFIG", "") != "" ->
+          generate_from_file(System.fetch_env!("SIM_CONFIG"))
+
+        rerun_ts ->
+          generate_from_file(Path.relative("simulations_data/#{rerun_ts}/config.exs"))
+
+        true ->
+          generate_random()
+      end
+
+    resources =
+      if System.get_env("SIM_CONTAINER") == "true" do
+        %{
+          simulator: %{
+            cpus: System.fetch_env!("SIM_CPUS"),
+            memory: System.fetch_env!("SIM_MEMORY")
+          },
+          broker: %{
+            cpus: System.fetch_env!("BROKER_CPUS"),
+            memory: System.fetch_env!("BROKER_MEMORY"),
+            heap: System.fetch_env!("BROKER_HEAP")
+          },
+          controller: %{
+            cpus: System.fetch_env!("CONTROLLER_CPUS"),
+            memory: System.fetch_env!("CONTROLLER_MEMORY"),
+            heap: System.fetch_env!("CONTROLLER_HEAP")
+          },
+          kafka_version: System.fetch_env!("KAFKA_VERSION"),
+          image: System.fetch_env!("SIM_IMAGE")
+        }
+      end
+
+    %{
+      config
+      | resources: resources,
+        run_seconds: System.get_env("RUN_SECONDS", "900") |> String.to_integer()
+    }
   end
 
   def parse_topic(tname) do
@@ -66,10 +105,10 @@ defmodule Simulator.EngineConfig do
     end)
   end
 
-  defp generate_from_file(rerun_ts) do
+  defp generate_from_file(path) do
     {%__MODULE__{}, _binding} =
       {base_config, _binding} =
-      Code.eval_file(Path.relative("simulations_data/#{rerun_ts}/config.exs"))
+      Code.eval_file(path)
 
     # Must update the topics in order to resimulate from a new topic
     # instead of reuse the old one that may have old data that may
@@ -101,7 +140,7 @@ defmodule Simulator.EngineConfig do
   # each run uses a random subset of the clients
   defp random_value(:clients, _config) do
     case System.get_env("SASL_MECHANISM") do
-      nil ->
+      unset when unset in [nil, ""] ->
         Enum.take_random(Simulator.clients(), Enum.random(1..length(Simulator.clients())))
 
       mechanism ->
@@ -117,7 +156,7 @@ defmodule Simulator.EngineConfig do
   # = 70s, and tokens expire on whole seconds, so a token of N seconds may give N - 1
   defp random_value(:oauth_token_lifetime_s, _config) do
     case System.get_env("OAUTH_TOKEN_LIFETIME_S") do
-      nil -> weighted_random_opt([{2, 75}, 90, 120])
+      unset when unset in [nil, ""] -> weighted_random_opt([{2, 75}, 90, 120])
       lifetime_s -> String.to_integer(lifetime_s)
     end
   end

@@ -26,3 +26,4 @@ klife-*.tar
 /tmp/
 
 /simulator/simulations_data/_*
+/simulator/simulations_data/klife-sim-*/

@@ -7,7 +7,7 @@
 set -e
 
 for mechanism in SCRAM-SHA-256 SCRAM-SHA-512; do
-  /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:19091 \
+  /opt/kafka/bin/kafka-configs.sh --bootstrap-server "${SCRAM_BOOTSTRAP_SERVER:-localhost:19091}" \
     --alter --entity-type users --entity-name klifeusr \
     --add-config "$mechanism=[iterations=8192,password=klifepwd]"
 done

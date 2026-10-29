@@ -2,8 +2,6 @@ defmodule Simulator.MultiRunner do
   use GenServer, restart: :temporary
   require Logger
 
-  @run_timeout_ms :timer.minutes(15)
-  @total_timeout_ms :timer.hours(24)
   @check_interval_ms :timer.seconds(5)
 
   defstruct [
@@ -12,7 +10,10 @@ defmodule Simulator.MultiRunner do
     :total_start_time,
     :run_count,
     :engine_monitor_ref,
-    :sup_pid
+    :sup_pid,
+    :run_timeout_ms,
+    :total_timeout_ms,
+    failed: false
   ]
 
   def start_link(args) do
@@ -26,7 +27,9 @@ defmodule Simulator.MultiRunner do
     state = %__MODULE__{
       run_count: 0,
       total_start_time: System.monotonic_time(:millisecond),
-      sup_pid: sup_pid
+      sup_pid: sup_pid,
+      run_timeout_ms: seconds_from_env!("RUN_SECONDS", 900),
+      total_timeout_ms: seconds_from_env!("TOTAL_SECONDS", 86_400)
     }
 
     send(self(), :start_engine)
@@ -57,9 +60,11 @@ defmodule Simulator.MultiRunner do
   def handle_info(:start_engine, %__MODULE__{} = state) do
     total_elapsed = System.monotonic_time(:millisecond) - state.total_start_time
 
-    if total_elapsed >= @total_timeout_ms do
+    replay_complete? = state.run_count > 0 and System.get_env("SIM_CONFIG", "") != ""
+
+    if replay_complete? or total_elapsed >= state.total_timeout_ms do
       Logger.info(
-        "MultiRunner: Total timeout reached, shutting down after #{state.run_count} runs"
+        "MultiRunner: Replay complete or total timeout reached, shutting down after #{state.run_count} runs"
       )
 
       {:stop, :normal, state}
@@ -72,7 +77,7 @@ defmodule Simulator.MultiRunner do
       spec = %{
         id: :simulation,
         start: {Simulator.Engine, :start_link, [[]]},
-        restart: :transient,
+        restart: :temporary,
         type: :worker
       }
 
@@ -112,9 +117,9 @@ defmodule Simulator.MultiRunner do
         :ok = Simulator.Engine.EventExecutor.signal_shutdown()
         :ok = Simulator.Engine.terminate()
 
-        {:noreply, state}
+        {:noreply, %{state | failed: true}}
 
-      run_elapsed >= @run_timeout_ms ->
+      run_elapsed >= state.run_timeout_ms ->
         Logger.info(
           "MultiRunner run #{state.run_count}: Run timeout reached, stopping run ##{state.run_count}"
         )
@@ -128,6 +133,19 @@ defmodule Simulator.MultiRunner do
         Process.send_after(self(), :check_status, @check_interval_ms)
         {:noreply, state}
     end
+  end
+
+  @impl true
+  def terminate(reason, state) do
+    if System.get_env("SIM_CONTAINER") == "true" do
+      System.stop(if reason == :normal and not state.failed, do: 0, else: 1)
+    end
+  end
+
+  defp seconds_from_env!(name, default) do
+    seconds = System.get_env(name, to_string(default)) |> String.to_integer()
+    if seconds <= 0, do: raise("#{name} must be positive")
+    seconds * 1000
   end
 
   defp get_violations_count do
