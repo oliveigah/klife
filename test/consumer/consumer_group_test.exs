@@ -335,7 +335,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     TestUtils.assert_records(recv_rec2_4, exp_rec2)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
   end
 
   test "basic consume test - shared fetch", ctx do
@@ -421,7 +421,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     TestUtils.assert_records(recv_rec2_4, exp_rec2)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
   end
 
   test "should not read uncommitted records", ctx do
@@ -475,7 +475,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
             }
           ])
 
-        refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+        refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec},
+                       5_000
 
         {:ok, [exp_rec1, exp_rec2]}
       end)
@@ -510,7 +511,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     TestUtils.assert_records(recv_rec2_4, exp_rec2)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
 
     MyClient.transaction(fn ->
       [{:ok, _exp_rec1}, {:ok, _exp_rec2}] =
@@ -523,12 +524,13 @@ defmodule Klife.Consumer.ConsumerGroupTest do
           }
         ])
 
-      refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+      refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec},
+                     5_000
 
       :some_error
     end)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
 
     assert_assignment(cg_assignments, mod_name, consumer_opts[:group_name])
   end
@@ -583,7 +585,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
             }
           ])
 
-        refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+        refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec},
+                       5_000
 
         {:ok, [exp_rec1, exp_rec2]}
       end)
@@ -618,7 +621,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     TestUtils.assert_records(recv_rec2_4, exp_rec2)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
 
     MyClient.transaction(fn ->
       [{:ok, _exp_rec1}, {:ok, _exp_rec2}] =
@@ -631,12 +634,13 @@ defmodule Klife.Consumer.ConsumerGroupTest do
           }
         ])
 
-      refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+      refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec},
+                     5_000
 
       :some_error
     end)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
 
     assert_assignment(cg_assignments, mod_name, consumer_opts[:group_name])
   end
@@ -1199,7 +1203,7 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     TestUtils.assert_records(recv_rec4, exp_rec4)
 
-    refute_receive {^mod_name, :processed, _any_topic, _any_partition, _any_rec}, 5_000
+    refute_receive {^mod_name, :processed, _any_topic, _any_partition, ^cg_name, _any_rec}, 5_000
   end
 
   test "manual mode: pull returns :empty when there is nothing to pull", ctx do
