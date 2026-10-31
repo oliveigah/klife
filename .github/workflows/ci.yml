@@ -19,7 +19,7 @@ jobs:
       matrix:
         kafka: ["4.0", "4.4"]
         beam:
-          - elixir: "1.19"
+          - elixir: "1.20"
             otp: "28"
           - elixir: "1.16"
             otp: "25"
