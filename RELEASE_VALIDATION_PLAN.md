@@ -4,11 +4,21 @@ Use this checklist for any release. Run commands from the candidate checkout's
 root unless noted. Capture commands, output, exit codes and actual durations;
 missing or inconclusive evidence does not count as a pass.
 
+Run the campaign mostly unattended. Preflight toolchains, broker readiness,
+artifact permissions and a short smoke before long runs. Chain existing commands
+in a simple script with logs, exit codes, deadlines and scoped cleanup; wait on
+command completion or phase notifications. Keep status checks lightweight. Do
+not repeatedly read growing logs or keep the model analyzing while scripts run.
+Review one concise summary per batch, then inspect only failures and anomalies.
+Reuse existing reports and collectors; add tooling only for missing required
+evidence, and record unresolved findings when the investigation budget expires.
+
 1. **Choose the versions and budget.** Pin the candidate commit and previous
    released tag. Record the harness revision, toolchains and lockfiles; save any
    uncommitted source patch with the report. Take the supported test matrix from
    [.github/workflows/ci.yml](.github/workflows/ci.yml). Set required coverage,
-   resource limits, parallelism, time budgets and comparison tolerances before
+   resource limits, parallelism, execution and focused-investigation budgets,
+   and comparison tolerances before
    starting. The benchmark task creates its own baseline checkout and dependencies.
 
 2. **Run the tests.** Follow the CI build/test commands for every supported
@@ -30,9 +40,19 @@ missing or inconclusive evidence does not count as a pass.
    zero dropped offers and zero remaining committed catch-up lag. Compare
    completed records/s, acknowledgment/delivery p95/p99 and committed catch-up
    time. Use matched load for latency/resource comparisons. Collect CPU, memory
-   and queue growth separately; the task does not measure these.
+   and queue growth separately; the task does not measure these. Keep injected
+   VM probes/profilers out of primary timing runs; collect intrusive diagnostics
+   in separate, labeled runs.
    Default tolerances: at most 5% throughput loss or 10% latency/resource increase.
    Review the reports yourself: task completion does not enforce release gates.
+   Treat report labels as findings to confirm. For a suspicious result, rerun
+   only that scenario/profile/level on both versions with longer warmup, checking
+   effective settings and instrumentation first. For capacity workloads, report
+   throughput and tails together; changing achieved load does not establish a
+   general latency regression. Confirm latency claims at the same offered rate,
+   topology and pending cap, with no drops or unfinished acknowledgments. Preserve
+   both the original and confirmation results; do not repeat the full campaign
+   unless the harness or source changes invalidate it.
    Increase warmup, `--seconds`, backlog or sample count when needed; overlapping
    ranges beyond tolerance or insufficient tail samples remain inconclusive.
    Smoke checks do not establish release performance. Rerun both versions after
