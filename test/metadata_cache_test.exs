@@ -54,6 +54,22 @@ defmodule Klife.MetadataCacheTest do
     end
   end
 
+  defp wait_producer_leader(client, topic, partition, broker_id, attempts \\ 100) do
+    producer = client.get_default_producer()
+
+    case Klife.Producer.get_producer_leader(client, producer, topic, partition) do
+      {_map_version, {^broker_id, _batcher_id}} ->
+        :ok
+
+      _other when attempts > 0 ->
+        Process.sleep(50)
+        wait_producer_leader(client, topic, partition, broker_id, attempts - 1)
+
+      other ->
+        flunk("producer leader for #{topic}:#{partition} is still #{inspect(other)}")
+    end
+  end
+
   @tag capture_log: true
   test "produce errors against a stale leader trigger a metadata refresh" do
     # Module.concat prevents compile time resolution of the client module,
@@ -71,6 +87,11 @@ defmodule Klife.MetadataCacheTest do
     partition = 6
 
     real_leader = corrupt_leader!(client, topic, partition)
+    wrong_leader = MetadataCache.get_metadata_attribute(client, topic, partition, :leader_id)
+
+    # The producer leaders follow the cache when it reports a change
+    :ok = Klife.PubSub.publish({:metadata_updated, client}, %{})
+    :ok = wait_producer_leader(client, topic, partition, wrong_leader)
 
     # Routed to the wrong broker, which answers with a stale metadata error.
     # Fire and forget: the delivery outcome is irrelevant here, only the

@@ -46,7 +46,8 @@ defmodule Klife.Record do
     {:headers, []},
     :__batch_index,
     :__estimated_size,
-    :__callback
+    :__callback,
+    :__arrival_ms
   ]
 
   @type t :: %__MODULE__{

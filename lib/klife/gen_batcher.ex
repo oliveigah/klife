@@ -37,16 +37,25 @@ defmodule Klife.GenBatcher do
   @callback handle_insert_response(list(batch_insert_item), user_state) :: term
   @callback handle_dispatch(batch, user_state, reference) :: dispatch_response
 
+  # Called once per insert request with all its items, before any of them is
+  # counted or reaches handle_insert_item. Returns the items to insert: the
+  # implementation may filter them, or keep some to hold or send elsewhere.
+  # `meta` is the term given to insert_call/insert_cast.
+  @callback handle_insert_batch(list(batch_insert_item), meta :: term, user_state) ::
+              {:ok, list(batch_insert_item), user_state}
+
+  @optional_callbacks handle_insert_batch: 3
+
   def start_link(mod, args, opts \\ []) do
     GenServer.start_link(mod, args, opts)
   end
 
-  def insert_call(batcher_pid, items) when is_list(items) do
-    GenServer.call(batcher_pid, {:insert_on_batch, items})
+  def insert_call(batcher_pid, items, meta \\ nil) when is_list(items) do
+    GenServer.call(batcher_pid, {:insert_on_batch, items, meta})
   end
 
-  def insert_cast(batcher_pid, items) when is_list(items) do
-    GenServer.cast(batcher_pid, {:insert_on_batch, items})
+  def insert_cast(batcher_pid, items, meta \\ nil) when is_list(items) do
+    GenServer.cast(batcher_pid, {:insert_on_batch, items, meta})
   end
 
   def complete_dispatch(batcher_pid, dispatch_ref) do
@@ -250,6 +259,18 @@ defmodule Klife.GenBatcher do
     end
   end
 
+  # Closes the current batch into the queue and replaces the queue with the
+  # batches `fun` returns, for implementations that move batches in or out.
+  def update_batch_queue(%__MODULE__{} = state, mod, fun) do
+    state =
+      if state.current_batch_item_count > 0, do: move_batch_to_queue(state, mod), else: state
+
+    {batches, acc} = fun.(:queue.to_list(state.batch_queue))
+    new_state = %__MODULE__{state | batch_queue: :queue.from_list(batches)}
+
+    {schedule_dispatch_if_earlier(new_state, 0), acc}
+  end
+
   def dispatch_completed(%__MODULE__{in_flight_pool: in_flight_pool} = state, dispatch_ref) do
     case Enum.find_index(in_flight_pool, fn i -> i == dispatch_ref end) do
       nil ->
@@ -316,8 +337,16 @@ defmodule Klife.GenBatcher do
         Klife.GenBatcher.init(__MODULE__, args)
       end
 
+      @impl Klife.GenBatcher
+      def handle_insert_batch(items, _meta, user_state), do: {:ok, items, user_state}
+
+      defoverridable handle_insert_batch: 3
+
       @impl true
-      def handle_call({:insert_on_batch, items_list}, from, %Klife.GenBatcher{} = state) do
+      def handle_call({:insert_on_batch, items_list, meta}, from, %Klife.GenBatcher{} = state) do
+        {:ok, items_list, user_state} = handle_insert_batch(items_list, meta, state.user_state)
+        state = %Klife.GenBatcher{state | user_state: user_state}
+
         {new_state, user_resp} =
           Klife.GenBatcher.insert_items(state, items_list, from, __MODULE__)
 
@@ -325,7 +354,10 @@ defmodule Klife.GenBatcher do
       end
 
       @impl true
-      def handle_cast({:insert_on_batch, items_list}, %Klife.GenBatcher{} = state) do
+      def handle_cast({:insert_on_batch, items_list, meta}, %Klife.GenBatcher{} = state) do
+        {:ok, items_list, user_state} = handle_insert_batch(items_list, meta, state.user_state)
+        state = %Klife.GenBatcher{state | user_state: user_state}
+
         {new_state, _resp} =
           Klife.GenBatcher.insert_items(state, items_list, nil, __MODULE__)
 

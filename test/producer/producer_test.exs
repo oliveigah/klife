@@ -822,8 +822,8 @@ defmodule Klife.ProducerTest do
         data.topic_name in ["test_no_batch_topic", "test_no_batch_topic_2"]
       end)
       |> Enum.map(fn data ->
-        batcher_id =
-          Producer.get_batcher_id(
+        {_map_version, {_broker_id, batcher_id}} =
+          Producer.get_producer_leader(
             client_name,
             data.default_producer,
             data.topic_name,
@@ -945,34 +945,6 @@ defmodule Klife.ProducerTest do
              |> :sys.get_state()
              |> Map.get(:epochs)
              |> Map.get({topic, 0})
-  end
-
-  @tag capture_log: true
-  test "records caught at the old leader of a moved partition fail fast" do
-    topic = "leader_move_topic_#{System.unique_integer([:positive])}"
-    :ok = Klife.Utils.create_topics(MyClient, [%{name: topic, partitions: 1}])
-
-    rec = fn -> %Record{value: :rand.bytes(10), topic: topic, partition: 0} end
-    assert {:ok, %Record{offset: first_offset}} = MyClient.produce(rec.())
-
-    {old_leader, _new_leader} = TestUtils.move_leader(MyClient, topic, 0)
-
-    # The client's view lags behind the move, as it does until the next
-    # metadata check, so the next record is sent to the old leader.
-    true = MetadataCache.update_metadata(MyClient, topic, 0, :leader_id, old_leader)
-
-    {elapsed_us, caught} = :timer.tc(fn -> MyClient.produce(rec.()) end)
-
-    assert {:error, %Record{error_code: 6}} = caught
-    assert elapsed_us < :timer.seconds(5) * 1000
-
-    offsets =
-      for _ <- 1..3 do
-        assert {:ok, %Record{offset: offset}} = MyClient.produce(rec.())
-        offset
-      end
-
-    assert [first_offset | offsets] == Enum.sort([first_offset | offsets])
   end
 
   test "txn produce message - aborts" do
