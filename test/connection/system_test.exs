@@ -5,6 +5,7 @@ defmodule Klife.Connection.SystemTest do
   alias Klife.PubSub
   alias Klife.TestUtils
   alias Klife.Connection.Broker
+  alias Klife.Connection
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages.ApiVersions
   alias Klife.ProcessRegistry
@@ -203,6 +204,22 @@ defmodule Klife.Connection.SystemTest do
 
     # An expired bootstrap connection is only noticed by failing the cluster check
     refute log =~ "will re-initialize bootstrap connection"
+  end
+
+  test "replaces the bootstrap connection through any reachable bootstrap server", %{
+    test: test_name
+  } do
+    client_name = :"#{__MODULE__}.#{test_name}"
+    pid = start_supervised!({ConnController, oauth_input(client_name, 60)})
+    %Connection{socket: old_socket, port: 19094} = :sys.get_state(pid).bootstrap_conn
+
+    # As if its own server were down when the session ends: left with a server where
+    # nothing listens (port 1) and another broker
+    :sys.replace_state(pid, &%{&1 | bootstrap_servers: ["localhost:1", "localhost:29094"]})
+    send(pid, {:reauth_bootstrap_conn, old_socket})
+
+    assert %Connection{port: 29094} = conn = :sys.get_state(pid).bootstrap_conn
+    assert {:ok, %{brokers: [_, _, _]}} = ConnController.get_cluster_info(conn)
   end
 
   @tag capture_log: true

@@ -2,8 +2,7 @@ defmodule Klife.Client do
   alias Klife
   alias Klife.Record
 
-  @type record :: Klife.Record.t()
-  @type list_of_records :: list(record)
+  @type list_of_records :: list(Record.t())
 
   @default_producer_name :klife_default_producer
   @default_partitioner Klife.Producer.DefaultPartitioner
@@ -249,7 +248,7 @@ defmodule Klife.Client do
       iex> true = is_number(enriched_rec.partition)
 
   """
-  @callback produce(record, opts :: Keyword.t()) :: {:ok, record} | {:error, record}
+  @callback produce(Record.t(), opts :: Keyword.t()) :: {:ok, Record.t()} | {:error, Record.t()}
 
   @doc group: "Producer API"
   @doc """
@@ -293,7 +292,7 @@ defmodule Klife.Client do
       iex> :ok = MyClient.produce_async(rec, callback: {CB, :exec, ["my_arg1", "my_arg2"]})
 
   """
-  @callback produce_async(record, opts :: Keyword.t()) :: :ok
+  @callback produce_async(Record.t(), opts :: Keyword.t()) :: :ok
 
   @doc group: "Producer API"
   @doc """
@@ -342,7 +341,8 @@ defmodule Klife.Client do
   In order to facilitate the response handling you can use `Klife.Record.verify_batch/1` or
   `Klife.Record.verify_batch!/1` functions.
   """
-  @callback produce_batch(list_of_records, opts :: Keyword.t()) :: list({:ok | :error, record})
+  @callback produce_batch(list_of_records, opts :: Keyword.t()) ::
+              list({:ok | :error, Record.t()})
 
   @doc group: "Producer API"
   @doc """
@@ -394,7 +394,7 @@ defmodule Klife.Client do
       iex> :ok = MyClient.produce_batch_async(input, callback: {CB2, :exec, ["arg1", "arg2"]})
 
   """
-  @callback produce_batch_async(list(record), opts :: Keyword.t()) :: :ok
+  @callback produce_batch_async(list_of_records, opts :: Keyword.t()) :: :ok
 
   @doc group: "Transaction API"
   @doc """

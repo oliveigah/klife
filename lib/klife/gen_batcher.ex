@@ -15,8 +15,6 @@ defmodule Klife.GenBatcher do
     :batch_wait_time_ms
   ]
 
-  require Logger
-
   @type batch_insert_item :: term()
   @type batch :: term()
   @type dispatch_response :: {:ok, user_state}

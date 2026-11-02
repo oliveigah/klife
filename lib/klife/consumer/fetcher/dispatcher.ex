@@ -236,6 +236,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
 
     {:noreply, complete_batch(state, state.requests[req_ref], result)}
   end
+
   defp complete_batch(%__MODULE__{} = state, %Batcher.Batch{} = batch, resp_map) do
     Enum.each(batch.data, fn {{t, p}, %Batcher.BatchItem{} = item} ->
       case Map.get(resp_map, {t, p}) do

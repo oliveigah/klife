@@ -5,8 +5,6 @@ defmodule Klife.Producer.Batcher do
 
   import Klife.ProcessRegistry, only: [via_tuple: 1]
 
-  require Logger
-
   alias Klife.Record
 
   alias Klife.Producer

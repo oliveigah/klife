@@ -178,7 +178,9 @@ defmodule Klife.Connection.Controller do
         state.bootstrap_servers,
         state.ssl,
         state.connect_opts,
-        state.socket_opts
+        state.socket_opts,
+        # For the first connection we do not have the API versions yet so we can not pass sasl_opts
+        []
       )
 
     negotiate_api_versions(conn, state.client_name)
@@ -198,16 +200,17 @@ defmodule Klife.Connection.Controller do
   end
 
   # The session is about to end. Requests on the bootstrap connection are sent and read
-  # inside this process, so nothing is in flight on it and it is replaced at once
+  # inside this process, so nothing is in flight on it and it is replaced at once.
+  # Its server may be down by now, so any bootstrap server will do
   def handle_info(
         {:reauth_bootstrap_conn, socket},
         %__MODULE__{bootstrap_conn: %Connection{socket: socket} = old} = state
       ) do
-    {:ok, conn} =
-      Connection.new(
-        "#{old.host}:#{old.port}",
+    conn =
+      connect_bootstrap_server(
+        state.bootstrap_servers,
         state.ssl,
-        Keyword.merge(state.connect_opts, active: false),
+        state.connect_opts,
         state.socket_opts,
         state.sasl_opts
       )
@@ -357,7 +360,11 @@ defmodule Klife.Connection.Controller do
   end
 
   def trigger_brokers_verification(client_name) do
-    GenServer.call(via_tuple({__MODULE__, client_name}), :trigger_check_cluster)
+    GenServer.call(
+      via_tuple({__MODULE__, client_name}),
+      :trigger_check_cluster,
+      get_default_request_timeout_ms(client_name) + :timer.seconds(5)
+    )
   end
 
   def trigger_brokers_verification_async(client_name) do
@@ -525,7 +532,7 @@ defmodule Klife.Connection.Controller do
   defp get_in_flight_messages_table_name(client_name),
     do: :persistent_term.get({__MODULE__, client_name, :in_flight_table})
 
-  defp connect_bootstrap_server(servers, ssl, connect_opts, socket_opts) do
+  defp connect_bootstrap_server(servers, ssl, connect_opts, socket_opts, sasl_opts) do
     conn =
       Enum.reduce_while(servers, [], fn url, acc ->
         case Connection.new(
@@ -533,8 +540,7 @@ defmodule Klife.Connection.Controller do
                ssl,
                Keyword.merge(connect_opts, active: false),
                socket_opts,
-               # For the first connection we do not have the API versions yet so we can not pass sasl_opts
-               []
+               sasl_opts
              ) do
           {:ok, conn} ->
             {:halt, conn}
