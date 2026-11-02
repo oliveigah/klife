@@ -305,15 +305,6 @@ defmodule Klife.Consumer.Fetcher do
 
     receive do
       {:klife_fetch_response, {t, p, o}, resp} ->
-        resp =
-          case resp do
-            {:ok, list_recs} ->
-              {:ok, Klife.Record.filter_records(list_recs, base_offset: o)}
-
-            other ->
-              other
-          end
-
         new_resp_acc = Map.put(resp_acc, {t, p, o}, resp)
         new_counter = counter + 1
         do_wait_fetch_response(deadline, max_resps, new_counter, new_resp_acc)

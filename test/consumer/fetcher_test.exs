@@ -173,6 +173,22 @@ defmodule Klife.Consumer.FetcherTest do
     TestUtils.assert_records(resp5_rec, rec5)
   end
 
+  test "fetch_async - request offset in the middle of batch" do
+    topic = "my_topic_1"
+    records = for _ <- 1..3, do: %Record{value: :rand.bytes(10), topic: topic, partition: 0}
+
+    [{:ok, _rec1}, {:ok, %Record{offset: offset} = rec2}, {:ok, rec3}] =
+      MyClient.produce_batch(records)
+
+    {:ok, _pid} = Fetcher.fetch_async({topic, 0, offset}, MyClient)
+
+    assert_receive {:klife_fetch_response, {^topic, 0, ^offset}, {:ok, [resp2_rec, resp3_rec]}},
+                   5_000
+
+    TestUtils.assert_records(resp2_rec, rec2)
+    TestUtils.assert_records(resp3_rec, rec3)
+  end
+
   test "multi records multi batch" do
     topic1 = "my_topic_1"
     topic2 = "my_topic_2"
