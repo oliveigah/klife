@@ -30,6 +30,7 @@ defmodule Klife.Producer.Dispatcher do
   alias KlifeProtocol.Messages, as: M
 
   alias Klife.GenBatcher
+  alias Klife.Producer.Batcher.HandoffData
 
   require Logger
 
@@ -63,6 +64,14 @@ defmodule Klife.Producer.Dispatcher do
 
   def flush_and_stop(server, error_reason),
     do: GenServer.call(server, {:flush_and_stop, error_reason})
+
+  # Takes the partitions' work out of every request, in flight or waiting for
+  # a retry, and gives up this dispatcher's responsibility for it. Returns a
+  # HandoffData per request and partition, in no particular order. A request
+  # left without partitions is completed here; late broker responses and
+  # retry timers for it are ignored.
+  def pop_partitions(server, tp_set),
+    do: GenServer.call(server, {:pop_partitions, tp_set})
 
   @impl true
   def handle_call({:dispatch, %Request{} = data}, _from, %__MODULE__{} = state) do
@@ -107,7 +116,55 @@ defmodule Klife.Producer.Dispatcher do
     {:stop, :normal, :ok, state}
   end
 
+  def handle_call({:pop_partitions, tp_set}, _from, %__MODULE__{} = state) do
+    {popped, new_requests} =
+      Enum.reduce(state.requests, {[], state.requests}, fn {ref, %Request{} = req}, acc ->
+        {acc_popped, acc_requests} = acc
+        tps = req.data_to_send |> Map.keys() |> Enum.filter(&MapSet.member?(tp_set, &1))
+
+        popped =
+          for tp <- tps do
+            %HandoffData{
+              tp: tp,
+              record_batch: Map.fetch!(req.data_to_send, tp),
+              waiting_pids: Map.get(req.delivery_confirmation_pids, tp, []),
+              base_time: req.base_time,
+              bumped?: MapSet.member?(req.bumped_tp_set, tp)
+            }
+          end
+
+        rest = Map.drop(req.data_to_send, tps)
+
+        cond do
+          tps == [] ->
+            acc
+
+          rest == %{} ->
+            GenBatcher.complete_dispatch(state.batcher_pid, ref)
+            {popped ++ acc_popped, Map.delete(acc_requests, ref)}
+
+          true ->
+            new_req = %Request{
+              req
+              | data_to_send: rest,
+                delivery_confirmation_pids: Map.drop(req.delivery_confirmation_pids, tps),
+                records_map: Map.drop(req.records_map, tps)
+            }
+
+            {popped ++ acc_popped, Map.put(acc_requests, ref, new_req)}
+        end
+      end)
+
+    {:reply, popped, %{state | requests: new_requests}}
+  end
+
+  # Popped while waiting for this retry
   @impl true
+  def handle_info({:dispatch, req_ref}, %__MODULE__{requests: requests} = state)
+      when is_reference(req_ref) and not is_map_key(requests, req_ref) do
+    {:noreply, state}
+  end
+
   def handle_info({:dispatch, req_ref}, %__MODULE__{} = state) when is_reference(req_ref) do
     data =
       %Request{
@@ -146,12 +203,8 @@ defmodule Klife.Producer.Dispatcher do
         Process.send_after(self(), {:dispatch, req_ref}, retry_ms)
         {:noreply, state}
 
-      _ ->
-        Logger.warning(
-          "Timeout message received for an unknown request ref",
-          broker_id: state.broker_id
-        )
-
+      # Popped by a partition handoff
+      nil ->
         {:noreply, state}
     end
   end
@@ -212,24 +265,17 @@ defmodule Klife.Producer.Dispatcher do
   # UNKNOWN_TOPIC_OR_PARTITION (3), LEADER_NOT_AVAILABLE (5) and
   # NOT_LEADER_OR_FOLLOWER (6) indicate the local metadata is stale
   # (e.g. a partition leadership change), so a refresh is triggered
-  # instead of waiting for the next periodic check.
+  # instead of waiting for the next periodic check. The records are retried
+  # here until the refresh hands their partition off to the new leader's
+  # batcher, which takes them from this dispatcher.
   @stale_metadata_codes [3, 5, 6]
   def handle_info(
         {:async_broker_response, req_ref, binary_resp, M.Produce = msg_mod, msg_version},
         %__MODULE__{} = state
       ) do
-    %__MODULE__{
-      requests: requests,
-      broker_id: broker_id
-    } = state
-
-    case Map.get(requests, req_ref) do
+    case Map.get(state.requests, req_ref) do
+      # Popped by a partition handoff
       nil ->
-        Logger.warning(
-          "Broker response received for an unknown request ref",
-          broker_id: broker_id
-        )
-
         {:noreply, state}
 
       %Request{} = data ->
@@ -261,9 +307,12 @@ defmodule Klife.Producer.Dispatcher do
 
     {:ok, resp} = apply(msg_mod, :deserialize_response, [binary_resp, msg_version])
 
+    # Partitions popped by a handoff while this request was in flight belong
+    # to another batcher now, their results are not ours to act on.
     grouped_results =
       for %{name: topic_name, partition_responses: partition_resps} <- resp.content.responses,
-          %{error_code: error_code, index: p_index} = p <- partition_resps do
+          %{error_code: error_code, index: p_index} = p <- partition_resps,
+          Map.has_key?(data_to_send, {topic_name, p_index}) do
         {topic_name, p_index, error_code, p[:base_offset]}
       end
       |> Enum.group_by(&(elem(&1, 2) in @delivery_success_codes))
@@ -331,25 +380,6 @@ defmodule Klife.Producer.Dispatcher do
               error_code: error_code
             )
 
-            :discard
-
-          # The leader moved: retrying here would only hit this broker until the
-          # delivery deadline, and sending to the new leader could land these
-          # records after newer ones. No epoch bump, the partition's sequence
-          # belongs to the new leader's batcher now. Ours forgets it, so if it
-          # comes back here it is claimed with a new epoch.
-          error_code == 6 and leader_moved?(client_name, topic, partition, broker_id) ->
-            Logger.warning(
-              "Produce error on #{topic}:#{partition}, leader moved, message discarded (error_code=#{error_code}) (client=#{inspect(client_name)}, producer=#{producer_name})",
-              client: client_name,
-              producer: producer_name,
-              broker_id: broker_id,
-              topic: topic,
-              partition: partition,
-              error_code: error_code
-            )
-
-            send(state.batcher_pid, {:remove_topic_partition, topic, partition})
             :discard
 
           true ->
@@ -443,13 +473,6 @@ defmodule Klife.Producer.Dispatcher do
       }
 
       {:noreply, new_state}
-    end
-  end
-
-  defp leader_moved?(client_name, topic, partition, broker_id) do
-    case MetadataCache.get_metadata(client_name, topic, partition) do
-      {:ok, %{leader_id: leader_id}} -> leader_id != broker_id
-      {:error, :not_found} -> false
     end
   end
 

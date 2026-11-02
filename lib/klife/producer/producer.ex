@@ -173,6 +173,13 @@ defmodule Klife.Producer do
   - Any records produced by a producer with `max_in_flight_requests` = 1 have guaranteed ordering.
   - Any records produced by a producer with `enable_idempotence` = `true` have guaranteed ordering.
 
+  These guarantees have one exception, during partition leader changes. When a partition's leader
+  changes, the producer hands the partition's pending records from the old leader's batcher to the
+  new one's, keeping their order. A produce call that reaches the old batcher after the handoff is
+  sent on to the new one, and may be overtaken by a later call that went straight to the new one.
+  This only affects calls that overlap in time, like `produce_async` calls or concurrent `produce`
+  calls: if `produce(rec1)` returns before `produce(rec2)` is called, `rec1` is stored first.
+
   ## Dynamic batching
 
   Klife’s producer uses dynamic batching, which automatically accumulates records that cannot be sent
@@ -189,7 +196,8 @@ defmodule Klife.Producer do
   ## Batchers Count
 
   Each Klife producer starts a configurable number of batchers for each broker in the Kafka cluster.
-  Topics and partitions with the same leader are managed by the same batcher.
+  Each topic and partition is managed by one of its leader's batchers, picked from the topic and
+  partition alone, so it keeps its batcher until its leader changes.
 
   By default, Klife initializes only one batcher per broker, which optimizes batch efficiency but
   may underutilize CPU resources on high-core systems.
@@ -224,6 +232,12 @@ defmodule Klife.Producer do
 
   Some broker errors are non-retryable. In those cases the affected records are immediately discarded with the corresponding error code, without retrying.
 
+  When a partition's leader changes, its pending records, including those being retried, are handed
+  to a batcher of the new leader and go on from there, within the same `delivery_timeout_ms`.
+  The handoff keeps the partition's producer epoch, so transactions are not affected by the move.
+  If the old leader's batcher does not hand them over within `request_timeout_ms`, they fail with
+  `:handoff_expired`, and the partition goes on with a new epoch.
+
   Since retries happen at the dispatcher level, they interact with `max_in_flight_requests`:
   a retry occupies an in-flight slot, which may delay other batches waiting to be sent. See the
   "How many producers?" section for strategies to isolate critical topics from this behavior.
@@ -252,7 +266,14 @@ defmodule Klife.Producer do
                 :txn_id,
                 :txn_timeout_ms,
                 :batcher_supervisor,
-                :latest_metadata_sync_ts
+                :latest_metadata_sync_ts,
+                # Each partition's producer leader, the batcher that owns
+                # it, published with producer_leader_map_version
+                :producer_leader_map,
+                :producer_leader_map_version,
+                :handoffs,
+                :handoff_tps,
+                :reconcile_timer
               ]
 
   @doc false
@@ -276,9 +297,17 @@ defmodule Klife.Producer do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
     {:ok, batcher_sup_pid} = DynamicSupervisor.start_link([])
 
+    # Versions keep growing across restarts, so batchers never take a map
+    # read before a restart for a newer one
+    {map_version, _map} = get_producer_leader_map(args_map.client_name, args_map.name)
+
     base = %__MODULE__{
       client_id: "klife_producer.#{args_map.client_name}.#{args_map.name}",
       epochs: %{},
+      producer_leader_map: %{},
+      producer_leader_map_version: map_version,
+      handoffs: %{},
+      handoff_tps: %{},
       # This is the only args that may not exist because
       # it is filtered out on non txn producers
       # in order to prevent confusion on the configuration
@@ -298,9 +327,7 @@ defmodule Klife.Producer do
     # cluster change events.
     :ok = PubSub.subscribe({:cluster_change, args_map.client_name})
 
-    :ok = handle_batchers(state)
-
-    {:ok, state}
+    {:ok, handle_batchers(state)}
   end
 
   @doc false
@@ -315,6 +342,20 @@ defmodule Klife.Producer do
     {__MODULE__, client_name, producer_name}
     |> via_tuple()
     |> GenServer.call({:bump_epoch, topic, partition})
+  end
+
+  @doc false
+  def handoff_prepared(client_name, producer_name, ref) do
+    {__MODULE__, client_name, producer_name}
+    |> via_tuple()
+    |> GenServer.cast({:handoff_prepared, ref})
+  end
+
+  @doc false
+  def claim_handoff(client_name, producer_name, ref, claims) do
+    {__MODULE__, client_name, producer_name}
+    |> via_tuple()
+    |> GenServer.call({:claim_handoff, ref, claims})
   end
 
   @doc false
@@ -353,6 +394,39 @@ defmodule Klife.Producer do
     handle_cluster_or_metadata_changes(state)
   end
 
+  def handle_info({:handoff_timeout, ref}, %__MODULE__{} = state) do
+    {:noreply, expire_handoff(state, ref, :timeout)}
+  end
+
+  def handle_info({:DOWN, mon_ref, :process, _pid, reason}, %__MODULE__{} = state) do
+    case Enum.find(state.handoffs, fn {_ref, h} -> mon_ref in h.monitors end) do
+      {ref, _handoff} -> {:noreply, expire_handoff(state, ref, {:batcher_down, reason})}
+      nil -> {:noreply, state}
+    end
+  end
+
+  def handle_info(:reconcile_producer_leaders, %__MODULE__{} = state) do
+    {:noreply, reconcile_producer_leaders(%{state | reconcile_timer: nil})}
+  end
+
+  @impl true
+  def handle_cast({:handoff_prepared, ref}, %__MODULE__{} = state) do
+    case Map.get(state.handoffs, ref) do
+      %{stage: :preparing} = handoff ->
+        handoffs = Map.put(state.handoffs, ref, %{handoff | stage: :prepared})
+        {:noreply, execute_prepared_handoffs(%{state | handoffs: handoffs})}
+
+      # Aborted
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_continue(:reconcile_producer_leaders, %__MODULE__{} = state) do
+    {:noreply, reconcile_producer_leaders(state)}
+  end
+
   defp handle_cluster_or_metadata_changes(state) do
     if maybe_find_coordinator(state) != state.coordinator_id do
       # If the coordinator has changed the easiest thing to do is
@@ -363,7 +437,7 @@ defmodule Klife.Producer do
       # coordinator and therefore will not stop
       {:stop, {:shutdown, {:coordinator_change, state.coordinator_id}}, state}
     else
-      :ok = handle_batchers(state)
+      state = handle_batchers(state)
       {:noreply, %{state | latest_metadata_sync_ts: System.monotonic_time()}}
     end
   end
@@ -442,6 +516,37 @@ defmodule Klife.Producer do
 
       _other_owner ->
         {:reply, {:error, :stale}, state}
+    end
+  end
+
+  # The handoff's destination has the work and takes the partitions the
+  # source still owned, with the epoch it gave, so their sequences go on.
+  # Replies with the claimed partitions; the others were claimed with a new
+  # epoch in the meantime, by the destination itself after an abort or by
+  # another batcher.
+  def handle_call({:claim_handoff, ref, claims}, {dest_pid, _tag}, %__MODULE__{} = state) do
+    case Map.get(state.handoffs, ref) do
+      %{dest_pid: ^dest_pid, source_pid: source_pid} ->
+        {claimed, epochs} =
+          Enum.reduce(claims, {MapSet.new(), state.epochs}, fn {tp, epoch}, {acc, acc_epochs} ->
+            case Map.get(acc_epochs, tp) do
+              {^epoch, ^source_pid} ->
+                {MapSet.put(acc, tp), Map.put(acc_epochs, tp, {epoch, dest_pid})}
+
+              # Never produced to, or not idempotent
+              nil when epoch == nil ->
+                {MapSet.put(acc, tp), acc_epochs}
+
+              _ ->
+                {acc, acc_epochs}
+            end
+          end)
+
+        new_state = retire_handoff(%{state | epochs: epochs}, ref)
+        {:reply, claimed, new_state, {:continue, :reconcile_producer_leaders}}
+
+      _ ->
+        {:reply, MapSet.new(), state}
     end
   end
 
@@ -555,16 +660,18 @@ defmodule Klife.Producer do
     # timed-out call being consumed by a subsequent call, which would
     # cause responses to be matched to the wrong records.
     produce_ref = make_ref()
+    now = System.monotonic_time(:millisecond)
 
     delivery_timeout_ms =
       records
       |> group_records_by_batcher(client_name, opt_producer)
-      |> Enum.reduce(client_name.get_default_request_timeout_ms(), fn {key, recs}, acc ->
+      |> Enum.reduce(client_name.get_default_request_timeout_ms(), fn {key, {map_version, recs}},
+                                                                      acc ->
         {broker_id, producer, batcher_id} = key
 
         recs =
           Enum.map(recs, fn %Record{} = rec ->
-            %Record{rec | __callback: {callback_pid, produce_ref}}
+            %Record{rec | __callback: {callback_pid, produce_ref}, __arrival_ms: now}
           end)
 
         # The try/catch here is important to prevent
@@ -575,7 +682,7 @@ defmodule Klife.Producer do
         # deliver any problem as "normal" errors to the user
         produce_resp =
           try do
-            Batcher.produce(recs, client_name, broker_id, producer, batcher_id)
+            Batcher.produce(recs, client_name, broker_id, producer, batcher_id, map_version)
           catch
             kind, reason ->
               :ok = sync_metadata_cache(client_name, producer)
@@ -622,12 +729,17 @@ defmodule Klife.Producer do
   def produce_async([%Record{} | _] = records, client_name, opts) do
     opt_producer = Keyword.get(opts, :producer)
     callback = Keyword.get(opts, :callback)
+    now = System.monotonic_time(:millisecond)
 
     records
     |> group_records_by_batcher(client_name, opt_producer)
-    |> Enum.each(fn {key, recs} ->
+    |> Enum.each(fn {key, {map_version, recs}} ->
       {broker_id, producer, batcher_id} = key
-      recs = Enum.map(recs, fn %Record{} = rec -> %Record{rec | __callback: callback} end)
+
+      recs =
+        Enum.map(recs, fn %Record{} = rec ->
+          %Record{rec | __callback: callback, __arrival_ms: now}
+        end)
 
       # The try/catch here is important to prevent
       # partial writes on raises. If a broker dies in the middle
@@ -637,7 +749,7 @@ defmodule Klife.Producer do
       # deliver any problem as "normal" errors to the user
       produce_resp =
         try do
-          Batcher.produce_async(recs, client_name, broker_id, producer, batcher_id)
+          Batcher.produce_async(recs, client_name, broker_id, producer, batcher_id, map_version)
         catch
           kind, reason ->
             :ok = sync_metadata_cache(client_name, producer)
@@ -667,25 +779,22 @@ defmodule Klife.Producer do
     end)
   end
 
+  # Each request carries the oldest producer leader map version its
+  # partitions were read from, so a batcher can tell when it may get records
+  # for partitions it has handed off.
   defp group_records_by_batcher(records, client_name, opt_producer) do
     records
     |> Enum.group_by(fn r -> {r.topic, r.partition} end)
-    |> Enum.map(fn {{t, p}, recs} ->
-      {:ok,
-       %{
-         leader_id: broker_id,
-         default_producer: default_producer
-       }} = MetadataCache.get_metadata(client_name, t, p)
+    |> Enum.reduce(%{}, fn {{t, p}, recs}, acc ->
+      {:ok, %{default_producer: default_producer}} = MetadataCache.get_metadata(client_name, t, p)
+      producer = opt_producer || default_producer
+      {map_version, {broker_id, batcher_id}} = get_producer_leader(client_name, producer, t, p)
 
-      new_key =
-        if opt_producer,
-          do: {broker_id, opt_producer, get_batcher_id(client_name, opt_producer, t, p)},
-          else: {broker_id, default_producer, get_batcher_id(client_name, default_producer, t, p)}
-
-      {new_key, recs}
+      Map.update(acc, {broker_id, producer, batcher_id}, {map_version, recs}, fn {version,
+                                                                                  acc_recs} ->
+        {min(version, map_version), recs ++ acc_recs}
+      end)
     end)
-    |> Enum.group_by(fn {key, _recs} -> key end, fn {_key, recs} -> recs end)
-    |> Enum.map(fn {k, v} -> {k, List.flatten(v)} end)
   end
 
   defp wait_produce_response(produce_ref, timeout_ms, max_resps) do
@@ -727,11 +836,8 @@ defmodule Klife.Producer do
 
   defp handle_batchers(%__MODULE__{} = state) do
     known_brokers = ConnController.get_known_brokers(state.client_name)
-    batchers_per_broker = state.batchers_count
-    :ok = init_batchers(state, known_brokers, batchers_per_broker)
-    :ok = setup_batcher_ids(state, batchers_per_broker)
-
-    :ok
+    :ok = init_batchers(state, known_brokers, state.batchers_count)
+    reconcile_producer_leaders(state)
   end
 
   defp init_batchers(state, known_brokers, batchers_per_broker) do
@@ -771,57 +877,188 @@ defmodule Klife.Producer do
     ]
   end
 
-  defp setup_batcher_ids(%__MODULE__{} = state, batchers_per_broker) do
-    %__MODULE__{
-      client_name: client_name,
-      name: producer_name
-    } = state
+  # Producer leaders follow each partition's leader. A new partition gets its
+  # producer leader right away. A partition whose leader changed is handed off from its current
+  # batcher to the new one, grouped by batcher pair, one handoff at a time
+  # per partition. Changes found while a partition is being handed off are
+  # picked up when the handoff ends.
+  defp reconcile_producer_leaders(%__MODULE__{} = state) do
+    %__MODULE__{client_name: client_name, batchers_count: batchers_count} = state
 
-    batchers_map =
-      client_name
-      |> MetadataCache.get_all_metadata()
-      |> Enum.group_by(& &1.leader_id)
-      |> Enum.map(fn {_broker_id, topics_list} ->
-        topics_list
-        |> Enum.with_index()
-        |> Enum.map(fn {val, idx} ->
-          batcher_id =
-            if batchers_per_broker > 1, do: rem(idx, batchers_per_broker), else: 0
+    {direct, moves, retry?} =
+      for %{key: tp, leader_id: leader_id} <- MetadataCache.get_all_metadata(client_name),
+          not is_map_key(state.handoff_tps, tp),
+          reduce: {%{}, %{}, false} do
+        {direct, moves, retry?} = acc ->
+          dest = {leader_id, :erlang.phash2(tp, batchers_count)}
 
-          Map.put(val, :batcher_id, batcher_id)
-        end)
-      end)
-      |> List.flatten()
-      |> Enum.map(fn %{key: {tname, partition}, batcher_id: b_id} ->
-        {{tname, partition}, b_id}
-      end)
-      |> Map.new()
+          case Map.get(state.producer_leader_map, tp) do
+            ^dest ->
+              acc
 
-    save_batcher_id_map(client_name, producer_name, batchers_map)
+            source ->
+              cond do
+                # New partition, or nothing left to hand off
+                source == nil or batcher_pid(state, source) == nil ->
+                  {Map.put(direct, tp, dest), moves, retry?}
+
+                # A batcher being restarted, or of a broker not known yet
+                batcher_pid(state, dest) == nil ->
+                  {direct, moves, true}
+
+                true ->
+                  {direct, Map.update(moves, {source, dest}, [tp], &[tp | &1]), retry?}
+              end
+          end
+      end
+
+    state =
+      if map_size(direct) > 0,
+        do:
+          publish_producer_leader_map(%{
+            state
+            | producer_leader_map: Map.merge(state.producer_leader_map, direct)
+          }),
+        else: state
+
+    # Tried again later, unless a retry is already due
+    state =
+      if retry? and state.reconcile_timer == nil,
+        do: %{
+          state
+          | reconcile_timer:
+              Process.send_after(self(), :reconcile_producer_leaders, state.retry_backoff_ms)
+        },
+        else: state
+
+    Enum.reduce(moves, state, fn {{source, dest}, tps}, acc ->
+      ref = make_ref()
+      source_pid = batcher_pid(acc, source)
+      dest_pid = batcher_pid(acc, dest)
+
+      :ok = Batcher.prepare_to_receive_handoff(dest_pid, ref, tps)
+
+      handoff = %{
+        tps: tps,
+        dest: dest,
+        source_pid: source_pid,
+        dest_pid: dest_pid,
+        stage: :preparing,
+        monitors: [Process.monitor(source_pid), Process.monitor(dest_pid)],
+        timer: Process.send_after(self(), {:handoff_timeout, ref}, acc.request_timeout_ms)
+      }
+
+      %{
+        acc
+        | handoffs: Map.put(acc.handoffs, ref, handoff),
+          handoff_tps: Enum.reduce(tps, acc.handoff_tps, &Map.put(&2, &1, ref))
+      }
+    end)
   end
 
-  defp save_batcher_id_map(client_name, producer_name, batcher_map) do
+  # Waits for every destination preparing to ack, so a burst of handoffs
+  # publishes its producer leader map once. Then the sources are asked to
+  # execute.
+  defp execute_prepared_handoffs(%__MODULE__{} = state) do
+    prepared = for {ref, %{stage: :prepared} = h} <- state.handoffs, do: {ref, h}
+
+    if prepared == [] or Enum.any?(state.handoffs, fn {_ref, h} -> h.stage == :preparing end) do
+      state
+    else
+      leader_map =
+        Enum.reduce(prepared, state.producer_leader_map, fn {_ref, h}, acc ->
+          Enum.reduce(h.tps, acc, &Map.put(&2, &1, h.dest))
+        end)
+
+      state = publish_producer_leader_map(%{state | producer_leader_map: leader_map})
+
+      Enum.reduce(prepared, state, fn {ref, h}, acc ->
+        :ok =
+          Batcher.execute_handoff_to_new_leader(
+            h.source_pid,
+            ref,
+            h.tps,
+            acc.producer_leader_map_version,
+            h.dest_pid
+          )
+
+        %{acc | handoffs: Map.put(acc.handoffs, ref, %{h | stage: :executing})}
+      end)
+    end
+  end
+
+  # Aborts a handoff whose source or destination did not get through in
+  # time, or died. The destination inserts its held records as for any new
+  # partition, which claims it with a new epoch, and fails the work if it
+  # ever arrives. A handoff aborted before its producer leader was published is tried
+  # again.
+  defp expire_handoff(%__MODULE__{} = state, ref, reason) do
+    case Map.get(state.handoffs, ref) do
+      nil ->
+        state
+
+      handoff ->
+        Logger.warning(
+          "Partition handoff aborted (reason=#{inspect(reason)}) (client=#{inspect(state.client_name)}, producer=#{state.name})",
+          client: state.client_name,
+          producer: state.name,
+          partitions: handoff.tps
+        )
+
+        :ok = Batcher.abort_handoff(handoff.dest_pid, ref)
+
+        state
+        |> retire_handoff(ref)
+        |> execute_prepared_handoffs()
+        |> reconcile_producer_leaders()
+    end
+  end
+
+  defp retire_handoff(%__MODULE__{} = state, ref) do
+    {handoff, handoffs} = Map.pop!(state.handoffs, ref)
+    Process.cancel_timer(handoff.timer)
+    Enum.each(handoff.monitors, &Process.demonitor(&1, [:flush]))
+
+    %{state | handoffs: handoffs, handoff_tps: Map.drop(state.handoff_tps, handoff.tps)}
+  end
+
+  defp publish_producer_leader_map(%__MODULE__{} = state) do
+    map_version = state.producer_leader_map_version + 1
+
     :persistent_term.put(
-      {__MODULE__, client_name, producer_name},
-      batcher_map
+      {__MODULE__, :producer_leader_map, state.client_name, state.name},
+      {map_version, state.producer_leader_map}
     )
+
+    %{state | producer_leader_map_version: map_version}
+  end
+
+  defp batcher_pid(%__MODULE__{} = state, {broker_id, batcher_id}) do
+    case registry_lookup({Batcher, state.client_name, broker_id, state.name, batcher_id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
+  end
+
+  # The producer leader map, with its version: each partition's producer
+  # leader, the batcher that owns it, as {broker_id, batcher_id}
+  @doc false
+  def get_producer_leader_map(client_name, producer_name) do
+    :persistent_term.get({__MODULE__, :producer_leader_map, client_name, producer_name}, {0, %{}})
   end
 
   @doc false
-  def get_batcher_id(client_name, producer_name, topic, partition) do
-    {__MODULE__, client_name, producer_name}
-    |> :persistent_term.get()
-    |> Map.get({topic, partition})
-    |> case do
+  def get_producer_leader(client_name, producer_name, topic, partition) do
+    {map_version, leader_map} = get_producer_leader_map(client_name, producer_name)
+
+    case Map.get(leader_map, {topic, partition}) do
       nil ->
         :ok = sync_metadata_cache(client_name, producer_name)
+        {map_version, leader_map} = get_producer_leader_map(client_name, producer_name)
+        {map_version, Map.fetch!(leader_map, {topic, partition})}
 
-        {__MODULE__, client_name, producer_name}
-        |> :persistent_term.get()
-        |> Map.fetch!({topic, partition})
-
-      data ->
-        data
+      producer_leader ->
+        {map_version, producer_leader}
     end
   end
 end

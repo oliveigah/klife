@@ -69,6 +69,11 @@ config :klife, MyClient,
     [
       name: :async_test_producer,
       batch_size_bytes: 5000
+    ],
+    [
+      # Partition handoffs are given up after the request timeout
+      name: :handoff_test_producer,
+      request_timeout_ms: 2_000
     ]
   ],
   topics: [
