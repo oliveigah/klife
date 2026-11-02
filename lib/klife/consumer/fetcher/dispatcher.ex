@@ -247,6 +247,18 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
              {:error, :unkown_error}}
           )
 
+        # Kafka returns whole record batches, so the first may start before the
+        # requested offset: every receiver gets records from that offset on.
+        # Done here and not by receivers because fetch_async replies straight to
+        # the caller's process, where no klife code runs; trimming is a short
+        # drop_while (~60ns per partition response when nothing is dropped)
+        {:ok, recs} ->
+          send(
+            item.__callback,
+            {:klife_fetch_response, {item.topic_name, p, item.offset_to_fetch},
+             {:ok, Record.filter_records(recs, base_offset: item.offset_to_fetch)}}
+          )
+
         resp ->
           send(
             item.__callback,

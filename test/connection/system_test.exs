@@ -218,8 +218,12 @@ defmodule Klife.Connection.SystemTest do
     :sys.replace_state(pid, &%{&1 | bootstrap_servers: ["localhost:1", "localhost:29094"]})
     send(pid, {:reauth_bootstrap_conn, old_socket})
 
-    assert %Connection{port: 29094} = conn = :sys.get_state(pid).bootstrap_conn
-    assert {:ok, %{brokers: [_, _, _]}} = ConnController.get_cluster_info(conn)
+    assert %Connection{port: 29094, socket: socket} = :sys.get_state(pid).bootstrap_conn
+
+    # The controller checks the cluster on it every 10ms in tests; a failed check
+    # initializes the bootstrap connection again 1s later, with another socket
+    Process.sleep(1_500)
+    assert %Connection{socket: ^socket} = :sys.get_state(pid).bootstrap_conn
   end
 
   @tag capture_log: true
