@@ -9,7 +9,9 @@ defmodule Simulator.Engine.EventExecutor do
   alias Simulator.EngineConfig
   alias Simulator.Cluster
 
+  alias Klife.Connection.Broker
   alias Klife.Connection.Controller, as: ConnController
+  alias KlifeProtocol.Messages, as: M
 
   @loop_interval_ms :timer.seconds(10)
 
@@ -25,8 +27,12 @@ defmodule Simulator.Engine.EventExecutor do
     :kill_consumer_group,
     :stop_consumer_group,
     :add_partitions,
-    :kill_broker
+    :kill_broker,
+    :move_leader
   ]
+
+  # No failures, only what a healthy cluster also does
+  @stable_actions [:move_leader]
 
   defstruct pending_rollbacks: [], shutting_down: false, last_broker_kill_at: nil
 
@@ -150,9 +156,11 @@ defmodule Simulator.Engine.EventExecutor do
 
     state = %{state | pending_rollbacks: remaining}
 
+    actions = if EngineConfig.force_stable?(), do: @stable_actions, else: @actions
+
     state =
-      if not EngineConfig.force_stable?() and :rand.uniform() >= @event_threshold do
-        available_actions = filter_available_actions(@actions, state)
+      if :rand.uniform() >= @event_threshold do
+        available_actions = filter_available_actions(actions, state)
 
         if available_actions != [] do
           action = Enum.random(available_actions)
@@ -461,6 +469,88 @@ defmodule Simulator.Engine.EventExecutor do
           broker_id: broker_id
         })
     end
+  end
+
+  # Another replica of a partition becomes its preferred leader and is
+  # elected, with every broker alive, as a reassignment or a preferred leader
+  # election does
+  defp execute_action(:move_leader, %__MODULE__{} = state) do
+    %EngineConfig{topics: topics, clients: clients} = Engine.get_config()
+
+    %{topic: topic} = Enum.random(topics)
+    partition = Enum.random(0..(Engine.get_partition_count(topic) - 1))
+    client = Enum.random(clients)
+
+    metadata =
+      Broker.send_message(M.Metadata, client, :controller, %{
+        topics: nil,
+        allow_auto_topic_creation: false,
+        include_topic_authorized_operations: false
+      })
+
+    with {:ok, %{content: %{topics: topics_metadata}}} <- metadata,
+         %{partitions: partitions} <- Enum.find(topics_metadata, &(&1.name == topic)),
+         %{leader_id: old_leader, replica_nodes: replicas} <-
+           Enum.find(partitions, &(&1.partition_index == partition)),
+         [_ | _] = others <- replicas -- [old_leader] do
+      new_leader = Enum.random(others)
+
+      reassignment = %{
+        timeout_ms: 15_000,
+        topics: [
+          %{
+            name: topic,
+            partitions: [
+              %{partition_index: partition, replicas: [new_leader | replicas -- [new_leader]]}
+            ]
+          }
+        ]
+      }
+
+      election = %{
+        election_type: 0,
+        topic_partitions: [%{topic: topic, partitions: [partition]}],
+        timeout_ms: 15_000
+      }
+
+      result =
+        with {:ok, %{content: %{error_code: 0, responses: [%{partitions: [%{error_code: 0}]}]}}} <-
+               send_admin_message(M.AlterPartitionReassignments, 0, client, reassignment),
+             {:ok, %{content: %{error_code: 0, replica_election_results: [r]}}} <-
+               send_admin_message(M.ElectLeaders, 2, client, election),
+             [%{error_code: 0}] <- r.partition_result do
+          :ok
+        else
+          other -> {:error, other}
+        end
+
+      Logger.info(
+        "EventExecutor: move_leader - #{topic}:#{partition} from #{old_leader} to #{new_leader}: #{inspect(result)}"
+      )
+
+      log_event(:action, :move_leader, %{
+        topic: topic,
+        partition: partition,
+        old_leader: old_leader,
+        new_leader: new_leader,
+        result: result
+      })
+    else
+      other ->
+        Logger.info(
+          "EventExecutor: move_leader - #{topic}:#{partition} skipped: #{inspect(other)}"
+        )
+    end
+
+    state
+  end
+
+  # Admin messages the client does not negotiate versions for
+  defp send_admin_message(message_mod, version, client, content) do
+    correlation_id = ConnController.get_next_correlation_id(client)
+    input = %{headers: %{correlation_id: correlation_id}, content: content}
+    data = message_mod.serialize_request(input, version)
+    Broker.send_raw_sync(data, message_mod, version, correlation_id, :controller, client, [])
   end
 
   defp do_stop_broker(_client_name, broker_id) do

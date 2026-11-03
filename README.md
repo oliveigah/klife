@@ -127,18 +127,37 @@ Klife has been validated through thousands of randomized simulation runs using a
 
 During each run, the simulator continuously injects failures:
 
-- **Broker crashes**: Kafka brokers are killed and restarted after random delays
+- **Broker crashes**: Kafka brokers are stopped and restarted after random delays
 - **Consumer group kills**: Groups are forcefully terminated and gracefully stopped
 - **Partition expansion**: Partitions are dynamically added to topics mid-simulation
 - **Application-level faults**: Random exceptions and batch processing failures in consumer callbacks
+- **Partition leader changes**: Leadership moves between live brokers, as reassignments and leader elections do. These also happen in runs without injected failures.
 
-Throughout all of this, the framework asserts three core invariants that must never be violated:
+Throughout all of this, the framework asserts invariants that must never be violated. Those marked *stable* can only be ensured without injected failures, and are checked on runs without them.
 
-1. **No duplicate consumption**: Every record is delivered exactly once per consumer group (only possible to ensure on runs without injected failures)
+Consumption:
+
+1. **No data loss**: Every acknowledged record is consumed by all subscribed groups, within a bounded time, and never skipped by a group that already consumed later records
 2. **Ordered delivery**: Offsets within a partition are always consumed in order
-3. **No data loss**: Every produced record is eventually consumed by all subscribed groups
+3. **Intact records**: Every consumed record has the content it was produced with
+4. **Consumed where acknowledged**: Every record is consumed at the offset its producer was told
+5. **No duplicate consumption** (*stable*): Every record is delivered exactly once per consumer group
 
-The full simulator source code is available in the `simulator` directory.
+Production:
+
+6. **Ordered production**: Sequential produce calls get increasing offsets on each partition
+7. **No duplicate writes**: No record is ever written twice
+8. **No produce errors** (*stable*): No produce call fails
+9. **Bounded latency** (*stable*): No produce call takes more than 10 seconds
+10. **Stable producer epochs** (*stable*): Leader changes never restart a partition's producer epoch, which transactions rely on
+
+Progress:
+
+11. **No stuck producers**: Every partition keeps getting new acknowledged records
+12. **No idle partitions**: Every consumer group receives records from every partition
+13. **Producers follow leaders**: Within a minute of a leader change, a partition's records are produced through its new leader
+
+The full simulator source code is available in the `simulator` directory, and its [README](simulator/README.md#invariants) details the exact condition behind each invariant.
 
 ## Upgrade from 0.x to 1.x
 

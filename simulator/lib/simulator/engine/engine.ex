@@ -12,7 +12,12 @@ defmodule Simulator.Engine do
     :init_ts,
     partition_counts: %{},
     partition_counts_updated_at: %{},
-    last_partition_produced_counts: %{}
+    last_partition_produced_counts: %{},
+    # Last seen epoch of each {client, topic, partition} on its default producer
+    producer_epochs: %{},
+    # Since when each {client, topic, partition} has a producer leader on
+    # another broker than its partition leader
+    leader_divergences: %{}
   ]
 
   def get_config, do: :persistent_term.get(:engine_config)
@@ -378,7 +383,82 @@ defmodule Simulator.Engine do
         {{t, p}, {current_count, new_occurrences}}
       end
 
-    %{state | last_partition_produced_counts: new_last_partition_produced_counts}
+    check_producers(%{state | last_partition_produced_counts: new_last_partition_produced_counts})
+  end
+
+  # A partition's producer leader, the batcher that owns it, must follow its
+  # partition leader once metadata settles: a handoff that never completes
+  # leaves it behind. Without injected failures a partition's epoch never
+  # changes either: a handoff that falls back to a new epoch may fail no
+  # record, but it would make a transactional producer fail.
+  @leader_divergence_limit_ms :timer.minutes(1)
+  defp check_producers(%__MODULE__{config: config} = state) do
+    now = System.monotonic_time(:millisecond)
+
+    Enum.reduce(config.clients, state, fn client, acc ->
+      producer = client.get_default_producer()
+      {_version, leader_map} = Klife.Producer.get_producer_leader_map(client, producer)
+
+      divergences =
+        for %{topic: t} <- config.topics,
+            p <- 0..(Map.fetch!(acc.partition_counts, t) - 1),
+            {:ok, %{leader_id: leader}} <- [Klife.MetadataCache.get_metadata(client, t, p)],
+            {broker_id, _batcher_id} <- [Map.get(leader_map, {t, p})],
+            broker_id != leader,
+            into: %{} do
+          key = {client, t, p}
+          since = Map.get(acc.leader_divergences, key, now)
+
+          if now - since >= @leader_divergence_limit_ms do
+            :ok =
+              insert_violation(:producer_leader_diverged, %{
+                client: client,
+                topic: t,
+                partition: p,
+                producer_leader: broker_id,
+                partition_leader: leader,
+                for_ms: now - since
+              })
+
+            {key, now}
+          else
+            {key, since}
+          end
+        end
+
+      epochs =
+        case Klife.Producer.get_pid(client, producer) do
+          {pid, _} -> Map.new(:sys.get_state(pid).epochs, fn {tp, {e, _}} -> {tp, e} end)
+          nil -> %{}
+        end
+
+      if EngineConfig.force_stable?() do
+        for {{t, p} = tp, epoch} <- epochs,
+            last_epoch = Map.get(acc.producer_epochs, {client, tp}),
+            last_epoch != nil and epoch > last_epoch do
+          :ok =
+            insert_violation(:epoch_bumped, %{
+              client: client,
+              topic: t,
+              partition: p,
+              from: last_epoch,
+              to: epoch
+            })
+        end
+      end
+
+      producer_epochs =
+        Enum.reduce(epochs, acc.producer_epochs, fn {tp, e}, map ->
+          Map.put(map, {client, tp}, e)
+        end)
+
+      leader_divergences =
+        acc.leader_divergences
+        |> Map.reject(fn {{c, _t, _p}, _since} -> c == client end)
+        |> Map.merge(divergences)
+
+      %{acc | producer_epochs: producer_epochs, leader_divergences: leader_divergences}
+    end)
   end
 
   def handle_tables(%EngineConfig{} = _config) do
@@ -401,6 +481,7 @@ defmodule Simulator.Engine do
     :persistent_term.put({:partition_produced_counter, topic, partition}, ref)
 
     :ets.new(producer_table_name(topic, partition), [:ordered_set, :public, :named_table])
+    :ets.new(written_keys_table_name(topic, partition), [:set, :public, :named_table])
 
     Enum.each(config.consumer_groups, fn %{name: cg_name} ->
       ref = :atomics.new(1, [])
@@ -505,6 +586,10 @@ defmodule Simulator.Engine do
   def idempotency_table_name(topic, partition, cg_name),
     do: :"consumer_idempotency.#{topic}.#{partition}.#{cg_name}"
 
+  # Offset of each consumed key, whatever the group
+  def written_keys_table_name(topic, partition),
+    do: :"written_keys.#{topic}.#{partition}"
+
   def handle_consumers(%EngineConfig{} = config, sup_pid) do
     Enum.map(config.consumer_group_configs, fn opts ->
       :ets.insert(:engine_support, {{opts[:group_name], opts[:cg_mod]}, opts})
@@ -564,6 +649,44 @@ defmodule Simulator.Engine do
       end
 
     out_of_order? = latest_consummed_offset > rec.offset
+
+    # Keys are unique per produced record and a failed record is never
+    # produced again, so a key at two offsets was written twice
+    written_keys = written_keys_table_name(rec.topic, rec.partition)
+
+    if not :ets.insert_new(written_keys, {rec.key, rec.offset}) do
+      case :ets.lookup(written_keys, rec.key) do
+        [{_key, offset}] when offset != rec.offset ->
+          :ok =
+            insert_violation(:produced_duplicate, %{
+              consumer_group: cg_name,
+              topic: rec.topic,
+              partition: rec.partition,
+              offset: rec.offset,
+              first_offset: offset
+            })
+
+        _same_offset ->
+          :ok
+      end
+    end
+
+    # The record must be where the producer was told it is. Under failures a
+    # resend may also leave a copy before that offset, never after it.
+    with [{_key, _hash_data, _insert_time, reported_offset, _confirmation_ts}]
+         when is_integer(reported_offset) <- lookup_resp,
+         true <-
+           rec.offset > reported_offset or
+             (EngineConfig.force_stable?() and rec.offset != reported_offset) do
+      :ok =
+        insert_violation(:consumed_offset_mismatch, %{
+          consumer_group: cg_name,
+          topic: rec.topic,
+          partition: rec.partition,
+          offset: rec.offset,
+          reported_offset: reported_offset
+        })
+    end
 
     cond do
       duplicated_message? ->

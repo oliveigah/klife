@@ -23,6 +23,33 @@ finishes before the worker exits. The task waits for all workers, saves Compose
 logs and removes their containers and volumes. A worker exits nonzero on an
 unexpected engine failure or invariant violations detected by MultiRunner.
 
+## Invariants
+
+The engine checks these while a simulation runs, the periodic ones every 5
+seconds, and saves violations to `invariants_violations.exs` in the simulation's
+directory. Any violation makes MultiRunner fail the run. A record is tracked
+once every consumer group has started consuming its partition.
+
+| Violation | Raised when | Mode |
+|---|---|---|
+| `skipped_record` | An acknowledged record is still unconsumed after its group consumed a record produced after that acknowledgement | Both |
+| `too_much_lag` | An acknowledged record is still unconsumed 30 s (stable) or 120 s (chaos) after its acknowledgement | Both |
+| `stale_producer` | A partition that has produced gets no new acknowledged record for 20 consecutive checks | Both |
+| `no_produce` | A group has consumed nothing from a partition more than 90 s after the topic's partition count last changed | Both |
+| `consumed_unexpected_record` | A consumed record's topic, partition, value, key or headers differ from what was produced under its key | Both |
+| `consumed_out_of_order` | A group consumes an offset lower than one it already consumed on that partition | Both |
+| `consumed_offset_mismatch` | A record is consumed at an offset other than the one its producer was told. In chaos only a later offset counts, since a resend may leave an earlier copy. | Both |
+| `produced_out_of_order` | A producer process gets an offset on a partition that is not after the last one it got there. Its produce calls never overlap. | Both |
+| `produced_duplicate` | A key is consumed at two different offsets of a partition. Keys are unique per record and failed records are never produced again, so the record was written twice. | Both |
+| `producer_leader_diverged` | A client's default producer keeps a partition on a batcher of another broker than the partition leader for a minute. A handoff that never completes leaves it behind. | Both |
+| `consumed_duplicate` | A group consumes the same offset twice | Stable only, logged in chaos |
+| `produce_error` | A produce call returns an error for a record | Stable only, logged in chaos |
+| `slow_produce` | A produce call takes more than 10 s. A handoff abort or a request timeout takes that long, a leader change about a second. | Stable only |
+| `epoch_bumped` | A partition's producer epoch changes on a client's default producer. A handoff that falls back to a new epoch may fail no record, but would make transactions fail. | Stable only |
+
+Not checked: a record reported as failed that is written anyway. A consumed
+record with no tracked entry is accepted.
+
 Data is mounted directly into `simulator/simulations_data/<project>/<simulation>/`.
 The existing per-simulation config, runtime logs, events and invariant files stay
 there after cleanup. Each `config.exs` records simulator, broker and controller
@@ -50,7 +77,10 @@ FORCE_STABLE=true SASL_MECHANISM=OAUTHBEARER mix simulate --parallel 2
 ```
 
 - `FORCE_STABLE`: defaults to false (chaos), with no random selection of this flag;
-  true disables injected failures and enables duplicate checks.
+  true disables injected failures and makes duplicates and producer errors
+  invariant violations. Partition leaders still move (`move_leader`, a
+  reassignment plus a preferred leader election with every broker alive), so
+  the producer's leader handoff is checked under these stricter rules.
 - `SASL_MECHANISM`: `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512` or `OAUTHBEARER`;
   unset selects a random subset of all clients, including plaintext, for each
   simulation within each worker.

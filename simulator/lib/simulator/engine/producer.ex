@@ -15,8 +15,12 @@ defmodule Simulator.Engine.Producer do
     :max_records,
     :loop_interval_ms,
     :record_value_bytes,
-    :record_key_bytes
+    :record_key_bytes,
+    # Offset of the last record produced to each partition
+    last_offsets: %{}
   ]
+
+  @slow_produce_us :timer.seconds(10) * 1000
 
   @impl true
   def init(init_args) do
@@ -88,22 +92,66 @@ defmodule Simulator.Engine.Producer do
       to_produce
       |> Enum.chunk_every(chunk_size)
       |> Enum.map(fn chunk ->
-        apply(state.client, :produce_batch, [chunk])
+        {elapsed_us, result} = :timer.tc(fn -> apply(state.client, :produce_batch, [chunk]) end)
+
+        # A healthy call takes milliseconds, about a second when it meets a
+        # leader change. Waiting out a handoff abort or a request timeout takes
+        # far longer.
+        if EngineConfig.force_stable?() and elapsed_us > @slow_produce_us do
+          :ok =
+            Engine.insert_violation(:slow_produce, %{
+              topic: state.topic,
+              records: length(chunk),
+              elapsed_ms: div(elapsed_us, 1000)
+            })
+        end
+
+        result
       end)
 
-    for result <- produce_results,
-        {status, %Klife.Record{} = rec} <- result do
-      case status do
-        :ok ->
-          :ok = Engine.confirm_produced_record(rec)
-          rec
+    last_offsets =
+      for result <- produce_results,
+          {status, %Klife.Record{} = rec} <- result,
+          reduce: state.last_offsets do
+        acc ->
+          case status do
+            :ok ->
+              :ok = Engine.confirm_produced_record(rec)
 
-        :error ->
-          Engine.rollback_produced_record(rec)
-          Logger.error("Error on producer: error_code #{inspect(rec.error_code)}")
+              # This process's produce calls never overlap, so each record
+              # must land after the ones it produced before to its partition
+              last_offset = Map.get(acc, rec.partition)
+
+              if last_offset != nil and rec.offset <= last_offset do
+                :ok =
+                  Engine.insert_violation(:produced_out_of_order, %{
+                    topic: rec.topic,
+                    partition: rec.partition,
+                    offset: rec.offset,
+                    previous_offset: last_offset
+                  })
+              end
+
+              Map.put(acc, rec.partition, rec.offset)
+
+            :error ->
+              Engine.rollback_produced_record(rec)
+              Logger.error("Error on producer: error_code #{inspect(rec.error_code)}")
+
+              # Without injected failures nothing may fail
+              if EngineConfig.force_stable?() do
+                :ok =
+                  Engine.insert_violation(:produce_error, %{
+                    topic: rec.topic,
+                    partition: rec.partition,
+                    error_code: rec.error_code
+                  })
+              end
+
+              acc
+          end
       end
-    end
 
-    state
+    %{state | last_offsets: last_offsets}
   end
 end
