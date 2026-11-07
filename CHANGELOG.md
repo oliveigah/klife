@@ -12,16 +12,20 @@ GitHub publication dates (UTC).
 - SASL authentication with `SCRAM-SHA-256`, `SCRAM-SHA-512`, and `OAUTHBEARER`, alongside the existing `PLAIN` mechanism. OAuth tokens are supplied through a configurable `token_mfa`, with optional extensions.
 - Automatic renewal of expiring SASL sessions on broker and bootstrap connections. Broker connections are replaced before expiration while the old connection drains outstanding responses; bootstrap renewal can fall back to another configured server.
 - Producer leader handoff: transfer buffered, queued, and in-flight batches to the new partition leader while preserving producer epochs, sequence numbers, callbacks, and delivery deadlines. This also fixes epoch-fencing errors in transactions when a partition leader changes. A handoff that exceeds `request_timeout_ms` fails affected records with `:handoff_expired`.
+- Custom connections: `custom_connections` in the client's `connection` options declares connections with TCP connections of their own to every broker, each able to set its own `connection_count`, `connect_opts`, `socket_opts` and `sasl_opts`. Producers, txn pools, fetchers and consumer groups pick one with the new `:connection` option, and `default_connection`, `default_fetch_connection` and `default_critical_connection` choose the ones they use when they don't. See [Connections](guides/examples/client_configuration.md#connections).
 
 ### Changed
 
 - Require Elixir 1.15 or later and upgrade `klife_protocol` from `~> 1.0` to `~> 2.1`.
 - Reduce connection and metadata overhead by receiving socket replies in groups, caching frequently used table names, and generating direct tuple/map conversions.
 - During a leader handoff, overlapping asynchronous or concurrent produce calls can reach the new leader in a different invocation order when a call is forwarded from the old batcher. Sequential synchronous calls retain their ordering guarantee.
+- Requests go over three default connections: fetches over `:klife_fetch_connection`, consumer group requests and metadata refreshes over `:klife_critical_connection`, everything else over `:klife_default_connection`. A client now keeps `3 * connection_count` TCP connections to each broker, instead of `connection_count`. Setting the three `default_*connection` options to the same name keeps a single connection, as before.
 - Expiring SASL sessions must last at least `2 * (default_request_timeout_ms + 5_000)` milliseconds: 70 seconds with the default request timeout. Shorter sessions are rejected because outstanding requests cannot safely drain before expiration. See the [SASL configuration guide](guides/examples/client_configuration.md#sasl).
 
 ### Fixed
 
+- Fetches waiting for records (`max_wait_ms` above 0) no longer delay produce, heartbeat, offset commit and metadata requests to the same broker. They shared its TCP connections, which brokers answer in order, so each fetch could add up to `max_wait_ms` to them.
+- Clients with fetchers configured in `fetchers` (other than one named after the default fetcher) failed to start: every fetcher had the same supervisor child id.
 - Serialize records correctly when producer idempotence is disabled, including when using compression.
 - Handle transaction abort markers in `:read_uncommitted` fetches without crashing the dispatcher when no aborted-offset list is available.
 - Filter asynchronous fetch responses from the requested offset, matching synchronous fetch behavior when Kafka returns a batch that starts at an earlier offset.

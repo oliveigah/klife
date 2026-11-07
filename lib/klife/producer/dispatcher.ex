@@ -484,7 +484,8 @@ defmodule Klife.Producer.Dispatcher do
         client_name: client_name,
         client_id: client_id,
         acks: acks,
-        txn_id: txn_id
+        txn_id: txn_id,
+        connection: conn_name
       },
       data_to_send: data_to_send,
       base_time: base_time,
@@ -507,6 +508,7 @@ defmodule Klife.Producer.Dispatcher do
          :ok <-
            send_to_broker_async(
              client_name,
+             conn_name,
              state.broker_id,
              content,
              headers,
@@ -530,8 +532,17 @@ defmodule Klife.Producer.Dispatcher do
     end
   end
 
-  defp send_to_broker_async(client_name, broker_id, content, headers, req_ref, req_timeout) do
+  defp send_to_broker_async(
+         client_name,
+         conn_name,
+         broker_id,
+         content,
+         headers,
+         req_ref,
+         req_timeout
+       ) do
     opts = [
+      connection: conn_name,
       async: true,
       callback_pid: self(),
       callback_ref: req_ref,

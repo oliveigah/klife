@@ -24,6 +24,7 @@ defmodule Klife.Connection.Broker do
   defstruct [
     :broker_id,
     :client_name,
+    :connection_name,
     :conn,
     :draining_conn,
     :ssl,
@@ -38,10 +39,11 @@ defmodule Klife.Connection.Broker do
   def start_link(args) do
     broker_id = Keyword.fetch!(args, :broker_id)
     client_name = Keyword.fetch!(args, :client_name)
+    connection_name = Keyword.fetch!(args, :connection_name)
     count = Keyword.fetch!(args, :broker_index)
 
     GenServer.start_link(__MODULE__, args,
-      name: via_tuple({__MODULE__, broker_id, client_name, count})
+      name: via_tuple({__MODULE__, broker_id, client_name, connection_name, count})
     )
   end
 
@@ -58,6 +60,7 @@ defmodule Klife.Connection.Broker do
     state = %__MODULE__{
       broker_id: broker_id,
       client_name: client_name,
+      connection_name: Keyword.fetch!(args, :connection_name),
       connect_opts: connect_opts,
       socket_opts: socket_opts,
       url: url,
@@ -138,7 +141,10 @@ defmodule Klife.Connection.Broker do
   end
 
   def terminate(reason, %__MODULE__{} = state) do
-    :persistent_term.erase({__MODULE__, state.client_name, state.broker_id, state.broker_index})
+    :persistent_term.erase(
+      {__MODULE__, state.client_name, state.connection_name, state.broker_id, state.broker_index}
+    )
+
     reason
   end
 
@@ -177,7 +183,11 @@ defmodule Klife.Connection.Broker do
         opts
       ) do
     broker_id = get_broker_id(broker_id, client_name)
-    conn = get_connection(client_name, broker_id)
+
+    conn_name =
+      Keyword.get_lazy(opts, :connection, fn -> Controller.get_default_connection(client_name) end)
+
+    conn = get_connection(client_name, conn_name, broker_id)
     true = Controller.insert_in_flight(client_name, correlation_id)
 
     timeout =
@@ -204,12 +214,12 @@ defmodule Klife.Connection.Broker do
                     message_mod.deserialize_response(response, msg_version)
                 after
                   1000 ->
-                    log_sync_timeout(message_mod, client_name, broker_id, conn)
+                    log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn)
                     {:error, :timeout}
                 end
 
               _entry ->
-                log_sync_timeout(message_mod, client_name, broker_id, conn)
+                log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn)
                 {:error, :timeout}
             end
         end
@@ -218,8 +228,9 @@ defmodule Klife.Connection.Broker do
         Controller.take_from_in_flight(client_name, correlation_id)
 
         Logger.error(
-          "Error sending #{inspect(message_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)})",
+          "Error sending #{inspect(message_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
           client: client_name,
+          connection: conn_name,
           broker_id: broker_id,
           host: conn.host,
           message: inspect(message_mod),
@@ -240,7 +251,11 @@ defmodule Klife.Connection.Broker do
         opts
       ) do
     broker_id = get_broker_id(broker_id, client_name)
-    conn = get_connection(client_name, broker_id)
+
+    conn_name =
+      Keyword.get_lazy(opts, :connection, fn -> Controller.get_default_connection(client_name) end)
+
+    conn = get_connection(client_name, conn_name, broker_id)
 
     callback_pid = Keyword.get(opts, :callback_pid)
     callback_ref = Keyword.get(opts, :callback_ref)
@@ -272,8 +287,9 @@ defmodule Klife.Connection.Broker do
         Controller.take_from_in_flight(client_name, correlation_id)
 
         Logger.error(
-          "Error sending async #{inspect(msg_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)})",
+          "Error sending async #{inspect(msg_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
           client: client_name,
+          connection: conn_name,
           broker_id: broker_id,
           host: conn.host,
           message: inspect(msg_mod),
@@ -361,10 +377,11 @@ defmodule Klife.Connection.Broker do
     )
   end
 
-  defp log_sync_timeout(message_mod, client_name, broker_id, conn) do
+  defp log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn) do
     Logger.error(
-      "Timeout waiting for #{inspect(message_mod)} response from broker #{broker_id} (client=#{inspect(client_name)})",
+      "Timeout waiting for #{inspect(message_mod)} response from broker #{broker_id} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
       client: client_name,
+      connection: conn_name,
       broker_id: broker_id,
       host: conn.host,
       message: inspect(message_mod)
@@ -385,16 +402,19 @@ defmodule Klife.Connection.Broker do
 
   defp get_broker_id(broker_id, _client_name), do: broker_id
 
-  def get_connection(client_name, broker_id) do
-    bidx = :erlang.phash2(self(), Controller.get_connection_count(client_name))
-    get_connection(client_name, broker_id, bidx)
+  # A process always sends its requests on the same TCP connection of a connection
+  def get_connection(client_name, conn_name, broker_id) do
+    bidx = :erlang.phash2(self(), Controller.get_connection_count(client_name, conn_name))
+    get_connection(client_name, conn_name, broker_id, bidx)
   end
 
-  def get_connection(client_name, broker_id, bidx) do
-    case :persistent_term.get({__MODULE__, client_name, broker_id, bidx}, :not_found) do
+  def get_connection(client_name, conn_name, broker_id, bidx) do
+    key = {__MODULE__, client_name, conn_name, broker_id, bidx}
+
+    case :persistent_term.get(key, :not_found) do
       :not_found ->
         :ok = Controller.trigger_brokers_verification(client_name)
-        :persistent_term.get({__MODULE__, client_name, broker_id, bidx})
+        :persistent_term.get(key)
 
       %Connection{} = conn ->
         conn
@@ -408,8 +428,9 @@ defmodule Klife.Connection.Broker do
 
       {:error, _reason} = res ->
         Logger.error(
-          "Error connecting to broker #{state.broker_id} on host #{state.url}: #{inspect(res)} (client=#{inspect(state.client_name)})",
+          "Error connecting to broker #{state.broker_id} on host #{state.url}: #{inspect(res)} (client=#{inspect(state.client_name)}, connection=#{inspect(state.connection_name)})",
           client: state.client_name,
+          connection: state.connection_name,
           broker_id: state.broker_id,
           host: state.url,
           reason: inspect(res)
@@ -445,7 +466,7 @@ defmodule Klife.Connection.Broker do
     reauth_in_ms = Connection.reauth_in_ms(conn, Connection.drain_ms(state.client_name))
 
     :persistent_term.put(
-      {__MODULE__, state.client_name, state.broker_id, state.broker_index},
+      {__MODULE__, state.client_name, state.connection_name, state.broker_id, state.broker_index},
       conn
     )
 

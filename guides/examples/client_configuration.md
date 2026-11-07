@@ -90,6 +90,112 @@ Fetching, caching and refreshing the token is up to you. Since every connection 
 > the old session, so short sessions are replaced earlier, and sessions shorter than two drains
 > (70 seconds with the default request timeout) are refused.
 
+## Connections
+
+A Kafka broker reads the requests of a TCP connection one at a time and answers them in order. So a request the broker holds delays every request sent after it on the same TCP connection:
+
+- a fetch with `max_wait_ms` above 0, when there are no new records: up to `max_wait_ms`
+- a produce with `acks: :all`: until the replicas have the records, up to the producer's `request_timeout_ms`
+
+To keep such requests from delaying more urgent ones, Klife sends different kinds of requests over different connections. A connection is a named group of TCP connections, `connection_count` of them to each broker. Every client has three default connections, named by these connection options:
+
+| Option | Default name | Used by |
+| --- | --- | --- |
+| `default_connection` | `:klife_default_connection` | producers and txn pools |
+| `default_fetch_connection` | `:klife_fetch_connection` | fetchers |
+| `default_critical_connection` | `:klife_critical_connection` | consumer groups (heartbeats, offset commits and fetches, coordinator lookups, offset resets) and metadata refreshes |
+
+So by default a client keeps `3 * connection_count` TCP connections to each broker, plus one to a bootstrap server to discover the cluster.
+
+### Custom connections
+
+You can declare more connections, for example to keep a latency-sensitive producer, a consumer group or a long-polling fetcher away from the others:
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19092", "localhost:29092"],
+      custom_connections: [
+        # One producer's requests, sent without waiting to fill TCP packets
+        [name: :payments, socket_opts: [nodelay: true]],
+        # One consumer group's heartbeats and commits
+        [name: :payments_group],
+        # Long polls, away from the other fetchers
+        [name: :long_poll],
+        # Using the name of a default connection configures it
+        [name: :klife_fetch_connection, connection_count: 4]
+      ]
+    ],
+    producers: [
+      [name: :payments_producer, connection: :payments]
+    ],
+    fetchers: [
+      [name: :tail_fetcher, connection: :long_poll, max_wait_ms: 5_000]
+    ],
+    topics: [
+      [name: "payments", default_producer: :payments_producer]
+    ]
+```
+
+A custom connection takes the client's connection options, except for the ones it sets:
+
+- `connection_count` replaces the client's
+- `connect_opts` and `socket_opts` are merged over the client's
+- `sasl_opts` replaces the client's, so the connection can authenticate as another user, for instance one with its own quotas or ACLs
+
+`ssl`, `bootstrap_servers` and `default_request_timeout_ms` are always the client's.
+
+### Replacing the default connections
+
+A default connection is only created when no custom connection has its name. So pointing a `default_*connection` option to a custom connection replaces it, and pointing several to the same name makes them share one connection:
+
+```elixir
+  config :my_app, MyApp.Client,
+    connection: [
+      bootstrap_servers: ["localhost:19092", "localhost:29092"],
+      # Fetchers share the default connection
+      default_fetch_connection: :klife_default_connection,
+      # Consumer groups and metadata refreshes use :control
+      default_critical_connection: :control,
+      custom_connections: [[name: :control, socket_opts: [nodelay: true]]]
+    ]
+```
+
+This client keeps `2 * connection_count` TCP connections to each broker: `:klife_default_connection` and `:control`. Pointing all three options to the same name gives a single connection, as in Klife 1.2, with its requests waiting for each other again.
+
+### Choosing a connection
+
+Each component that sends requests has a `:connection` option, which defaults to the connection its `default_*connection` option names. The requests from many produce or fetch calls are batched together, so the connection belongs to the producer or fetcher, not to each call.
+
+- **Producers and txn pools:** `connection:` in their configuration. It covers every request they send, transaction requests included.
+- **Fetchers:** `connection:` in their configuration. A consumer group's exclusive fetchers take it too: `fetch_strategy: {:exclusive, [connection: :long_poll]}`. To change the default fetcher's connection, declare a fetcher with its name (`:klife_default_fetcher`) or set `default_fetcher`.
+- **Consumer groups:** `connection:` on the group. It covers the requests the group itself sends. Records are fetched by the fetcher picked through `fetch_strategy`, over that fetcher's connection.
+
+```elixir
+defmodule MyApp.Payments do
+  use Klife.Consumer.ConsumerGroup,
+    client: MyApp.Client,
+    group_name: "payments",
+    # Heartbeats and commits, over :klife_critical_connection when not set
+    connection: :payments_group,
+    # Records come through :tail_fetcher, over :long_poll
+    fetch_strategy: {:shared, :tail_fetcher},
+    topics: [[name: "payments"]]
+end
+```
+
+A component raises when it starts with a connection the client doesn't have.
+
+> #### Tradeoffs {: .warning}
+>
+> - Each connection costs `connection_count` TCP connections to each broker. They are opened when the
+>   client starts, even if nothing uses them, and each authenticates on its own.
+> - Requests on the same connection still wait for each other. A fetcher with `max_wait_ms` above 0
+>   delays the other fetchers on its connection, and its own requests too: they all share the
+>   connection's TCP connections. Give long-polling fetchers a connection of their own.
+> - Each process sending requests sticks to one TCP connection of a connection, chosen from its pid.
+>   A larger `connection_count` spreads the requests of many processes, not those of one.
+
 ## Defining and using multiple producers
 
 ```elixir

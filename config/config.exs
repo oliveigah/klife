@@ -21,10 +21,17 @@ config :klife, MyClient,
     connect_opts: [
       verify: :verify_peer,
       cacertfile: Path.relative("test/compose_files/ssl/ca.crt")
-    ]
+    ],
     # socket_opts: [
     #   delay_send: true
-    # ]
+    # ],
+    # Each used by one component only, so test/connection/connections_test.exs can
+    # tell from their sockets that requests go over the configured connection
+    custom_connections: [
+      [name: :test_producer_connection],
+      [name: :test_fetcher_connection],
+      [name: :test_group_connection]
+    ]
   ],
   # disabled_features: [:producer],
   txn_pools: [
@@ -74,6 +81,21 @@ config :klife, MyClient,
       # Partition handoffs are given up after the request timeout
       name: :handoff_test_producer,
       request_timeout_ms: 2_000
+    ],
+    [
+      name: :test_connection_producer,
+      connection: :test_producer_connection
+    ]
+  ],
+  fetchers: [
+    [
+      name: :test_connection_fetcher,
+      connection: :test_fetcher_connection
+    ],
+    [
+      # The broker holds its fetches up to 3s when there are no records to return
+      name: :long_poll_test_fetcher,
+      max_wait_ms: 3_000
     ]
   ],
   topics: [

@@ -11,6 +11,16 @@ defmodule Klife.Connection.SystemTest do
   alias Klife.ProcessRegistry
   alias Klife.Connection.Controller, as: ConnController
 
+  # The Controller input as Klife.Client builds it from the :connection config
+  defp controller_input(opts) do
+    {client_name, conn_opts} = Keyword.pop!(opts, :client_name)
+
+    conn_opts
+    |> NimbleOptions.validate!(ConnController.get_opts())
+    |> Klife.Helpers.keyword_list_to_map()
+    |> Map.put(:client_name, client_name)
+  end
+
   defp check_broker_connection(client_name, broker_id) do
     parent = self()
     ref = make_ref()
@@ -50,7 +60,7 @@ defmodule Klife.Connection.SystemTest do
         connection_count: 1,
         default_request_timeout_ms: 30_000
       ]
-      |> Map.new()
+      |> controller_input()
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
@@ -79,7 +89,7 @@ defmodule Klife.Connection.SystemTest do
         connection_count: 1,
         default_request_timeout_ms: 30_000
       ]
-      |> Map.new()
+      |> controller_input()
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
@@ -115,7 +125,7 @@ defmodule Klife.Connection.SystemTest do
           connection_count: 1,
           default_request_timeout_ms: 30_000
         ]
-        |> Map.new()
+        |> controller_input()
 
       assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input})
 
@@ -124,6 +134,116 @@ defmodule Klife.Connection.SystemTest do
 
       Enum.each(brokers_list, &check_broker_connection(client_name, &1))
     end
+  end
+
+  defp send_count(%Connection{ssl: false, socket: socket}) do
+    {:ok, [send_cnt: count]} = :inet.getstat(socket, [:send_cnt])
+    count
+  end
+
+  test "custom connections keep their own TCP connections to each broker", %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    input =
+      controller_input(
+        client_name: client_name,
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        custom_connections: [
+          [name: :custom, connection_count: 2, socket_opts: [nodelay: true]],
+          [name: :klife_fetch_connection, connection_count: 3]
+        ]
+      )
+
+    assert {:ok, _pid} = start_supervised({ConnController, input})
+
+    counts = %{
+      klife_default_connection: 1,
+      klife_fetch_connection: 3,
+      klife_critical_connection: 1,
+      custom: 2
+    }
+
+    assert Enum.sort(ConnController.get_connection_names(client_name)) ==
+             Enum.sort(Map.keys(counts))
+
+    conns =
+      for broker_id <- Utils.get_brokers(client_name),
+          {conn_name, count} <- counts,
+          idx <- 0..(count - 1) do
+        {{conn_name, broker_id}, Broker.get_connection(client_name, conn_name, broker_id, idx)}
+      end
+
+    # Options a custom connection doesn't set are the client's: keepalive by default
+    for {{conn_name, _broker_id}, conn} <- conns do
+      {:ok, opts} = :inet.getopts(conn.socket, [:keepalive, :nodelay])
+      assert opts[:keepalive]
+      assert opts[:nodelay] == (conn_name == :custom)
+    end
+
+    # A request goes over the connection its caller names, and only that one
+    sent = fn conns ->
+      conns |> Enum.map(fn {_key, conn} -> send_count(conn) end) |> Enum.sum()
+    end
+
+    for broker_id <- Utils.get_brokers(client_name) do
+      {custom, others} =
+        Enum.split_with(conns, fn {key, _conn} -> key == {:custom, broker_id} end)
+
+      {custom_before, others_before} = {sent.(custom), sent.(others)}
+
+      assert {:ok, _} =
+               Broker.send_message(ApiVersions, client_name, broker_id, %{}, %{},
+                 connection: :custom
+               )
+
+      assert sent.(custom) > custom_before
+      assert sent.(others) == others_before
+    end
+  end
+
+  test "default connections can be custom connections, or the same one", %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    input =
+      controller_input(
+        client_name: client_name,
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        default_connection: :main,
+        default_fetch_connection: :main,
+        default_critical_connection: :critical,
+        custom_connections: [[name: :critical, connection_count: 2]]
+      )
+
+    assert {:ok, _pid} = start_supervised({ConnController, input})
+
+    # Only the connections the defaults name: no built-in ones
+    assert Enum.sort(ConnController.get_connection_names(client_name)) == [:critical, :main]
+    assert ConnController.get_connection_count(client_name, :main) == 1
+    assert ConnController.get_connection_count(client_name, :critical) == 2
+
+    assert ConnController.get_default_connection(client_name) == :main
+    assert ConnController.get_default_fetch_connection(client_name) == :main
+    assert ConnController.get_default_critical_connection(client_name) == :critical
+
+    # Requests that name no connection go over the default one
+    for broker_id <- Utils.get_brokers(client_name) do
+      conn = Broker.get_connection(client_name, :main, broker_id, 0)
+      before = send_count(conn)
+      assert {:ok, _} = Broker.send_message(ApiVersions, client_name, broker_id)
+      assert send_count(conn) > before
+    end
+  end
+
+  test "refuses a custom connection declared twice", %{test: test_name} do
+    input =
+      controller_input(
+        client_name: :"#{__MODULE__}.#{test_name}",
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        custom_connections: [[name: :custom], [name: :custom]]
+      )
+
+    assert {:error, reason} = start_supervised({ConnController, input})
+    assert inspect(reason) =~ "custom connection :custom is declared more than once"
   end
 
   # Brokers without a configured validator accept unsecured JWTs ("alg": "none"),
@@ -136,7 +256,7 @@ defmodule Klife.Connection.SystemTest do
   end
 
   defp oauth_input(client_name, token_seconds) do
-    %{
+    controller_input(
       client_name: client_name,
       bootstrap_servers: ["localhost:19094", "localhost:29094"],
       ssl: true,
@@ -152,7 +272,7 @@ defmodule Klife.Connection.SystemTest do
       connection_count: 2,
       # drains last it + 5s, and sessions must last two drains (12s)
       default_request_timeout_ms: 1_000
-    }
+    )
   end
 
   defp check_connections_until(client_name, deadline) do
@@ -164,8 +284,10 @@ defmodule Klife.Connection.SystemTest do
 
   defp sockets(client_name, controller_pid) do
     broker_sockets =
-      for broker_id <- Utils.get_brokers(client_name), idx <- 0..1 do
-        :persistent_term.get({Broker, client_name, broker_id, idx}).socket
+      for broker_id <- Utils.get_brokers(client_name),
+          conn_name <- ConnController.get_connection_names(client_name),
+          idx <- 0..1 do
+        Broker.get_connection(client_name, conn_name, broker_id, idx).socket
       end
 
     [:sys.get_state(controller_pid).bootstrap_conn.socket | broker_sockets]
@@ -249,7 +371,7 @@ defmodule Klife.Connection.SystemTest do
         connection_count: 1,
         default_request_timeout_ms: 30_000
       ]
-      |> Map.new()
+      |> controller_input()
 
     client_name_2 = :"#{__MODULE__}.#{test_name}_2"
 
@@ -269,7 +391,7 @@ defmodule Klife.Connection.SystemTest do
         connection_count: 1,
         default_request_timeout_ms: 30_000
       ]
-      |> Map.new()
+      |> controller_input()
 
     client_name_3 = :"#{__MODULE__}.#{test_name}_3"
 
@@ -284,7 +406,7 @@ defmodule Klife.Connection.SystemTest do
         connection_count: 1,
         default_request_timeout_ms: 30_000
       ]
-      |> Map.new()
+      |> controller_input()
 
     assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input_1})
     assert {:ok, _pid} = start_supervised({Klife.Connection.Controller, input_2})
@@ -380,17 +502,28 @@ defmodule Klife.Connection.SystemTest do
 
     :ok = PubSub.subscribe({:cluster_change, client_name}, %{some_data: cb_ref})
 
+    assert {:ok, _} = Broker.send_message(ApiVersions, client_name, broker_id_to_remove)
+
     {:ok, service_name} = TestUtils.stop_broker(client_name, broker_id_to_remove)
 
     assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 1000)
     assert broker_id_to_remove in Enum.map(event_data.removed_brokers, fn {b, _h} -> b end)
     assert broker_id_to_remove not in ConnController.get_known_brokers(client_name)
 
+    # Its connections go with it: one TCP connection per broker on the default connection
+    assert [] =
+             ProcessRegistry.registry_lookup(
+               {Broker, broker_id_to_remove, client_name, :klife_default_connection, 0}
+             )
+
     {:ok, broker_id} = TestUtils.start_broker(service_name, client_name)
 
     assert_receive({{:cluster_change, ^client_name}, event_data, %{some_data: ^cb_ref}}, 1000)
     assert broker_id in Enum.map(event_data.added_brokers, fn {b, _h} -> b end)
     assert broker_id in ConnController.get_known_brokers(client_name)
+
+    # Back in the cluster, its connections are open again
+    assert {:ok, _} = Broker.send_message(ApiVersions, client_name, broker_id)
 
     :ok = PubSub.unsubscribe({:cluster_change, client_name})
   end

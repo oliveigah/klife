@@ -61,6 +61,7 @@ defmodule Klife.Producer.HandoffTest do
       client_name: MyClient,
       name: :"pop_test_#{System.unique_integer([:positive])}",
       client_id: "pop_test",
+      connection: :klife_default_connection,
       acks: :all,
       request_timeout_ms: 5_000,
       delivery_timeout_ms: 30_000,

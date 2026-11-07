@@ -43,8 +43,13 @@ defmodule Klife.TxnProducerPool do
                           :delivery_timeout_ms,
                           :request_timeout_ms,
                           :retry_backoff_ms,
-                          :compression_type
+                          :compression_type,
+                          :connection
                         ])
+                        |> put_in(
+                          [:connection, :doc],
+                          "Name of the client connection used for every request of the pool's producers, transaction requests included. Defaults to the client's `default_connection`. See [Connections](guides/examples/client_configuration.md#connections)."
+                        )
                         |> Keyword.merge(@txn_producer_specific_opts)
 
   defstruct Keyword.keys(@txn_producer_options) ++ [:worker_counter, :client_name]
@@ -95,7 +100,8 @@ defmodule Klife.TxnProducerPool do
       :producer_epoch,
       :coordinator_id,
       :txn_id,
-      :client_id
+      :client_id,
+      :connection
     ]
   end
 
@@ -220,7 +226,8 @@ defmodule Klife.TxnProducerPool do
         producer_epoch: p_epoch,
         coordinator_id: coordinator_id,
         txn_id: txn_id,
-        client_id: client_id
+        client_id: client_id,
+        connection: conn_name
       }
     } = get_txn_ctx(client_name)
 
@@ -234,7 +241,9 @@ defmodule Klife.TxnProducerPool do
     headers = %{client_id: client_id}
 
     {:ok, %{content: %{error_code: ec}}} =
-      Broker.send_message(M.EndTxn, client_name, coordinator_id, content, headers)
+      Broker.send_message(M.EndTxn, client_name, coordinator_id, content, headers,
+        connection: conn_name
+      )
 
     if committed?,
       do: 0 = ec,
@@ -269,7 +278,8 @@ defmodule Klife.TxnProducerPool do
           client_name: client_name,
           txn_id: txn_id,
           producer_epoch: p_epoch,
-          coordinator_id: coordinator_id
+          coordinator_id: coordinator_id,
+          connection: conn_name
         },
         topic_partitions: txn_topic_partitions
       } = get_txn_ctx(client_name)
@@ -299,7 +309,7 @@ defmodule Klife.TxnProducerPool do
           ]
         }
 
-        case add_partitions_to_txn(client_name, coordinator_id, content) do
+        case add_partitions_to_txn(client_name, conn_name, coordinator_id, content) do
           :ok ->
             new_txn_topic_partitions =
               tp_list
@@ -326,15 +336,17 @@ defmodule Klife.TxnProducerPool do
     end
   end
 
-  defp add_partitions_to_txn(client_name, coordinator_id, content) do
+  defp add_partitions_to_txn(client_name, conn_name, coordinator_id, content) do
     deadline = System.monotonic_time(:millisecond) + :timer.seconds(10)
-    do_add_partitions_to_txn(deadline, client_name, coordinator_id, content)
+    do_add_partitions_to_txn(deadline, client_name, conn_name, coordinator_id, content)
   end
 
-  defp do_add_partitions_to_txn(deadline, client_name, coordinator_id, content) do
+  defp do_add_partitions_to_txn(deadline, client_name, conn_name, coordinator_id, content) do
     if System.monotonic_time(:millisecond) < deadline do
       with {:ok, %{content: %{error_code: 0} = resp_content}} <-
-             Broker.send_message(M.AddPartitionsToTxn, client_name, coordinator_id, content),
+             Broker.send_message(M.AddPartitionsToTxn, client_name, coordinator_id, content, %{},
+               connection: conn_name
+             ),
            %{results_by_transaction: [txn_resp]} <- resp_content,
            :ok <- check_add_partitions_resp(txn_resp) do
         :ok
@@ -344,7 +356,7 @@ defmodule Klife.TxnProducerPool do
 
         _ ->
           Process.sleep(10)
-          do_add_partitions_to_txn(deadline, client_name, coordinator_id, content)
+          do_add_partitions_to_txn(deadline, client_name, conn_name, coordinator_id, content)
       end
     else
       raise "Timeout while adding partition to txn (client=#{inspect(client_name)}, coordinator=#{coordinator_id})"
@@ -396,7 +408,8 @@ defmodule Klife.TxnProducerPool do
        producer_epoch: producer_epoch,
        coordinator_id: coordinator_id,
        txn_id: txn_id,
-       client_id: client_id
+       client_id: client_id,
+       connection: connection
      }} = Producer.get_txn_pool_data(state.client_name, state.producer_name)
 
     new_state = %{
@@ -405,7 +418,8 @@ defmodule Klife.TxnProducerPool do
         producer_epoch: producer_epoch,
         coordinator_id: coordinator_id,
         txn_id: txn_id,
-        client_id: client_id
+        client_id: client_id,
+        connection: connection
     }
 
     Process.put({:klife_txn_ctx, client}, %{

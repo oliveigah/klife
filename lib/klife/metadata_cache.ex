@@ -114,7 +114,9 @@ defmodule Klife.MetadataCache do
       include_topic_authorized_operations: false
     }
 
-    case Broker.send_message(M.Metadata, client_name, :controller, content) do
+    case Broker.send_message(M.Metadata, client_name, :controller, content, %{},
+           connection: ConnController.get_default_critical_connection(client_name)
+         ) do
       {:ok, %{content: resp}} ->
         table_name = metadata_table(client_name)
 
