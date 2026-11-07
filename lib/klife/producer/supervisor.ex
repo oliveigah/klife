@@ -83,6 +83,7 @@ defmodule Klife.Producer.Supervisor do
         batchers_count: 1,
         enable_idempotence: true,
         compression_type: txn_pool.compression_type,
+        connection: Map.get(txn_pool, :connection),
         txn_id: txn_id,
         txn_timeout_ms: txn_pool.txn_timeout_ms
       }

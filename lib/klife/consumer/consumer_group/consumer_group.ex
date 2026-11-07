@@ -78,6 +78,11 @@ defmodule Klife.Consumer.ConsumerGroup do
       default: 1,
       doc: "How many committer processes will be started for the consumer group"
     ],
+    connection: [
+      type: :atom,
+      doc:
+        "Name of the client connection used for the requests the group itself sends: heartbeats, offset commits and fetches, coordinator lookups and offset resets. Records are fetched by the fetcher chosen through `:fetch_strategy`, over that fetcher's connection. Defaults to the client's `default_critical_connection`. See [Connections](guides/examples/client_configuration.md#connections)."
+    ],
     default_topic_config: [
       type: :keyword_list,
       required: false,
@@ -573,6 +578,12 @@ defmodule Klife.Consumer.ConsumerGroup do
       raise "Consumer Group was started but consumer_group feature is disabled for client #{inspect(client)}. Check logs for details."
     end
 
+    connection =
+      validated_args.connection || ConnController.get_default_critical_connection(client)
+
+    :ok = ConnController.validate_connection!(client, connection)
+    validated_args = %{validated_args | connection: connection}
+
     GenServer.start_link(cg_mod, validated_args,
       name: get_process_name(client, cg_mod, validated_args.group_name)
     )
@@ -773,6 +784,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         consumers_monitor_map: %{},
         fetch_strategy: args_map.fetch_strategy,
         committers_count: args_map.committers_count,
+        connection: args_map.connection,
         committers_distribution: %{},
         default_topic_config: args_map.default_topic_config
       }
@@ -840,7 +852,9 @@ defmodule Klife.Consumer.ConsumerGroup do
     }
 
     fun = fn ->
-      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
+      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content, %{},
+             connection: state.connection
+           ) do
         {:ok, %{content: %{coordinators: [%{error_code: 0, node_id: broker_id}]}}} ->
           if state.coordinator_id != nil and state.coordinator_id != broker_id do
             Logger.info(
@@ -940,6 +954,7 @@ defmodule Klife.Consumer.ConsumerGroup do
            state.coordinator_id,
            content,
            %{},
+           connection: state.connection,
            timeout_ms: state.rebalance_timeout_ms
          ) do
       {:error, error} ->
@@ -1039,6 +1054,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         member_id: state.member_id,
         member_epoch: state.epoch,
         client_name: state.client_name,
+        connection: state.connection,
         consumer_group_mod: state.mod,
         group_intance_id: state.instance_id,
         cg_pid: self(),
@@ -1167,7 +1183,9 @@ defmodule Klife.Consumer.ConsumerGroup do
                  M.OffsetFetch,
                  state.client_name,
                  state.coordinator_id,
-                 content
+                 content,
+                 %{},
+                 connection: state.connection
                ) do
             {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
               {results, errors} =
@@ -1200,7 +1218,8 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Enum.filter(fn {{_tname, _p}, offset} -> offset == -1 end)
       |> Enum.map(fn {{t, p}, -1} -> {t, p} end)
 
-    reset_offset_map = get_reset_offset(missing_resp_tp, state.client_name, state.topics)
+    reset_offset_map =
+      get_reset_offset(missing_resp_tp, state.client_name, state.connection, state.topics)
 
     # OffsetFetch returns offsets on the Kafka convention (the next offset to
     # be consumed), while internally the consumer tracks the last processed
@@ -1220,7 +1239,7 @@ defmodule Klife.Consumer.ConsumerGroup do
   end
 
   @doc false
-  def get_reset_offset(tname_p_list, client, tconfig_map) do
+  def get_reset_offset(tname_p_list, client, conn_name, tconfig_map) do
     grouped_by_broker =
       Enum.group_by(
         tname_p_list,
@@ -1267,7 +1286,9 @@ defmodule Klife.Consumer.ConsumerGroup do
         # TODO: Filter out successfull topic/partitions on retries!
         Helpers.with_timeout!(
           fn ->
-            case Broker.send_message(M.ListOffsets, client, broker, content) do
+            case Broker.send_message(M.ListOffsets, client, broker, content, %{},
+                   connection: conn_name
+                 ) do
               {:ok, %{content: %{topics: tdata}}} ->
                 {results, errors} =
                   for topic_resp <- tdata,
@@ -1471,6 +1492,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       consumer_group_member_id: state.member_id,
       consumer_group_epoch: state.epoch,
       consumer_group_coordinator_id: state.coordinator_id,
+      consumer_group_connection: state.connection,
       consumer_group_pid: self(),
       init_offset: init_offset
     ]

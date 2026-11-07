@@ -94,6 +94,11 @@ defmodule Klife.Producer do
       type_doc: "`:none`, `:gzip` or `:snappy`",
       doc:
         "The compression algorithm to be used for compressing messages before they are sent to the broker."
+    ],
+    connection: [
+      type: :atom,
+      doc:
+        "Name of the client connection used for every request of this producer. Defaults to the client's `default_connection`. See [Connections](guides/examples/client_configuration.md#connections)."
     ]
   ]
 
@@ -295,6 +300,13 @@ defmodule Klife.Producer do
   @impl true
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
+    client = args_map.client_name
+
+    connection =
+      Map.get(args_map, :connection) || ConnController.get_default_connection(client)
+
+    :ok = ConnController.validate_connection!(client, connection)
+    args_map = Map.put(args_map, :connection, connection)
     {:ok, batcher_sup_pid} = DynamicSupervisor.start_link([])
 
     # Versions keep growing across restarts, so batchers never take a map
@@ -469,7 +481,8 @@ defmodule Klife.Producer do
       producer_epoch: state.producer_epoch,
       coordinator_id: state.coordinator_id,
       txn_id: state.txn_id,
-      client_id: state.client_id
+      client_id: state.client_id,
+      connection: state.connection
     }
 
     {:reply, {:ok, data}, state}
@@ -566,7 +579,9 @@ defmodule Klife.Producer do
     }
 
     fun = fn ->
-      case Broker.send_message(M.InitProducerId, state.client_name, broker, content) do
+      case Broker.send_message(M.InitProducerId, state.client_name, broker, content, %{},
+             connection: state.connection
+           ) do
         {:ok, %{content: %{error_code: 0, producer_id: producer_id, producer_epoch: p_epoch}}} ->
           {producer_id, p_epoch}
 
@@ -613,7 +628,9 @@ defmodule Klife.Producer do
       end
 
     fun = fn ->
-      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content) do
+      case Broker.send_message(M.FindCoordinator, state.client_name, :any, content, %{},
+             connection: state.connection
+           ) do
         # vsn <= 3
         {:ok, %{content: %{error_code: 0, node_id: broker_id}}} ->
           broker_id

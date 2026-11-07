@@ -40,12 +40,13 @@ defmodule Simulator do
   def connection_metrics(client) do
     samples =
       for broker_id <- Klife.Connection.Controller.get_known_brokers(client),
-          bidx <- 0..(Klife.Connection.Controller.get_connection_count(client) - 1) do
-        conn = Klife.Connection.Broker.get_connection(client, broker_id, bidx)
+          conn_name <- Klife.Connection.Controller.get_connection_names(client),
+          bidx <- 0..(Klife.Connection.Controller.get_connection_count(client, conn_name) - 1) do
+        conn = Klife.Connection.Broker.get_connection(client, conn_name, broker_id, bidx)
 
         [{pid, _}] =
           Klife.ProcessRegistry.registry_lookup(
-            {Klife.Connection.Broker, broker_id, client, bidx}
+            {Klife.Connection.Broker, broker_id, client, conn_name, bidx}
           )
 
         {:message_queue_len, mq_len} = Process.info(pid, :message_queue_len)

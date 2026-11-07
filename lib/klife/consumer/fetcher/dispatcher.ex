@@ -279,6 +279,7 @@ defmodule Klife.Consumer.Fetcher.Dispatcher do
     headers = %{client_id: state.fetcher_config.client_id}
 
     opts = [
+      connection: state.fetcher_config.connection,
       async: true,
       callback_pid: self(),
       callback_ref: batch.dispatch_ref,

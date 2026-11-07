@@ -23,6 +23,32 @@ defmodule Klife.Connection.Controller do
 
   @check_cluster_delay Application.compile_env(:klife, :metadata_check_interval_ms, 10_000)
 
+  @custom_connection_opts [
+    name: [
+      type: :atom,
+      required: true,
+      doc:
+        "Connection name, used as the `:connection` option of producers, txn pools, fetchers and consumer groups. Using the name of a default connection (see the `default_*connection` options) configures it."
+    ],
+    connection_count: [
+      type: :pos_integer,
+      doc: "Replaces the client's `connection_count`."
+    ],
+    connect_opts: [
+      type: {:list, :any},
+      doc: "Merged over the client's `connect_opts`."
+    ],
+    socket_opts: [
+      type: {:list, :any},
+      doc: "Merged over the client's `socket_opts`."
+    ],
+    sasl_opts: [
+      type: {:list, :any},
+      doc:
+        "Replaces the client's `sasl_opts`, so this connection can authenticate as another user."
+    ]
+  ]
+
   @connection_opts [
     bootstrap_servers: [
       type: {:list, :string},
@@ -40,7 +66,8 @@ defmodule Klife.Connection.Controller do
       type: :pos_integer,
       required: false,
       default: 1,
-      doc: "How many TCP connections the client will maintain for each broker."
+      doc:
+        "How many TCP connections each of the client's connections keeps to each broker, unless it sets its own. With the 3 default connections, that is `3 * connection_count` TCP connections to each broker. See [Connections](guides/examples/client_configuration.md#connections)."
     ],
     connect_opts: [
       type: {:list, :any},
@@ -72,9 +99,46 @@ defmodule Klife.Connection.Controller do
       default: :timer.seconds(30),
       doc:
         "The default request timeout ms to be used on all requests to brokers. Some other options may override this value in specific scenarios"
+    ],
+    default_connection: [
+      type: :atom,
+      required: false,
+      default: :klife_default_connection,
+      doc:
+        "Name of the connection used by producers and txn pools that don't set one. If no custom connection has this name, one is created with the client's options."
+    ],
+    default_fetch_connection: [
+      type: :atom,
+      required: false,
+      default: :klife_fetch_connection,
+      doc:
+        "Name of the connection used by fetchers that don't set one. If no custom connection has this name, one is created with the client's options."
+    ],
+    default_critical_connection: [
+      type: :atom,
+      required: false,
+      default: :klife_critical_connection,
+      doc:
+        "Name of the connection used by consumer groups that don't set one, and by metadata refreshes. If no custom connection has this name, one is created with the client's options."
+    ],
+    custom_connections: [
+      type: {:list, {:keyword_list, @custom_connection_opts}},
+      type_doc: "list of keyword lists",
+      required: false,
+      default: [],
+      doc: """
+      Connections to declare, each with its own TCP connections to every broker. \
+      Options they don't set come from the client's options above, and `ssl`, `bootstrap_servers` \
+      and `default_request_timeout_ms` are always the client's. See [Connections](guides/examples/client_configuration.md#connections).
+
+      #{NimbleOptions.docs(@custom_connection_opts, nest_level: 1)}
+      """
     ]
   ]
-  @derive {Inspect, except: [:sasl_opts]}
+  # `connections` maps each connection name to the options of its TCP connections:
+  # connection_count, connect_opts, socket_opts and sasl_opts. The other fields
+  # configure the bootstrap connection, which takes the client's options
+  @derive {Inspect, except: [:sasl_opts, :connections]}
   defstruct [
     :bootstrap_servers,
     :client_name,
@@ -87,7 +151,7 @@ defmodule Klife.Connection.Controller do
     :socket_opts,
     :sasl_opts,
     :broker_supervisor,
-    :connection_count,
+    :connections,
     :default_request_timeout_ms
   ]
 
@@ -115,14 +179,34 @@ defmodule Klife.Connection.Controller do
       |> Enum.map(fn {k, opt} -> {k, opt[:default] || []} end)
       |> Map.new()
 
-    {:ok, broker_sup_pid} = DynamicSupervisor.start_link([])
-
     bootstrap_servers = args.bootstrap_servers
     connect_opts = Keyword.merge(connect_defaults, args.connect_opts)
     socket_opts = Keyword.merge(socket_defaults, args.socket_opts)
     sasl_opts = args.sasl_opts
     ssl = args.ssl
     client = args.client_name
+
+    default_names = %{
+      default_connection: args.default_connection,
+      default_fetch_connection: args.default_fetch_connection,
+      default_critical_connection: args.default_critical_connection
+    }
+
+    # Raises on invalid custom connections, before anything is set up
+    connections =
+      build_connections(
+        %{
+          connection_count: args.connection_count,
+          connect_opts: connect_opts,
+          socket_opts: socket_opts,
+          sasl_opts: sasl_opts
+        },
+        args.custom_connections,
+        Map.values(default_names),
+        client
+      )
+
+    {:ok, broker_sup_pid} = DynamicSupervisor.start_link([])
 
     # Built once: every request and reply looks it up
     in_flight_table = :"in_flight_messages.#{client}"
@@ -140,6 +224,16 @@ defmodule Klife.Connection.Controller do
     default_request_timeout_ms = args.default_request_timeout_ms
     put_default_request_timeout_ms(client, default_request_timeout_ms)
 
+    :persistent_term.put({__MODULE__, client, :connection_names}, Map.keys(connections))
+
+    for {option, name} <- default_names do
+      :persistent_term.put({__MODULE__, client, option}, name)
+    end
+
+    for {name, %{connection_count: count}} <- connections do
+      :persistent_term.put({__MODULE__, client, :connection_count, name}, count)
+    end
+
     state = %__MODULE__{
       bootstrap_servers: bootstrap_servers,
       client_name: client,
@@ -153,14 +247,33 @@ defmodule Klife.Connection.Controller do
       sasl_opts: sasl_opts,
       broker_supervisor: broker_sup_pid,
       default_request_timeout_ms: default_request_timeout_ms,
-      connection_count: args.connection_count
+      connections: connections
     }
 
-    new_state = do_init(state)
+    {:ok, do_init(state)}
+  end
 
-    put_connection_count(state.client_name, state.connection_count)
+  # The custom connections, plus a connection with the client's options for each default
+  # name no custom connection has. A custom connection takes the client's options too,
+  # except for the ones it sets
+  defp build_connections(client_conn_opts, custom_connections, default_names, client) do
+    defaults = Map.new(default_names, &{&1, client_conn_opts})
 
-    {:ok, new_state}
+    Enum.reduce(custom_connections, defaults, fn custom, acc ->
+      name = custom.name
+
+      if Enum.count(custom_connections, &(&1.name == name)) > 1 do
+        raise ArgumentError,
+              "custom connection #{inspect(name)} is declared more than once (client=#{inspect(client)})"
+      end
+
+      Map.put(acc, name, %{
+        connection_count: custom[:connection_count] || client_conn_opts.connection_count,
+        connect_opts: Keyword.merge(client_conn_opts.connect_opts, custom[:connect_opts] || []),
+        socket_opts: Keyword.merge(client_conn_opts.socket_opts, custom[:socket_opts] || []),
+        sasl_opts: custom[:sasl_opts] || client_conn_opts.sasl_opts
+      })
+    end)
   end
 
   defp do_init(state) do
@@ -188,10 +301,17 @@ defmodule Klife.Connection.Controller do
     conn = Connection.authenticate_sasl(conn, new_sasl_opts)
     :ok = schedule_bootstrap_reauth(conn, state.client_name)
 
+    connections =
+      Map.new(state.connections, fn {name, conn_opts} ->
+        sasl_opts = Connection.build_sasl_opts(conn_opts.sasl_opts, state.client_name)
+        {name, %{conn_opts | sasl_opts: sasl_opts}}
+      end)
+
     new_state = %__MODULE__{
       state
       | bootstrap_conn: conn,
-        sasl_opts: new_sasl_opts
+        sasl_opts: new_sasl_opts,
+        connections: connections
     }
 
     {_, new_state} = handle_info(:check_cluster, new_state)
@@ -324,12 +444,33 @@ defmodule Klife.Connection.Controller do
     |> List.first()
   end
 
-  def put_connection_count(client_name, counter) do
-    :persistent_term.put({__MODULE__, client_name, :connection_counter}, counter)
+  def get_connection_count(client_name, connection_name) do
+    :persistent_term.get({__MODULE__, client_name, :connection_count, connection_name})
   end
 
-  def get_connection_count(client_name) do
-    :persistent_term.get({__MODULE__, client_name, :connection_counter})
+  def get_connection_names(client_name) do
+    :persistent_term.get({__MODULE__, client_name, :connection_names})
+  end
+
+  def get_default_connection(client_name),
+    do: :persistent_term.get({__MODULE__, client_name, :default_connection})
+
+  def get_default_fetch_connection(client_name),
+    do: :persistent_term.get({__MODULE__, client_name, :default_fetch_connection})
+
+  def get_default_critical_connection(client_name),
+    do: :persistent_term.get({__MODULE__, client_name, :default_critical_connection})
+
+  # For components to refuse, when they start, a connection the client doesn't have
+  def validate_connection!(client_name, connection_name) do
+    names = get_connection_names(client_name)
+
+    if connection_name in names do
+      :ok
+    else
+      raise ArgumentError,
+            "unknown connection #{inspect(connection_name)} for client #{inspect(client_name)}, its connections are #{inspect(Enum.sort(names))}"
+    end
   end
 
   def put_default_request_timeout_ms(client_name, timeout_ms) do
@@ -459,20 +600,21 @@ defmodule Klife.Connection.Controller do
 
   ## PRIVATE FUNCTIONS
 
+  # Every connection keeps its connection_count TCP connections to each broker
   defp handle_brokers(to_start, to_remove, %__MODULE__{} = state) do
-    to_start
-    |> Enum.flat_map(fn {broker_id, url} ->
-      Enum.map(0..(state.connection_count - 1), fn idx ->
-        {broker_id, url, idx}
-      end)
-    end)
+    for {broker_id, url} <- to_start,
+        {conn_name, conn_opts} <- state.connections,
+        idx <- 0..(conn_opts.connection_count - 1) do
+      {broker_id, url, conn_name, conn_opts, idx}
+    end
     |> Task.async_stream(
-      fn {broker_id, url, idx} ->
+      fn {broker_id, url, conn_name, conn_opts, idx} ->
         broker_opts = [
-          connect_opts: state.connect_opts,
+          connect_opts: conn_opts.connect_opts,
           client_name: state.client_name,
-          socket_opts: state.socket_opts,
-          sasl_opts: state.sasl_opts,
+          connection_name: conn_name,
+          socket_opts: conn_opts.socket_opts,
+          sasl_opts: conn_opts.sasl_opts,
           broker_id: broker_id,
           url: url,
           ssl: state.ssl,
@@ -480,7 +622,7 @@ defmodule Klife.Connection.Controller do
         ]
 
         spec = %{
-          id: {Broker, broker_id, state.client_name, idx},
+          id: {Broker, broker_id, state.client_name, conn_name, idx},
           start: {Broker, :start_link, [broker_opts]},
           type: :worker
         }
@@ -495,8 +637,9 @@ defmodule Klife.Connection.Controller do
     |> Enum.each(fn resp -> {:ok, :ok} = resp end)
 
     for {broker_id, _url} <- to_remove,
-        idx <- 0..(state.connection_count - 1) do
-      case registry_lookup({Broker, broker_id, state.client_name, idx}) do
+        {conn_name, conn_opts} <- state.connections,
+        idx <- 0..(conn_opts.connection_count - 1) do
+      case registry_lookup({Broker, broker_id, state.client_name, conn_name, idx}) do
         [] ->
           :ok
 

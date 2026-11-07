@@ -24,6 +24,7 @@ defmodule Klife.Testing do
   """
 
   alias Klife.Connection.Broker, as: Broker
+  alias Klife.Connection.Controller, as: ConnController
   alias KlifeProtocol.Messages, as: M
 
   alias Klife.MetadataCache
@@ -179,11 +180,8 @@ defmodule Klife.Testing do
     }
 
     {:ok, %{content: %{responses: [%{topic_id: t_id} = t_data]}}} =
-      Broker.send_message(
-        M.Fetch,
-        client_name,
-        leader_id,
-        content
+      Broker.send_message(M.Fetch, client_name, leader_id, content, %{},
+        connection: ConnController.get_default_fetch_connection(client_name)
       )
 
     t_data.partitions

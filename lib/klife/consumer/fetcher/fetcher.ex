@@ -47,7 +47,12 @@ defmodule Klife.Consumer.Fetcher do
       type: :non_neg_integer,
       default: 0,
       doc:
-        "Define for how long the broker may wait (for more records) before send a response to the client"
+        "Define for how long the broker may wait (for more records) before send a response to the client. Requests sent after this fetch on the same TCP connection wait for it, see [Long polling](#module-long-polling)."
+    ],
+    connection: [
+      type: :atom,
+      doc:
+        "Name of the client connection used for the fetch requests of this fetcher. Defaults to the client's `default_fetch_connection`. See [Connections](guides/examples/client_configuration.md#connections)."
     ]
   ]
 
@@ -119,6 +124,18 @@ defmodule Klife.Consumer.Fetcher do
 
   Increasing `linger_ms` may be helpful only if you set a high value for `max_in_flight_requests`
   or if you need to limit request rates to the broker for specific reasons.
+
+  ## Long polling
+
+  With `max_wait_ms` above 0, a broker with no new records holds the fetch until records arrive
+  or `max_wait_ms` ends. Brokers answer the requests of a TCP connection in order, so meanwhile
+  every request sent after the fetch on that TCP connection waits.
+
+  Fetchers use the client's `default_fetch_connection` by default, so their long polls don't
+  delay produce, heartbeat or commit requests. They still delay the other fetches on that
+  connection, the fetcher's own included. A connection of its own (the `:connection` option)
+  keeps a long-polling fetcher from delaying the other fetchers. See
+  [Connections](guides/examples/client_configuration.md#connections).
 
   ## Isolation level
 
@@ -320,6 +337,13 @@ defmodule Klife.Consumer.Fetcher do
   @impl true
   def init(validated_args) do
     args_map = Map.take(validated_args, Map.keys(%__MODULE__{}))
+    client = args_map.client_name
+
+    connection =
+      Map.get(args_map, :connection) || ConnController.get_default_fetch_connection(client)
+
+    :ok = ConnController.validate_connection!(client, connection)
+    args_map = Map.put(args_map, :connection, connection)
 
     {:ok, batcher_sup_pid} = DynamicSupervisor.start_link([])
 

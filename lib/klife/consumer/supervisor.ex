@@ -23,7 +23,9 @@ defmodule Klife.Consumer.Supervisor do
     for fetcher_conf <- args.fetchers do
       opts = Map.put(fetcher_conf, :client_name, args.client_name)
 
-      {Klife.Consumer.Fetcher, opts}
+      Supervisor.child_spec({Klife.Consumer.Fetcher, opts},
+        id: {Klife.Consumer.Fetcher, opts.name}
+      )
     end
   end
 end

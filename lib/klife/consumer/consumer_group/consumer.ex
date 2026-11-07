@@ -31,6 +31,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :cg_member_id,
     :cg_member_epoch,
     :cg_coordinator_id,
+    :cg_connection,
     :cg_pid,
     :latest_committed_offset,
     :latest_processed_offset,
@@ -82,6 +83,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         cg_member_id: args_map.consumer_group_member_id,
         cg_member_epoch: args_map.consumer_group_epoch,
         cg_coordinator_id: args_map.consumer_group_coordinator_id,
+        cg_connection: args_map.consumer_group_connection,
         latest_fetched_offset: -1,
         latest_processed_offset: args_map.init_offset,
         latest_committed_offset: args_map.init_offset,
@@ -586,6 +588,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
       ConsumerGroup.get_reset_offset(
         [{state.topic_name, state.partition_idx}],
         state.client_name,
+        state.cg_connection,
         %{
           state.topic_name => state.topic_config
         }

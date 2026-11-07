@@ -31,6 +31,7 @@ defmodule Klife.Consumer.Committer do
     :member_id,
     :member_epoch,
     :client_name,
+    :connection,
     :cg_mod,
     :dispatcher_pid,
     :group_intance_id,
@@ -103,6 +104,7 @@ defmodule Klife.Consumer.Committer do
         batcher_id: Keyword.fetch!(init_arg, :batcher_id),
         cg_mod: Keyword.fetch!(init_arg, :consumer_group_mod),
         client_name: client_name,
+        connection: Keyword.fetch!(init_arg, :connection),
         member_id: Keyword.fetch!(init_arg, :member_id),
         group_id: Keyword.fetch!(init_arg, :group_id),
         member_epoch: Keyword.fetch!(init_arg, :member_epoch),
@@ -196,6 +198,7 @@ defmodule Klife.Consumer.Committer do
       }
 
     opts = [
+      connection: state.connection,
       async: true,
       callback_pid: batcher_pid,
       callback_ref: to_dispatch.dispatch_ref
