@@ -151,13 +151,14 @@ defmodule Klife.Client do
       ]
     ],
     topics: [
-      [name: "my_topic_0", producer: :my_custom_producer]
+      [name: "my_topic_0", default_producer: :my_custom_producer]
     ]
 
   ```
 
-  You can see more configuration examples on the ["Client configuration examples"](guides/examples/client_configuration.md) section
-  or an working application example on the `example` folder on the project's repository.
+  See the [configuration guide](guides/configuration.md) for common scenarios and
+  their tradeoffs, the [client configuration examples](guides/examples/client_configuration.md)
+  for more snippets, or the `example` folder in the project's repository for a working application.
 
   ### Configuration options:
 

@@ -59,6 +59,9 @@ config :my_app, MyApp.Client,
 
 Check out the `Klife.Client` [docs](https://hexdocs.pm/klife/Klife.Client.html) for more details regarding configurations!
 
+The [configuration guide](guides/configuration.md) covers common workloads and the
+tradeoffs between latency, throughput, isolation, buffering and delivery guarantees.
+
 ### 3. Add the client to the supervision tree
 
 ```elixir

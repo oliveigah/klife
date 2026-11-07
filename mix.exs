@@ -28,9 +28,11 @@ defmodule Klife.MixProject do
         extras: [
           "README.md",
           "benchmarks.md",
+          "guides/configuration.md",
           "guides/examples/client_configuration.md"
         ],
         groups_for_extras: [
+          Guides: ["guides/configuration.md"],
           Examples: Path.wildcard("guides/examples/*.md")
         ],
         groups_for_docs: [

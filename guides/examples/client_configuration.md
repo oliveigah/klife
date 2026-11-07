@@ -2,6 +2,10 @@
 
 Here are some client configuration examples.
 
+For help choosing settings for a workload, see the
+[configuration guide](../configuration.md). It covers latency, throughput,
+isolation, consumer buffering, transactions and deployment tradeoffs.
+
 ## Simplest configuration
 
 ```elixir
@@ -278,11 +282,11 @@ On this client, the records produced to `my_topic_0` without a specific partitio
     txn_pools: [
       [name: :my_txn_pool, base_txn_id: "my_custom_base_txn_id"],
       [name: :my_txn_pool_2, txn_timeout_ms: :timer.seconds(120)]
-    ]
+    ],
     topics: [[name: "my_topic_0"]]
 ```
 
-This client will have a total of 3 txn pools, the default one plus the other two defined in the configuration. You can see all the configuration options for the producers in `Klife.TxnProducerPool`.
+This client will have two txn pools. `:my_txn_pool` is the selected default, so Klife does not add another pool. You can see all the configuration options for the pools in `Klife.TxnProducerPool`.
 
 ## Using custom default producer, partitioner and txn pool
 
