@@ -25,7 +25,7 @@ defmodule Klife.ReleaseBenchmarkTest do
     all = Config.cases(Config.parse([]))
 
     assert all |> Enum.map(& &1.scenario) |> Enum.uniq() ==
-             ~w(catchup_lag heavy_sync_production heavy_async_production latency_sensitive_records)
+             ~w(catchup_lag heavy_sync_production heavy_async_production latency_sensitive_records long_poll_interference isolated_workloads)
 
     selected = Config.cases(Config.parse(["--scenario", "catchup_lag", "--levels", "1,3"]))
     assert length(selected) == 8
@@ -41,6 +41,53 @@ defmodule Klife.ReleaseBenchmarkTest do
     assert_raise ArgumentError, fn -> Config.parse(["--scenario", "typo"]) end
     assert_raise ArgumentError, fn -> Config.parse(["--levels", "3,1"]) end
     assert_raise ArgumentError, fn -> Config.parse(["--seconds", "0"]) end
+  end
+
+  test "configuration guide scenarios: long polls, isolation and the pipelined example" do
+    alias Klife.ReleaseBenchmark.Scenarios.{HeavyAsyncProduction, IsolatedWorkloads}
+
+    long_poll = Config.cases(Config.parse(["--scenario", "long_poll_interference"]))
+    assert Enum.map(long_poll, & &1.max_wait_ms) |> Enum.uniq() == [0, 1_000, 5_000]
+    assert Enum.all?(long_poll, &(&1.kind == :long_poll and &1.callers == 8))
+
+    isolated = Config.cases(Config.parse(["--scenario", "isolated_workloads"]))
+    assert length(isolated) == 18
+    assert Enum.map(isolated, & &1.window) |> Enum.uniq() == [0, 64, 1_024]
+
+    by_variant = Map.new(isolated, &{{&1.variant, &1.profile}, &1})
+    assert by_variant[{"shared", "default"}].urgent_producer == nil
+    assert IsolatedWorkloads.settings(by_variant[{"shared", "default"}]) == %{}
+
+    dedicated = IsolatedWorkloads.settings(by_variant[{"dedicated_producer", "optimized"}])
+    refute Map.has_key?(dedicated, :requires)
+    assert [[name: :urgent_producer] ++ _] = dedicated.producers
+    assert dedicated.socket == [nodelay: true]
+
+    connection = IsolatedWorkloads.settings(by_variant[{"dedicated_connection", "default"}])
+    assert connection.requires == [:custom_connections]
+
+    assert [[name: :urgent, socket_opts: [nodelay: true]]] =
+             connection.connection[:custom_connections]
+
+    assert [[name: :urgent_producer, connection: :urgent]] = connection.producers
+
+    async = Config.cases(Config.parse(["--scenario", "heavy_async_production"]))
+    pipelined = Enum.filter(async, &(&1.variant == "pipelined"))
+    assert length(pipelined) == 3 and Enum.all?(pipelined, &(&1.profile == "optimized"))
+    settings = HeavyAsyncProduction.settings(hd(pipelined))
+    assert settings.producer[:batchers_count] == 4
+    assert settings.producer[:max_in_flight_requests] == 3
+  end
+
+  test "cases the baseline cannot configure are candidate only, not pending" do
+    rows =
+      for version <- ["baseline", "candidate"], sample <- 1..2 do
+        if version == "baseline",
+          do: %{version: version, sample: sample, status: :unsupported},
+          else: %{version: version, sample: sample, status: :ok, ack_p99_ms: 1.0}
+      end
+
+    assert Report.assessment(rows, :ack_p99_ms, 2) == :candidate_only
   end
 
   test "catch-up requires every partition to reach its broker-stored committed offset" do
@@ -164,7 +211,7 @@ defmodule Klife.ReleaseBenchmarkTest do
     Report.write(%{config | baseline: nil}, console: false)
     solo = File.read!(Path.join(path, "report.md"))
     assert solo =~ "| — | — | 1.00 | 10.00 | **Not compared** |"
-    assert solo =~ "Workload version: 2"
+    assert solo =~ "Workload version: 3"
   end
 
   test "failure reports retain partial samples and suppress overloaded comparisons" do

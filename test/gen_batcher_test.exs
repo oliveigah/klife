@@ -309,10 +309,11 @@ defmodule Klife.GenBatcherTest do
     _insert_response = TestBatcher.insert_values(batcher_pid, [item4])
     _insert_response = TestBatcher.insert_values(batcher_pid, [item5])
 
+    # item4 closed the first batch, which went out before item5 arrived
     assert_receive {
       :handle_dispatch,
       %TestBatcher.Batch{items: dispatched_items, global_order: 1},
-      %TestBatcher{items_count: 5, batch_count: 3, dispatch_count: 0},
+      %TestBatcher{items_count: 4, batch_count: 2, dispatch_count: 0},
       dispatch_ref
     }
 
@@ -386,5 +387,78 @@ defmodule Klife.GenBatcherTest do
     assert [
              %TestBatcher.BatchItem{value: 7, size: 0, global_order: 7}
            ] = dispatched_items
+  end
+
+  # Messages the batcher receives meanwhile. The tests send it nothing during the
+  # window, so these are its dispatch timers
+  defp count_wakeups(batcher_pid, window_ms) do
+    1 = :erlang.trace(batcher_pid, true, [:receive])
+    Process.sleep(window_ms)
+    1 = :erlang.trace(batcher_pid, false, [:receive])
+    delivered_ref = :erlang.trace_delivered(batcher_pid)
+
+    receive do
+      {:trace_delivered, ^batcher_pid, ^delivered_ref} -> :ok
+    end
+
+    Stream.repeatedly(fn ->
+      receive do
+        {:trace, ^batcher_pid, :receive, _msg} -> 1
+      after
+        0 -> nil
+      end
+    end)
+    |> Enum.take_while(&(&1 != nil))
+    |> Enum.sum()
+  end
+
+  defp start_batcher(batcher_config) do
+    start_supervised!(
+      {TestBatcher, [parent_pid: self(), ref: make_ref(), batcher_config: batcher_config]}
+    )
+  end
+
+  test "a timer that fires while an insert closes a batch starts no second dispatch loop" do
+    batcher_pid =
+      start_batcher(batch_wait_time_ms: 50, max_in_flight: 100, max_batch_count: 1)
+
+    # Each round queues the inserts ahead of the dispatch timer's message, so a batch
+    # closes while that timer has already fired
+    for _round <- 1..5 do
+      :ok = :sys.suspend(batcher_pid)
+      Klife.GenBatcher.insert_cast(batcher_pid, [%TestBatcher.BatchItem{value: 1, size: 0}])
+      Klife.GenBatcher.insert_cast(batcher_pid, [%TestBatcher.BatchItem{value: 2, size: 0}])
+      Process.sleep(80)
+      :ok = :sys.resume(batcher_pid)
+    end
+
+    Process.sleep(200)
+
+    # A single loop wakes it about once per batch wait (50ms)
+    assert count_wakeups(batcher_pid, 1000) in 5..30
+  end
+
+  test "a dispatch timer message that is not the current timer is dropped" do
+    batcher_pid =
+      start_batcher(batch_wait_time_ms: 50, max_in_flight: 100, max_batch_count: 1)
+
+    for _ <- 1..5, do: send(batcher_pid, {:timeout, make_ref(), :maybe_dispatch})
+    Process.sleep(200)
+
+    assert count_wakeups(batcher_pid, 1000) in 5..30
+  end
+
+  test "a full in flight pool waits for a completion, then dispatches what waits" do
+    batcher_pid = start_batcher(batch_wait_time_ms: 0, max_in_flight: 1, max_batch_count: 1)
+
+    TestBatcher.insert_values(batcher_pid, [%TestBatcher.BatchItem{value: 1, size: 0}])
+    assert_receive {:handle_dispatch, %TestBatcher.Batch{items: [%{value: 1}]}, _, dispatch_ref}
+
+    TestBatcher.insert_values(batcher_pid, [%TestBatcher.BatchItem{value: 2, size: 0}])
+
+    assert count_wakeups(batcher_pid, 300) <= 1
+
+    :ok = Klife.GenBatcher.complete_dispatch(batcher_pid, dispatch_ref)
+    assert_receive {:handle_dispatch, %TestBatcher.Batch{items: [%{value: 2}]}, _, _}, 100
   end
 end

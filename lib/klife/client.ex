@@ -749,6 +749,9 @@ defmodule Klife.Client do
       Klife.Connection.Controller.disable_feature(feature, module)
     end)
 
+    # Owned by this supervisor so it outlives restarts of the cache
+    :ok = Klife.MetadataCache.create_table(module)
+
     Supervisor.init(children, strategy: :one_for_one)
   end
 end

@@ -24,7 +24,10 @@ defmodule Klife.ReleaseBenchmark.Runner do
           do: {"#{prefix}-consume-#{level}-#{n}", partitions}
 
     latency_topics = for n <- 1..3, do: {"#{prefix}-urgent-#{n}", 1}
-    topics = producer_topics ++ consumer_topics ++ latency_topics
+    # Never written: fetches on them wait the full max_wait_ms (long-poll interference)
+    idle_topics = for n <- 1..3, do: {"#{prefix}-idle-#{n}", 3}
+    topics = producer_topics ++ consumer_topics ++ latency_topics ++ idle_topics
+    features = Config.supported_features()
     path = Path.join(config.output, "sample-#{config.version}-#{config.sample}.etf")
 
     metadata = %{
@@ -73,75 +76,30 @@ defmodule Klife.ReleaseBenchmark.Runner do
             "#{config.version} sample=#{config.sample} #{c.title}/#{c.variant} #{c.profile} #{c.scale}"
           )
 
-          selected =
-            case c.kind do
-              :consumer ->
-                Enum.filter(consumer_topics, fn {name, _} ->
-                  String.contains?(name, "-consume-#{c.level}-")
-                end)
-
-              :latency ->
-                latency_topics
-
-              :producer ->
-                producer_topics
-            end
-
           overrides = c.module.settings(c)
-          settings = Map.merge(%{producer: [], fetcher: [], topic: [], socket: []}, overrides)
-
-          client_config = [
-            connection: [bootstrap_servers: config.brokers, socket_opts: settings.socket],
-            producers: [Keyword.put(settings.producer, :name, :klife_default_producer)],
-            fetchers: [Keyword.put(settings.fetcher, :name, :klife_default_fetcher)],
-            disabled_features: [:txn_producer],
-            topics: Enum.map(topics, fn {name, _} -> [name: name] end)
-          ]
-
-          Application.put_env(:klife_release_benchmark, Client, client_config)
-          {:ok, client} = Client.start_link([])
+          missing = Map.get(overrides, :requires, []) -- features
 
           result =
-            try do
-              unless c.kind == :consumer,
-                do: Workload.warmup_partitions(selected, filler)
-
-              result =
-                c.module.run(c, %{
-                  config: config,
-                  topics: selected,
-                  filler: filler,
-                  settings: settings
-                })
-
-              Map.merge(
-                c,
-                Map.merge(result, %{
-                  overrides: overrides,
-                  settings: effective_settings(settings, c),
-                  client_config: client_config,
-                  workload_topics: selected,
-                  started_at: started_at,
-                  finished_at: timestamp()
-                })
-              )
-            after
-              Supervisor.stop(client, :normal, @timeout)
+            if missing == [] do
+              run_case(c, overrides, config, filler, %{
+                producer: producer_topics,
+                consumer: consumer_topics,
+                latency: latency_topics,
+                idle: idle_topics,
+                started_at: started_at
+              })
+            else
+              # Recorded so the report shows the case as not comparable rather than pending
+              Map.merge(c, %{
+                status: :unsupported,
+                missing_features: missing,
+                overrides: overrides,
+                started_at: started_at,
+                finished_at: timestamp()
+              })
             end
 
-          details =
-            case c.kind do
-              :consumer ->
-                "catch-up=#{Float.round(result.catchup_ms, 3)} ms, remaining committed lag=#{result.remaining_lag_records}"
-
-              :latency ->
-                "ack p99=#{result.ack_p99_ms} ms, delivery p99=#{result.e2e_p99_ms} ms"
-
-              :producer ->
-                "ack p99=#{result.ack_p99_ms} ms"
-            end
-
-          IO.puts("  #{round(result.records_s)} records/s; #{details}; #{result.status}")
+          IO.puts("  #{summary(result)}")
 
           saved = %{saved | results: saved.results ++ [result]}
           Report.save_sample(path, saved)
@@ -177,6 +135,106 @@ defmodule Klife.ReleaseBenchmark.Runner do
         Report.save_sample(path, failed)
         reraise error, __STACKTRACE__
     end
+  end
+
+  defp run_case(c, overrides, config, filler, topics) do
+    selected =
+      case c.kind do
+        :consumer ->
+          Enum.filter(topics.consumer, fn {name, _} ->
+            String.contains?(name, "-consume-#{c.level}-")
+          end)
+
+        kind when kind in [:latency, :isolation] ->
+          topics.latency
+
+        kind when kind in [:producer, :long_poll] ->
+          topics.producer
+      end
+
+    settings =
+      Map.merge(
+        %{
+          producer: [],
+          fetcher: [],
+          topic: [],
+          socket: [],
+          connection: [],
+          producers: [],
+          fetchers: []
+        },
+        Map.delete(overrides, :requires)
+      )
+
+    client_config = [
+      connection:
+        Keyword.merge(
+          [bootstrap_servers: config.brokers, socket_opts: settings.socket],
+          settings.connection
+        ),
+      producers: [
+        Keyword.put(settings.producer, :name, :klife_default_producer) | settings.producers
+      ],
+      fetchers: [Keyword.put(settings.fetcher, :name, :klife_default_fetcher) | settings.fetchers],
+      disabled_features: [:txn_producer],
+      topics: Enum.map(topics_of(topics), fn {name, _} -> [name: name] end)
+    ]
+
+    Application.put_env(:klife_release_benchmark, Client, client_config)
+    {:ok, client} = Client.start_link([])
+
+    try do
+      unless c.kind == :consumer, do: Workload.warmup_partitions(selected, filler)
+      if c.kind == :isolation, do: Workload.warmup_partitions(topics.producer, filler)
+
+      result =
+        c.module.run(c, %{
+          config: config,
+          topics: selected,
+          bulk_topics: topics.producer,
+          idle_topics: topics.idle,
+          filler: filler,
+          settings: settings
+        })
+
+      Map.merge(
+        c,
+        Map.merge(result, %{
+          overrides: overrides,
+          settings: effective_settings(settings, c),
+          client_config: client_config,
+          workload_topics: selected,
+          started_at: topics.started_at,
+          finished_at: timestamp()
+        })
+      )
+    after
+      Supervisor.stop(client, :normal, @timeout)
+    end
+  end
+
+  defp topics_of(topics), do: topics.producer ++ topics.consumer ++ topics.latency ++ topics.idle
+
+  defp summary(%{status: :unsupported, missing_features: missing}),
+    do: "skipped: this version lacks #{Enum.map_join(missing, ", ", &inspect/1)}"
+
+  defp summary(result) do
+    details =
+      case result.kind do
+        :consumer ->
+          "catch-up=#{Float.round(result.catchup_ms, 3)} ms, remaining committed lag=#{result.remaining_lag_records}"
+
+        :latency ->
+          "ack p99=#{result.ack_p99_ms} ms, delivery p99=#{result.e2e_p99_ms} ms"
+
+        :isolation ->
+          "urgent ack p99=#{result.ack_p99_ms} ms, delivery p99=#{result.e2e_p99_ms} ms, bulk #{round(result.bulk_records_s)} records/s"
+
+        kind when kind in [:producer, :long_poll] ->
+          "ack p99=#{result.ack_p99_ms} ms"
+      end
+
+    "#{round(result.records_s)} records/s; #{details}; #{result.status}"
   end
 
   defp effective_settings(settings, c) do

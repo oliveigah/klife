@@ -1,5 +1,6 @@
 defmodule Klife.Connection do
   @moduledoc false
+  alias KlifeProtocol.SASL
   alias KlifeProtocol.Socket
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages, as: M
@@ -13,35 +14,58 @@ defmodule Klife.Connection do
 
     connect_opts = Keyword.merge(connect_opts, backend: get_socket_backend(ssl))
 
-    case Socket.connect(host, port, connect_opts) do
-      {:ok, socket} ->
-        conn =
-          %__MODULE__{
-            socket: socket,
-            host: host,
-            port: port,
-            ssl: ssl,
-            # TODO: Should we expose this?
-            read_timeout: :timer.seconds(60)
-          }
-          |> authenticate_sasl(sasl_opts)
-
-        :ok = socket_opts(conn, socket_opts)
-
-        {:ok, conn}
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, socket} <- Socket.connect(host, port, connect_opts),
+         conn = %__MODULE__{
+           socket: socket,
+           host: host,
+           port: port,
+           ssl: ssl,
+           # TODO: Should we expose this?
+           read_timeout: :timer.seconds(60)
+         },
+         {:ok, conn} <- close_on_error(authenticate_sasl(conn, sasl_opts), conn),
+         :ok <- close_on_error(socket_opts(conn, socket_opts), conn) do
+      {:ok, conn}
     end
   end
 
-  # Raises if the broker refuses the credentials. `session_lifetime_ms` is how long
-  # the broker keeps the session, 0 when it never ends (also without SASL)
-  def authenticate_sasl(%__MODULE__{socket: socket} = conn, sasl_opts) do
-    {:ok, %{session_lifetime_ms: lifetime}} =
-      Socket.authenticate(socket, get_socket_backend(conn.ssl), sasl_opts)
+  defp close_on_error({:error, _reason} = error, conn) do
+    close(conn)
+    error
+  end
 
-    %__MODULE__{conn | session_lifetime_ms: lifetime}
+  defp close_on_error(result, _conn), do: result
+
+  # `session_lifetime_ms` is how long the broker keeps the session, 0 when it never
+  # ends (also without SASL). Returns the socket's error when it fails during the
+  # exchange, so callers can try again, and raises if the broker refuses the credentials
+  def authenticate_sasl(%__MODULE__{} = conn, []),
+    do: {:ok, %__MODULE__{conn | session_lifetime_ms: 0}}
+
+  def authenticate_sasl(%__MODULE__{} = conn, sasl_opts) do
+    # Same exchange as KlifeProtocol.Socket.authenticate/3, whose send and receive
+    # raise on socket errors
+    send_recv = fn data ->
+      with :ok <- write(data, conn),
+           {:ok, reply} <- recv(conn, 5_000) do
+        reply
+      else
+        {:error, reason} -> throw({:sasl_socket_error, reason})
+      end
+    end
+
+    {:ok, %{session_lifetime_ms: lifetime}} =
+      SASL.authenticate(
+        Keyword.fetch!(sasl_opts, :mechanism),
+        Keyword.fetch!(sasl_opts, :handshake_vsn),
+        Keyword.fetch!(sasl_opts, :auth_vsn),
+        Keyword.get(sasl_opts, :mechanism_opts, []),
+        send_recv
+      )
+
+    {:ok, %__MODULE__{conn | session_lifetime_ms: lifetime}}
+  catch
+    {:sasl_socket_error, reason} -> {:error, reason}
   end
 
   # A replaced connection keeps receiving replies this long, so requests sent
@@ -87,11 +111,10 @@ defmodule Klife.Connection do
   def write(msg, %__MODULE__{ssl: false} = conn), do: :gen_tcp.send(conn.socket, msg)
   def write(msg, %__MODULE__{ssl: true} = conn), do: :ssl.send(conn.socket, msg)
 
-  def read(%__MODULE__{ssl: false} = conn),
-    do: :gen_tcp.recv(conn.socket, 0, conn.read_timeout)
+  def read(%__MODULE__{} = conn), do: recv(conn, conn.read_timeout)
 
-  def read(%__MODULE__{ssl: true} = conn),
-    do: :ssl.recv(conn.socket, 0, conn.read_timeout)
+  defp recv(%__MODULE__{ssl: false} = conn, timeout), do: :gen_tcp.recv(conn.socket, 0, timeout)
+  defp recv(%__MODULE__{ssl: true} = conn, timeout), do: :ssl.recv(conn.socket, 0, timeout)
 
   def close(%__MODULE__{ssl: false} = conn), do: :gen_tcp.close(conn.socket)
   def close(%__MODULE__{ssl: true} = conn), do: :ssl.close(conn.socket)

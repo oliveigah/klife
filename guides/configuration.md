@@ -563,3 +563,22 @@ Change one layer at a time. Then check idle topics, catch-up, a slow or unavaila
 broker, leader movement and shutdown as well as steady traffic. These cases expose
 the costs of shared connections, retry budgets, buffering and commit pacing that
 a throughput-only benchmark can miss.
+
+### Release benchmark workloads
+
+Klife's repository includes a release benchmark (`mix release_benchmark`, described
+in `bench/README.md`) with one workload for each of these scenarios. Each workload
+runs Klife's defaults and a tuned profile, and can compare two Klife versions.
+
+| Scenario                                                      | Benchmark workload                                                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [Latency-sensitive production](#latency-sensitive-production) | `latency_sensitive_records`                                                                             |
+| [High-throughput production](#high-throughput-production)     | `heavy_sync_production`, `heavy_async_production` (its `pipelined` variant runs that section's example) |
+| [Isolating workloads](#isolating-workloads)                   | `isolated_workloads`, with a shared, a dedicated producer and a dedicated connection variant            |
+| [Fetching and long polling](#fetching-and-long-polling)       | `long_poll_interference`                                                                                |
+| [Consumer throughput](#consumer-throughput)                   | `catchup_lag`                                                                                           |
+
+The tuned profiles set `nodelay: true` in the client's `socket_opts`, which applies
+to every connection, rather than only on the production connection as in
+[Latency-sensitive production](#latency-sensitive-production). Run a workload on
+hardware like yours before adopting its settings.

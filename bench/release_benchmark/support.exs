@@ -1,9 +1,14 @@
 defmodule Klife.ReleaseBenchmark.Config do
+  # Standalone unit checks load this file without Klife
+  @compile {:no_warn_undefined, Klife.Connection.Controller}
+
   @scenarios [
     {"catchup_lag", Klife.ReleaseBenchmark.Scenarios.CatchupLag},
     {"heavy_sync_production", Klife.ReleaseBenchmark.Scenarios.HeavySyncProduction},
     {"heavy_async_production", Klife.ReleaseBenchmark.Scenarios.HeavyAsyncProduction},
-    {"latency_sensitive_records", Klife.ReleaseBenchmark.Scenarios.LatencySensitiveRecords}
+    {"latency_sensitive_records", Klife.ReleaseBenchmark.Scenarios.LatencySensitiveRecords},
+    {"long_poll_interference", Klife.ReleaseBenchmark.Scenarios.LongPollInterference},
+    {"isolated_workloads", Klife.ReleaseBenchmark.Scenarios.IsolatedWorkloads}
   ]
 
   def parse(args) do
@@ -55,7 +60,7 @@ defmodule Klife.ReleaseBenchmark.Config do
 
     config = %{
       baseline: opts[:baseline],
-      workload_version: 2,
+      workload_version: 3,
       output:
         Path.expand(
           Keyword.get(
@@ -97,6 +102,13 @@ defmodule Klife.ReleaseBenchmark.Config do
       {_, module} = List.keyfind(@scenarios, name, 0)
       Enum.map(module.cases(config), &Map.put(&1, :title, module.title()))
     end)
+  end
+
+  # Client features a case can require. The harness runs the same cases against older Klife
+  # versions, which skip the cases needing what they lack
+  def supported_features do
+    connection_opts = Klife.Connection.Controller.get_opts()
+    if Keyword.has_key?(connection_opts, :custom_connections), do: [:custom_connections], else: []
   end
 
   def title(scenario) do

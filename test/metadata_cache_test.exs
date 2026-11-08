@@ -70,6 +70,46 @@ defmodule Klife.MetadataCacheTest do
     end
   end
 
+  test "the metadata table outlives restarts of the cache" do
+    client = Module.concat(__MODULE__, RestartClient)
+    Application.put_env(:klife, client, base_config())
+
+    defmodule RestartClient do
+      use Klife.Client, otp_app: :klife
+    end
+
+    start_supervised!(client)
+
+    topic = "test_no_batch_topic"
+    assert {:ok, %{leader_id: leader}} = MetadataCache.get_metadata(client, topic, 0)
+
+    [{pid, _}] = Klife.ProcessRegistry.registry_lookup({MetadataCache, client})
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    # Readers never miss it, even before the cache is back
+    assert {:ok, %{leader_id: ^leader}} = MetadataCache.get_metadata(client, topic, 0)
+
+    assert [{new_pid, _}] = wait_restart(client, pid)
+    assert new_pid != pid
+    assert {:ok, %{leader_id: ^leader}} = MetadataCache.get_metadata(client, topic, 0)
+  end
+
+  defp wait_restart(client, old_pid, attempts \\ 100) do
+    case Klife.ProcessRegistry.registry_lookup({MetadataCache, client}) do
+      [{pid, _}] = found when pid != old_pid ->
+        found
+
+      _ when attempts > 0 ->
+        Process.sleep(50)
+        wait_restart(client, old_pid, attempts - 1)
+
+      other ->
+        other
+    end
+  end
+
   @tag capture_log: true
   test "produce errors against a stale leader trigger a metadata refresh" do
     # Module.concat prevents compile time resolution of the client module,

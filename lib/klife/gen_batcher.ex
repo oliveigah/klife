@@ -74,7 +74,7 @@ defmodule Klife.GenBatcher do
 
     next_dispatch_msg_ref =
       if batch_wait_time_ms > 0 do
-        Process.send_after(self(), :maybe_dispatch, batch_wait_time_ms)
+        schedule_dispatch(batch_wait_time_ms)
       end
 
     base_state = %__MODULE__{
@@ -130,7 +130,7 @@ defmodule Klife.GenBatcher do
             new_state =
               acc_state
               |> move_batch_to_queue(mod)
-              |> schedule_dispatch_if_earlier(1)
+              |> schedule_dispatch_if_earlier(0)
 
             {:ok, new_item, new_batch, new_user_state} =
               mod.handle_insert_item(item, new_state.current_batch, new_state.user_state)
@@ -171,6 +171,8 @@ defmodule Klife.GenBatcher do
     {new_state, user_resp}
   end
 
+  # Runs for the current dispatch run's message only (see the :maybe_dispatch handler):
+  # every branch that wants another run schedules one
   def maybe_dispatch(%__MODULE__{} = state, mod) do
     %__MODULE__{
       batch_wait_time_ms: batch_wait_time_ms,
@@ -189,16 +191,14 @@ defmodule Klife.GenBatcher do
     new_state = %__MODULE__{state | next_dispatch_msg_ref: nil}
 
     cond do
+      # dispatch_completed/2 schedules the next run
       not in_flight_available? ->
-        schedule_dispatch_if_earlier(new_state, 1)
+        new_state
 
       has_batch_on_queue? ->
-        new_state =
-          new_state
-          |> do_dispatch(pool_idx, mod)
-          |> schedule_dispatch_if_earlier(1)
-
         new_state
+        |> dispatch_queued_batches(mod)
+        |> schedule_dispatch_if_earlier(0)
 
       not on_time? ->
         new_state =
@@ -215,6 +215,15 @@ defmodule Klife.GenBatcher do
           new_state
         end
     end
+  end
+
+  # Every free in flight slot takes a queued batch
+  defp dispatch_queued_batches(%__MODULE__{} = state, mod) do
+    pool_idx = Enum.find_index(state.in_flight_pool, &is_nil/1)
+
+    if is_integer(pool_idx) and not :queue.is_empty(state.batch_queue),
+      do: state |> do_dispatch(pool_idx, mod) |> dispatch_queued_batches(mod),
+      else: state
   end
 
   defp do_dispatch(%__MODULE__{} = state, pool_idx, mod) do
@@ -281,7 +290,12 @@ defmodule Klife.GenBatcher do
         state
 
       pool_idx ->
-        %{state | in_flight_pool: List.replace_at(in_flight_pool, pool_idx, nil)}
+        new_state = %{state | in_flight_pool: List.replace_at(in_flight_pool, pool_idx, nil)}
+
+        # The slot is free for what waits, and maybe_dispatch/2 keeps the batch wait time
+        if :queue.is_empty(new_state.batch_queue) and new_state.current_batch_item_count == 0,
+          do: new_state,
+          else: schedule_dispatch_if_earlier(new_state, 0)
     end
   end
 
@@ -305,25 +319,35 @@ defmodule Klife.GenBatcher do
     }
   end
 
+  # One dispatch run pending at a time: its message carries its ref, and the handler
+  # drops any other (see __using__/1), so a run replaced here can't start a second loop
   defp schedule_dispatch_if_earlier(%__MODULE__{next_dispatch_msg_ref: nil} = state, time),
-    do: %__MODULE__{
-      state
-      | next_dispatch_msg_ref: Process.send_after(self(), :maybe_dispatch, time)
-    }
+    do: %__MODULE__{state | next_dispatch_msg_ref: schedule_dispatch(time)}
 
   defp schedule_dispatch_if_earlier(%__MODULE__{next_dispatch_msg_ref: ref} = state, time)
        when is_reference(ref) do
-    if Process.read_timer(ref) > time do
-      Process.cancel_timer(ref)
-
-      %__MODULE__{
+    case Process.read_timer(ref) do
+      # Fired, or sent: its message is already in the mailbox
+      false ->
         state
-        | next_dispatch_msg_ref: Process.send_after(self(), :maybe_dispatch, time)
-      }
-    else
-      state
+
+      left_ms when left_ms > time ->
+        Process.cancel_timer(ref)
+        %__MODULE__{state | next_dispatch_msg_ref: schedule_dispatch(time)}
+
+      _ ->
+        state
     end
   end
+
+  # A timer fires on the next millisecond at best, so a run due now is sent instead
+  defp schedule_dispatch(0) do
+    ref = make_ref()
+    send(self(), {:timeout, ref, :maybe_dispatch})
+    ref
+  end
+
+  defp schedule_dispatch(time_ms), do: :erlang.start_timer(time_ms, self(), :maybe_dispatch)
 
   # Macro
   defmacro __using__(opts) do
@@ -365,10 +389,17 @@ defmodule Klife.GenBatcher do
       end
 
       @impl true
-      def handle_info(:maybe_dispatch, %Klife.GenBatcher{} = state) do
+      def handle_info(
+            {:timeout, ref, :maybe_dispatch},
+            %Klife.GenBatcher{next_dispatch_msg_ref: ref} = state
+          ) do
         new_state = Klife.GenBatcher.maybe_dispatch(state, __MODULE__)
         {:noreply, new_state}
       end
+
+      # A run replaced by a newer one: dropped, so it schedules nothing
+      def handle_info({:timeout, _ref, :maybe_dispatch}, %Klife.GenBatcher{} = state),
+        do: {:noreply, state}
 
       def handle_info({:complete_dispatch, dispatch_ref}, %Klife.GenBatcher{} = state) do
         new_state = Klife.GenBatcher.dispatch_completed(state, dispatch_ref)

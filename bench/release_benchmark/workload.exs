@@ -46,6 +46,9 @@ defmodule Klife.ReleaseBenchmark.Consumer do
       :catchup ->
         Stats.add(config.stats, :consumed, length(records))
 
+      :idle ->
+        raise "Records on a topic the benchmark never writes"
+
       :latency ->
         for %{value: <<tag::binary-size(16), scheduled::signed-64, _::binary>>} <- records,
             tag == config.tag do
@@ -78,7 +81,7 @@ defmodule Klife.ReleaseBenchmark.Workload do
     table = Stats.new()
     group = new_group()
     register_group(group, table, :latency, <<0::128>>)
-    {:ok, pid} = start_group(c, group, topics, settings, :latest)
+    {:ok, pid} = start_group(group, topics, strategy(c, settings), settings.topic, :latest)
 
     try do
       wait_ready(group, Enum.sum(Enum.map(topics, &elem(&1, 1))), deadline())
@@ -99,6 +102,57 @@ defmodule Klife.ReleaseBenchmark.Workload do
   def throughput(c, %{config: config, topics: topics, filler: filler}) do
     if config.warmup > 0, do: produce(c, config.warmup, topics, filler, config.record_bytes)
     produce(c, config.seconds, topics, filler, config.record_bytes)
+  end
+
+  # Produces while a group long-polls topics that never receive records, so every broker
+  # holds one of its fetches for max_wait_ms
+  def long_poll(c, %{idle_topics: idle_topics, settings: settings} = context) do
+    table = Stats.new()
+    group = new_group()
+    register_group(group, table, :idle, nil)
+
+    fetcher =
+      Keyword.merge(settings.fetcher,
+        max_wait_ms: c.max_wait_ms,
+        request_timeout_ms: c.max_wait_ms + 30_000
+      )
+
+    {:ok, pid} =
+      start_group(group, idle_topics, {:exclusive, fetcher}, [fetch_interval_ms: 100], :latest)
+
+    try do
+      wait_ready(group, Enum.sum(Enum.map(idle_topics, &elem(&1, 1))), deadline())
+      # Let the first long polls reach the brokers before timing
+      Process.sleep(min(c.max_wait_ms, 1_000))
+      throughput(c, context)
+    after
+      GenServer.stop(pid, :normal, @timeout)
+      :persistent_term.erase({Consumer, group})
+      :ets.delete(table)
+    end
+  end
+
+  # Latency-sensitive records while bulk asynchronous production runs on the same client
+  def isolation(c, %{bulk_topics: bulk_topics} = context) do
+    bulk_table = Stats.new()
+    bulk_pool = pool(bulk_topics, context.filler)
+
+    bulk =
+      if c.window > 0 do
+        # Runs past the measured phases; stopped below once they finish
+        Task.async(fn -> async_loop(bulk_pool, c.window, now() + 3_600_000_000, bulk_table) end)
+      end
+
+    started = now()
+
+    try do
+      result = latency(c, context)
+      elapsed = (now() - started) / 1_000_000
+      Map.put(result, :bulk_records_s, Stats.get(bulk_table, :acked) / elapsed)
+    after
+      if bulk, do: Task.shutdown(bulk, :brutal_kill)
+      :ets.delete(bulk_table)
+    end
   end
 
   def warmup_partitions(topics, filler) do
@@ -180,15 +234,14 @@ defmodule Klife.ReleaseBenchmark.Workload do
     )
   end
 
-  defp submit(pool, n, ref, pending, scheduled \\ nil) do
+  defp submit(pool, n, ref, pending, scheduled \\ nil, opts \\ []) do
     owner = self()
     start = scheduled || now()
 
     :ok =
-      Client.produce_async(elem(pool, rem(n, tuple_size(pool))),
-        callback: fn result ->
-          send(owner, {ref, n, result, now()})
-        end
+      Client.produce_async(
+        elem(pool, rem(n, tuple_size(pool))),
+        Keyword.put(opts, :callback, fn result -> send(owner, {ref, n, result, now()}) end)
       )
 
     Map.put(pending, n, start)
@@ -226,7 +279,8 @@ defmodule Klife.ReleaseBenchmark.Workload do
     ref = make_ref()
     # Fixed schedule, independent of response speed. Never queue unlimited work.
     count = rate * seconds
-    pending = paced(pool, table, ref, 0, count, rate, start, %{})
+    opts = if producer = Map.get(c, :urgent_producer), do: [producer: producer], else: []
+    pending = paced(pool, table, ref, 0, count, rate, start, %{}, opts)
     await_async(pool, ref, pending, count, nil, table, deadline())
     acked = Stats.get(table, :acked)
 
@@ -237,9 +291,9 @@ defmodule Klife.ReleaseBenchmark.Workload do
     result(table, start, bytes)
   end
 
-  defp paced(_pool, _table, _ref, count, count, _rate, _start, pending), do: pending
+  defp paced(_pool, _table, _ref, count, count, _rate, _start, pending, _opts), do: pending
 
-  defp paced(pool, table, ref, index, count, rate, start, pending) do
+  defp paced(pool, table, ref, index, count, rate, start, pending, opts) do
     scheduled = start + div(index * 1_000_000, rate)
     wait_until(scheduled)
     pending = collect_acks(ref, pending, table)
@@ -250,13 +304,13 @@ defmodule Klife.ReleaseBenchmark.Workload do
         rec = elem(pool, rem(index, tuple_size(pool)))
         <<tag::binary-size(16), _::signed-64, filler::binary>> = rec.value
         pool = {%{rec | value: <<tag::binary, scheduled::signed-64, filler::binary>>}}
-        submit(pool, index, ref, pending, scheduled)
+        submit(pool, index, ref, pending, scheduled, opts)
       else
         Stats.add(table, :dropped, 1)
         pending
       end
 
-    paced(pool, table, ref, index + 1, count, rate, start, pending)
+    paced(pool, table, ref, index + 1, count, rate, start, pending, opts)
   end
 
   defp collect_acks(ref, pending, table) do
@@ -279,7 +333,7 @@ defmodule Klife.ReleaseBenchmark.Workload do
     group = new_group()
     register_group(group, table, :catchup, nil)
     startup = now()
-    {:ok, pid} = start_group(c, group, topics, settings, :earliest)
+    {:ok, pid} = start_group(group, topics, strategy(c, settings), settings.topic, :earliest)
 
     try do
       count =
@@ -384,18 +438,16 @@ defmodule Klife.ReleaseBenchmark.Workload do
     |> Enum.each(fn {:ok, :ok} -> :ok end)
   end
 
-  defp start_group(c, group, topics, settings, reset) do
-    strategy =
-      if c.strategy == :shared,
-        do: {:shared, Client.get_default_fetcher()},
-        else: {:exclusive, settings.fetcher}
+  defp strategy(%{strategy: :exclusive}, settings), do: {:exclusive, settings.fetcher}
+  defp strategy(_c, _settings), do: {:shared, Client.get_default_fetcher()}
 
+  defp start_group(group, topics, strategy, topic_settings, reset) do
     Consumer.start_link(
       group_name: group,
       fetch_strategy: strategy,
       topics:
         Enum.map(topics, fn {topic, _} ->
-          Keyword.merge(settings.topic, name: topic, offset_reset_policy: reset)
+          Keyword.merge(topic_settings, name: topic, offset_reset_policy: reset)
         end)
     )
   end

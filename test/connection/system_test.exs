@@ -328,6 +328,57 @@ defmodule Klife.Connection.SystemTest do
     refute log =~ "will re-initialize bootstrap connection"
   end
 
+  @tag timeout: 60_000
+  test "keeps a connection whose re-authentication fails, and replaces it on a later attempt",
+       %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    # The test config silences every log, but the warning asserted below must be seen
+    level = Logger.level()
+    Logger.configure(level: :warning)
+    on_exit(fn -> Logger.configure(level: level) end)
+
+    log =
+      capture_log(fn ->
+        # 14s tokens: sessions of 13-14s, re-authenticated 7-8s after connecting
+        start_supervised!({ConnController, oauth_input(client_name, 14)})
+        [broker_id | _] = Utils.get_brokers(client_name)
+        conn_name = ConnController.get_default_connection(client_name)
+        key = {Broker, broker_id, client_name, conn_name, 0}
+        [{pid, _}] = ProcessRegistry.registry_lookup(key)
+
+        %Connection{socket: first_socket} =
+          Broker.get_connection(client_name, conn_name, broker_id, 0)
+
+        # As if the broker were down when the session is about to end
+        %{url: url} = :sys.get_state(pid)
+        :sys.replace_state(pid, &%{&1 | url: "localhost:1"})
+
+        Process.sleep(9_000)
+        assert [{^pid, _}] = ProcessRegistry.registry_lookup(key)
+
+        assert %Connection{socket: ^first_socket} =
+                 Broker.get_connection(client_name, conn_name, broker_id, 0)
+
+        # Back up before the session ends: the next attempt, 1s later, replaces it
+        :sys.replace_state(pid, &%{&1 | url: url})
+        Process.sleep(2_000)
+        assert [{^pid, _}] = ProcessRegistry.registry_lookup(key)
+
+        assert %Connection{socket: socket} =
+                 Broker.get_connection(client_name, conn_name, broker_id, 0)
+
+        assert socket != first_socket
+
+        assert {:ok, _} =
+                 Broker.send_message(ApiVersions, client_name, broker_id, %{}, %{},
+                   connection: conn_name
+                 )
+      end)
+
+    assert log =~ "Could not open a connection to re-authenticate with broker"
+  end
+
   test "replaces the bootstrap connection through any reachable bootstrap server", %{
     test: test_name
   } do
@@ -346,6 +397,54 @@ defmodule Klife.Connection.SystemTest do
     # initializes the bootstrap connection again 1s later, with another socket
     Process.sleep(1_500)
     assert %Connection{socket: ^socket} = :sys.get_state(pid).bootstrap_conn
+  end
+
+  @tag capture_log: true
+  test "a failed bootstrap connection is replaced once, through its server last", %{
+    test: test_name
+  } do
+    client_name = :"#{__MODULE__}.#{test_name}"
+
+    input =
+      [
+        client_name: client_name,
+        bootstrap_servers: ["localhost:19092", "localhost:29092"],
+        ssl: false
+      ]
+      |> controller_input()
+
+    pid = start_supervised!({ConnController, input})
+    %Connection{port: 19092} = failed = :sys.get_state(pid).bootstrap_conn
+
+    # Every cluster check fails on it now, as when its broker stops, and many are
+    # triggered meanwhile (brokers failing to reconnect trigger one each)
+    Connection.close(failed)
+    for _ <- 1..20, do: send(pid, :check_cluster)
+
+    assert %{bootstrap_conn: nil, bootstrap_servers: ["localhost:29092", "localhost:19092"]} =
+             :sys.get_state(pid)
+
+    # Waiting callers are answered once the replacement checks the cluster
+    assert :ok = ConnController.trigger_brokers_verification(client_name)
+    assert %Connection{port: 29092, socket: socket} = :sys.get_state(pid).bootstrap_conn
+
+    # No other replacement was pending: the connection stays
+    Process.sleep(1_500)
+    assert %Connection{socket: ^socket} = :sys.get_state(pid).bootstrap_conn
+  end
+
+  test "sasl authentication returns the error of a socket that fails" do
+    {:ok, conn} = Connection.new("localhost:19092", false, [active: false], [], [])
+    Connection.close(conn)
+
+    sasl_opts = [
+      mechanism: "PLAIN",
+      handshake_vsn: 1,
+      auth_vsn: 2,
+      mechanism_opts: [username: "klifeusr", password: "klifepwd"]
+    ]
+
+    assert {:error, :closed} = Connection.authenticate_sasl(conn, sasl_opts)
   end
 
   @tag capture_log: true
