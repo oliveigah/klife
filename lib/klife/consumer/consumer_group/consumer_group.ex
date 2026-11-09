@@ -1208,6 +1208,10 @@ defmodule Klife.Consumer.ConsumerGroup do
 
             {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
               {:retry, [{:group, ec}]}
+
+            # A closed connection or a timeout: retried until with_timeout!/2 gives up and raises
+            {:error, reason} ->
+              {:retry, reason}
           end
         end,
         state.client_name.get_default_request_timeout_ms() * 2

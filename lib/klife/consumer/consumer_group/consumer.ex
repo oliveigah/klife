@@ -614,6 +614,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :batcher_down,
     :broker_removed,
     :unexpected_resp,
+    :closed,
     -1,
     3,
     5,
