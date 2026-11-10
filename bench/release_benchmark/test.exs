@@ -77,6 +77,12 @@ defmodule Klife.ReleaseBenchmarkTest do
     settings = HeavyAsyncProduction.settings(hd(pipelined))
     assert settings.producer[:batchers_count] == 4
     assert settings.producer[:max_in_flight_requests] == 3
+
+    lingering = Enum.filter(async, &(&1.variant == "pipelined_linger"))
+    assert length(lingering) == 3 and Enum.all?(lingering, &(&1.profile == "optimized"))
+
+    assert HeavyAsyncProduction.settings(hd(lingering)) ==
+             put_in(settings.producer[:linger_ms], 1)
   end
 
   test "cases the baseline cannot configure are candidate only, not pending" do

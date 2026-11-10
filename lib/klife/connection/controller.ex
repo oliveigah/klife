@@ -82,9 +82,9 @@ defmodule Klife.Connection.Controller do
     socket_opts: [
       type: {:list, :any},
       required: false,
-      default: [keepalive: true],
+      default: [keepalive: true, nodelay: true],
       doc:
-        "Options used to configure the open socket, which are forwarded to the `setopts/2` function of the underlying socket module `:inet` for `:gen_tcp` and `:ssl` for `:ssl` (see ssl option above.)."
+        "Options used to configure the open socket, which are forwarded to the `setopts/2` function of the underlying socket module `:inet` for `:gen_tcp` and `:ssl` for `:ssl` (see ssl option above.). They are merged over the defaults, so `nodelay: false` re-enables Nagle's algorithm."
     ],
     sasl_opts: [
       type: {:list, :any},

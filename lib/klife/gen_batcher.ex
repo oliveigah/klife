@@ -340,14 +340,18 @@ defmodule Klife.GenBatcher do
     end
   end
 
-  # A timer fires on the next millisecond at best, so a run due now is sent instead
+  # A relative timer fires a millisecond late, so a wait gets an absolute deadline and a
+  # run due now is sent instead
   defp schedule_dispatch(0) do
     ref = make_ref()
     send(self(), {:timeout, ref, :maybe_dispatch})
     ref
   end
 
-  defp schedule_dispatch(time_ms), do: :erlang.start_timer(time_ms, self(), :maybe_dispatch)
+  defp schedule_dispatch(time_ms) do
+    deadline = System.monotonic_time(:millisecond) + time_ms
+    :erlang.start_timer(deadline, self(), :maybe_dispatch, abs: true)
+  end
 
   # Macro
   defmacro __using__(opts) do

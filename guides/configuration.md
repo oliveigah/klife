@@ -111,23 +111,6 @@ Klife batches records that accumulate while earlier requests are in flight, even
 with zero linger. A positive `linger_ms` deliberately waits for more records and
 can increase latency on quiet topics.
 
-For small writes, try disabling Nagle's algorithm on the production connection
-and measure the effect on tail latency and packet rate.
-
-```elixir
-config :my_app, MyApp.Client,
-  connection: [
-    bootstrap_servers: ["localhost:19092"],
-    custom_connections: [
-      [name: :klife_default_connection, socket_opts: [nodelay: true]]
-    ]
-  ]
-```
-
-This configures the existing default production connection. It does not add a
-fourth named connection. Transactions also use it unless their pool selects a
-different connection.
-
 If bulk production shares the client, give urgent records their own producer and
 connection as shown in [Isolating workloads](#isolating-workloads).
 
@@ -192,12 +175,19 @@ config :my_app, MyApp.Client,
 | Higher `batchers_count`            | A batcher process saturates a core across many active partitions | Smaller batches and more processes; one partition still belongs to one batcher |
 | Higher `max_in_flight_requests`    | Waiting for acknowledgements leaves capacity unused              | More outstanding work and less opportunity to accumulate large batches         |
 | Larger `batch_size_bytes`          | The current batch size prevents efficient requests               | Larger payloads and memory use; broker limits still apply                      |
-| Positive `linger_ms`               | Small requests dominate and extra latency is acceptable          | Adds deliberate waiting; often unnecessary with dynamic batching               |
+| Positive `linger_ms`               | Requests carry few records, for example with several in flight   | Adds deliberate waiting; often unnecessary with dynamic batching               |
 
 The default producer has one batcher per broker. With three brokers,
 `batchers_count: 4` starts twelve batchers for that producer. Each batcher has its
 own in-flight allowance. These settings multiply concurrency; they are not
 client-wide limits.
+
+A broker answers one request per connection at a time, so requests in flight to
+the same broker wait for each other. With few records pending, each free slot
+sends a request of one or two records, and those requests queue at the broker.
+`linger_ms: 1` lets records accumulate for a millisecond instead. One batcher with
+one request in flight can also be faster; the `heavy_async_production` benchmark
+compares both.
 
 Keep `enable_idempotence: true` while tuning. Disabling it allows duplicate writes
 on retries and, with multiple requests in flight, can reorder records within a
@@ -223,7 +213,7 @@ config :my_app, MyApp.Client,
   connection: [
     bootstrap_servers: ["localhost:19092"],
     custom_connections: [
-      [name: :payments, socket_opts: [nodelay: true]]
+      [name: :payments]
     ]
   ],
   producers: [
@@ -578,7 +568,6 @@ runs Klife's defaults and a tuned profile, and can compare two Klife versions.
 | [Fetching and long polling](#fetching-and-long-polling)       | `long_poll_interference`                                                                                |
 | [Consumer throughput](#consumer-throughput)                   | `catchup_lag`                                                                                           |
 
-The tuned profiles set `nodelay: true` in the client's `socket_opts`, which applies
-to every connection, rather than only on the production connection as in
-[Latency-sensitive production](#latency-sensitive-production). Run a workload on
-hardware like yours before adopting its settings.
+The tuned profiles also set `nodelay: true`, now Klife's default, so that comparisons
+with older versions use it on both sides. Run a workload on hardware like yours
+before adopting its settings.

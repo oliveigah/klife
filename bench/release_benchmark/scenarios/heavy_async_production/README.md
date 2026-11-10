@@ -78,7 +78,9 @@ The `pipelined` variant runs only with the optimized profile. It tries the
 high-throughput example, four batchers and three in-flight requests per broker,
 with the rest of the optimized settings. Compare it with `callback`/optimized at
 the same level to see whether more batchers and pipelining help on your host.
-Nine cases run per version per sample.
+The `pipelined_linger` variant adds the guide's `linger_ms: 1`, which lets records
+accumulate when few are pending instead of leaving one per request.
+Twelve cases run per version per sample.
 
 Use `--profile default|optimized` and `--levels` to select variants. For sparse
 urgent events, use [latency-sensitive records](../latency_sensitive_records/README.md).

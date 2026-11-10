@@ -16,6 +16,8 @@ GitHub publication dates (UTC).
 
 ### Changed
 
+- Disable Nagle's algorithm by default: `socket_opts` now defaults to `[keepalive: true, nodelay: true]`. Klife writes each request in one call, so Nagle's algorithm had nothing to combine and only held back the end of large requests until the broker's delayed acknowledgement, up to 40 ms on Linux. Set `nodelay: false` to restore it.
+- Batchers send as soon as a request slot is free, instead of on the next millisecond timer tick. This raises throughput with one request in flight per broker. With several requests in flight and few records pending, requests now carry fewer records; set `linger_ms: 1` to let them accumulate.
 - Require Elixir 1.15 or later and upgrade `klife_protocol` from `~> 1.0` to `~> 2.1`.
 - Reduce connection and metadata overhead by receiving socket replies in groups, caching frequently used table names, and generating direct tuple/map conversions.
 - During a leader handoff, overlapping asynchronous or concurrent produce calls can reach the new leader in a different invocation order when a call is forwarded from the old batcher. Sequential synchronous calls retain their ordering guarantee.
@@ -24,6 +26,7 @@ GitHub publication dates (UTC).
 
 ### Fixed
 
+- `linger_ms` of producers and fetchers waited one millisecond longer than configured: `linger_ms: 1` waited 2 ms.
 - Fetches waiting for records (`max_wait_ms` above 0) no longer delay produce, heartbeat, offset commit and metadata requests to the same broker. They shared its TCP connections, which brokers answer in order, so each fetch could add up to `max_wait_ms` to them.
 - Clients with fetchers configured in `fetchers` (other than one named after the default fetcher) failed to start: every fetcher had the same supervisor child id.
 - Serialize records correctly when producer idempotence is disabled, including when using compression.

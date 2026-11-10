@@ -149,7 +149,7 @@ defmodule Klife.Connection.SystemTest do
         client_name: client_name,
         bootstrap_servers: ["localhost:19092", "localhost:29092"],
         custom_connections: [
-          [name: :custom, connection_count: 2, socket_opts: [nodelay: true]],
+          [name: :custom, connection_count: 2, socket_opts: [nodelay: false]],
           [name: :klife_fetch_connection, connection_count: 3]
         ]
       )
@@ -173,11 +173,11 @@ defmodule Klife.Connection.SystemTest do
         {{conn_name, broker_id}, Broker.get_connection(client_name, conn_name, broker_id, idx)}
       end
 
-    # Options a custom connection doesn't set are the client's: keepalive by default
+    # Options a custom connection doesn't set are the client's: keepalive and nodelay by default
     for {{conn_name, _broker_id}, conn} <- conns do
       {:ok, opts} = :inet.getopts(conn.socket, [:keepalive, :nodelay])
       assert opts[:keepalive]
-      assert opts[:nodelay] == (conn_name == :custom)
+      assert opts[:nodelay] == (conn_name != :custom)
     end
 
     # A request goes over the connection its caller names, and only that one

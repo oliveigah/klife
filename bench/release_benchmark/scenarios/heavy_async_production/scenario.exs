@@ -6,10 +6,11 @@ defmodule Klife.ReleaseBenchmark.Scenarios.HeavyAsyncProduction do
 
   def cases(config) do
     # "pipelined" tries the configuration guide's high-throughput example (more batchers and
-    # requests in flight) against the optimized profile's single batcher and request
+    # requests in flight) against the optimized profile's single batcher and request;
+    # "pipelined_linger" adds the guide's 1 ms linger for few pending records
     for {window, level} <- Enum.with_index([1, 32, 1_024], 1),
         level in config.levels,
-        variant <- ["callback", "pipelined"],
+        variant <- ["callback", "pipelined", "pipelined_linger"],
         profile <- config.profiles,
         variant == "callback" or profile == "optimized" do
       %{
@@ -39,6 +40,9 @@ defmodule Klife.ReleaseBenchmark.Scenarios.HeavyAsyncProduction do
       ],
       socket: [nodelay: true]
     }
+
+  def settings(%{variant: "pipelined_linger"} = c),
+    do: put_in(settings(%{c | variant: "pipelined"}), [:producer, :linger_ms], 1)
 
   def settings(_c),
     do: %{

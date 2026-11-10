@@ -120,8 +120,8 @@ You can declare more connections, for example to keep a latency-sensitive produc
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       custom_connections: [
-        # One producer's requests, sent without waiting to fill TCP packets
-        [name: :payments, socket_opts: [nodelay: true]],
+        # One producer's requests
+        [name: :payments],
         # One consumer group's heartbeats and commits
         [name: :payments_group],
         # Long polls, away from the other fetchers
@@ -161,7 +161,7 @@ A default connection is only created when no custom connection has its name. So 
       default_fetch_connection: :klife_default_connection,
       # Consumer groups and metadata refreshes use :control
       default_critical_connection: :control,
-      custom_connections: [[name: :control, socket_opts: [nodelay: true]]]
+      custom_connections: [[name: :control]]
     ]
 ```
 
