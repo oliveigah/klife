@@ -11,6 +11,8 @@ defmodule Klife.ProducerTest do
 
   alias Klife.Producer
 
+  alias Klife.Connection.Controller, as: ConnController
+
   doctest Klife.TxnProducerPool
 
   defp assert_resp_record(expected_record, response_record) do
@@ -38,6 +40,20 @@ defmodule Klife.ProducerTest do
 
   # Abort markers are written by the coordinator asynchronously, so the
   # record may not be readable right after the transaction ends.
+  defp wait_new_producer(producer_name, old_pid, attempts \\ 100) do
+    case Producer.get_pid(MyClient, producer_name) do
+      {pid, _} when pid != old_pid ->
+        :ok
+
+      _ when attempts > 0 ->
+        Process.sleep(50)
+        wait_new_producer(producer_name, old_pid, attempts - 1)
+
+      _ ->
+        {:error, :producer_not_restarted}
+    end
+  end
+
   defp wait_txn_status(rec, offset, status) do
     deadline = System.monotonic_time(:millisecond) + 10_000
     do_wait_txn_status(rec, offset, status, deadline)
@@ -1408,6 +1424,44 @@ defmodule Klife.ProducerTest do
     assert :ok = wait_txn_status(rec1, offset1, :aborted)
   end
 
+  @tag capture_log: true
+  test "txn produce message - a fenced transaction fails its records at once" do
+    # Partition without traffic from other tests, see the poison test above
+    rec = %Record{value: :rand.bytes(10), topic: "test_no_batch_topic", partition: 5}
+    producer_name = "klife_txn_producer.my_test_pool_1.1"
+    {producer_pid, _} = Producer.get_pid(MyClient, producer_name)
+    producer_state = :sys.get_state(producer_pid)
+    test_pid = self()
+
+    MyClient.transaction(
+      fn ->
+        # Another InitProducerId for the same transactional id bumps the epoch on the
+        # broker, which fences the epoch this transaction uses
+        %Producer{} = Producer.init_producer_id!(producer_state, producer_state.coordinator_id)
+
+        started = System.monotonic_time(:millisecond)
+        resp = MyClient.produce(rec)
+        send(test_pid, {:fenced_produce, resp, System.monotonic_time(:millisecond) - started})
+        resp
+      end,
+      pool_name: :my_test_pool_1
+    )
+
+    assert_received {:fenced_produce, {:error, %Record{error_code: error_code}}, elapsed_ms}
+    assert error_code in [47, 90]
+    assert elapsed_ms < 5_000
+
+    # The failed abort makes the pool restart the fenced producer, and the
+    # restarted one commits the next transaction on this worker
+    assert :ok = wait_new_producer(producer_name, producer_pid)
+
+    assert {:ok, {:ok, %Record{}}} =
+             MyClient.transaction(
+               fn -> {:ok, MyClient.produce(%{rec | value: :rand.bytes(10)})} end,
+               pool_name: :my_test_pool_1
+             )
+  end
+
   test "txn produce batch txn" do
     rec1 = %Record{
       value: :rand.bytes(10),
@@ -1503,5 +1557,36 @@ defmodule Klife.ProducerTest do
               %Record{value: ^rec7_val, error_code: 55},
               %Record{value: ^rec8_val, error_code: 3}
             ]} = MyClient.produce_batch_txn([rec7, rec8])
+  end
+
+  @tag capture_log: true
+  test "init producer id against a stale transaction coordinator finds the current one" do
+    state = %Producer{
+      client_name: MyClient,
+      name: "stale_coordinator_test_producer",
+      txn_id: "stale_coordinator_test_#{System.unique_integer([:positive])}",
+      txn_timeout_ms: 60_000,
+      connection: ConnController.get_default_connection(MyClient),
+      enable_idempotence: true
+    }
+
+    coordinator = Producer.maybe_find_coordinator(state)
+
+    %Producer{producer_id: producer_id, producer_epoch: epoch} =
+      Producer.init_producer_id!(state, coordinator)
+
+    wrong_coordinator =
+      MyClient
+      |> ConnController.get_known_brokers()
+      |> Enum.find(fn b -> b != coordinator end)
+
+    # The first InitProducerId gets NOT_COORDINATOR, and the retry asks the
+    # coordinator found again, well before the call gives up
+    new_state =
+      Task.await(Task.async(fn -> Producer.init_producer_id!(state, wrong_coordinator) end))
+
+    assert new_state.coordinator_id == coordinator
+    assert new_state.producer_id == producer_id
+    assert new_state.producer_epoch > epoch
   end
 end

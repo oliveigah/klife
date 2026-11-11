@@ -48,6 +48,12 @@ defmodule Simulator.Engine.EventExecutor do
     GenServer.call(via_tuple({__MODULE__}), :signal_shutdown, 120_000)
   end
 
+  # Stops the actions and undoes the faults still pending, so the drain at the end of
+  # a run waits on a healthy cluster with every consumer group member running
+  def drain_rollbacks do
+    GenServer.call(via_tuple({__MODULE__}), :drain_rollbacks, 300_000)
+  end
+
   @broker_count 3
   @broker_check_interval_ms :timer.seconds(1)
   @broker_check_timeout_ms :timer.seconds(90)
@@ -114,6 +120,24 @@ defmodule Simulator.Engine.EventExecutor do
   def handle_call(:signal_shutdown, _from, %__MODULE__{} = state) do
     Logger.info("EventExecutor: Shutdown signal received, stopping execute_loop")
     {:reply, :ok, %{state | shutting_down: true}}
+  end
+
+  @impl true
+  def handle_call(:drain_rollbacks, _from, %__MODULE__{} = state) do
+    Logger.info("EventExecutor: Drain started, stopping actions and rolling back faults")
+
+    state =
+      state.pending_rollbacks
+      |> Enum.sort_by(fn {time, _action, _args} -> time end)
+      |> Enum.reduce(%{state | shutting_down: true}, fn {_time, action, args}, acc ->
+        execute_rollback(action, args, acc)
+      end)
+
+    state = %{state | pending_rollbacks: []}
+    check_unexpected_broker_stops(state)
+    check_unexpected_consumer_group_stops(state)
+
+    {:reply, :ok, state}
   end
 
   @impl true

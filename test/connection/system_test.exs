@@ -173,11 +173,15 @@ defmodule Klife.Connection.SystemTest do
         {{conn_name, broker_id}, Broker.get_connection(client_name, conn_name, broker_id, idx)}
       end
 
-    # Options a custom connection doesn't set are the client's: keepalive and nodelay by default
+    # Options a custom connection doesn't set are the client's defaults
     for {{conn_name, _broker_id}, conn} <- conns do
-      {:ok, opts} = :inet.getopts(conn.socket, [:keepalive, :nodelay])
+      {:ok, opts} =
+        :inet.getopts(conn.socket, [:keepalive, :nodelay, :send_timeout, :send_timeout_close])
+
       assert opts[:keepalive]
       assert opts[:nodelay] == (conn_name != :custom)
+      assert opts[:send_timeout] == 15_000
+      assert opts[:send_timeout_close]
     end
 
     # A request goes over the connection its caller names, and only that one

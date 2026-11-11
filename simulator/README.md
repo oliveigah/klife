@@ -50,7 +50,11 @@ once every consumer group has started consuming its partition.
 Not checked: a record reported as failed that is written anyway. A consumed
 record with no tracked entry is accepted.
 
-Data is mounted directly into `simulator/simulations_data/<project>/<simulation>/`.
+Data is mounted directly into `<data dir>/<project>/<simulation>/`. The data dir is
+`--data-dir`, else `KLIFE_SIM_DATA_DIR`, else `~/.local/share/klife/simulations_data`
+(`$XDG_DATA_HOME/klife/simulations_data`). It stays outside the repository because
+Elixir language servers index every `.exs` under the project, and each run saves a
+large `config.exs`.
 The existing per-simulation config, runtime logs, events and invariant files stay
 there after cleanup. Each `config.exs` records simulator, broker and controller
 CPU/memory limits, Kafka heaps, Kafka version and simulator image in `resources`.
@@ -90,7 +94,7 @@ FORCE_STABLE=true SASL_MECHANISM=OAUTHBEARER mix simulate --parallel 2
 Replay a specific simulation from a specific worker:
 
 ```sh
-mix simulate --rerun simulations_data/<project>/<simulation>
+mix simulate --rerun ~/.local/share/klife/simulations_data/<project>/<simulation>
 ```
 
 This mounts the saved run read-only and runs its config and random seeds once in

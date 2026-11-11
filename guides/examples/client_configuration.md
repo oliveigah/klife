@@ -196,7 +196,9 @@ A component raises when it starts with a connection the client doesn't have.
 >   client starts, even if nothing uses them, and each authenticates on its own.
 > - Requests on the same connection still wait for each other. A fetcher with `max_wait_ms` above 0
 >   delays the other fetchers on its connection, and its own requests too: they all share the
->   connection's TCP connections. Give long-polling fetchers a connection of their own.
+>   connection's TCP connections. Give long-polling fetchers a connection of their own, and never
+>   point them at low traffic topics, which turns most fetches into held ones (see
+>   [Long polling](`m:Klife.Consumer.Fetcher#module-long-polling`)).
 > - Each process sending requests sticks to one TCP connection of a connection, chosen from its pid.
 >   A larger `connection_count` spreads the requests of many processes, not those of one.
 

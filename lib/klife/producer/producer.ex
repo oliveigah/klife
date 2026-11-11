@@ -571,49 +571,64 @@ defmodule Klife.Producer do
       raise "Producer idempotence feature is disabled but producer #{state.name} has idempotence enabled. Please check for API versions problems or disable idempotence on this producer (client=#{inspect(state.client_name)}, producer=#{state.name})"
     end
 
-    broker = maybe_find_coordinator(state)
+    init_producer_id!(state, maybe_find_coordinator(state))
+  end
 
+  # COORDINATOR_NOT_AVAILABLE (15) and NOT_COORDINATOR (16) mean the transaction
+  # coordinator moved, so the next attempt asks the one found again. On
+  # COORDINATOR_LOAD_IN_PROGRESS (14) the coordinator is right but still loading.
+  @coordinator_moved_codes [15, 16]
+
+  @doc false
+  def init_producer_id!(%__MODULE__{} = state, coordinator) do
     content = %{
       transactional_id: state.txn_id,
       transaction_timeout_ms: state.txn_timeout_ms
     }
 
-    fun = fn ->
-      case Broker.send_message(M.InitProducerId, state.client_name, broker, content, %{},
-             connection: state.connection
-           ) do
-        {:ok, %{content: %{error_code: 0, producer_id: producer_id, producer_epoch: p_epoch}}} ->
-          {producer_id, p_epoch}
+    {producer_id, p_epoch, coordinator} =
+      Helpers.with_timeout!(
+        coordinator,
+        fn broker ->
+          case Broker.send_message(M.InitProducerId, state.client_name, broker, content, %{},
+                 connection: state.connection
+               ) do
+            {:ok, %{content: %{error_code: 0, producer_id: producer_id, producer_epoch: p_epoch}}} ->
+              {producer_id, p_epoch, broker}
 
-        {:ok, %{content: %{error_code: ec}}} ->
-          Logger.error(
-            "#{inspect(M.InitProducerId)} failed with error code #{ec} (client=#{inspect(state.client_name)}, producer=#{state.name})",
-            client: state.client_name,
-            producer: state.name,
-            error_code: ec,
-            broker_id: broker
-          )
+            {:ok, %{content: %{error_code: ec}}} ->
+              Logger.error(
+                "#{inspect(M.InitProducerId)} failed with error code #{ec} (client=#{inspect(state.client_name)}, producer=#{state.name})",
+                client: state.client_name,
+                producer: state.name,
+                error_code: ec,
+                broker_id: broker
+              )
 
-          :retry
+              if ec in @coordinator_moved_codes,
+                do: {:retry, maybe_find_coordinator(state), {:error, ec}},
+                else: {:retry, {:error, ec}}
 
-        err ->
-          {:retry, err}
-      end
-    end
-
-    {producer_id, p_epoch} = Helpers.with_timeout!(fun, :timer.seconds(30))
+            # No answer may also mean the coordinator is gone
+            err ->
+              {:retry, maybe_find_coordinator(state), err}
+          end
+        end,
+        :timer.seconds(30)
+      )
 
     %__MODULE__{
       state
       | producer_id: producer_id,
         producer_epoch: p_epoch,
-        coordinator_id: broker
+        coordinator_id: coordinator
     }
   end
 
-  defp maybe_find_coordinator(%__MODULE__{txn_id: nil}), do: :any
+  @doc false
+  def maybe_find_coordinator(%__MODULE__{txn_id: nil}), do: :any
 
-  defp maybe_find_coordinator(%__MODULE__{txn_id: txn_id} = state) do
+  def maybe_find_coordinator(%__MODULE__{txn_id: txn_id} = state) do
     content =
       if MV.get(state.client_name, M.FindCoordinator) <= 3 do
         %{

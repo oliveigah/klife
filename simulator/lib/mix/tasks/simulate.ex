@@ -5,7 +5,11 @@ defmodule Mix.Tasks.Simulate do
   @moduledoc """
   Starts one isolated Compose project per parallel worker. Each worker uses the
   existing MultiRunner to run simulations sequentially and writes directly to
-  `simulations_data/<project>/`.
+  `<data dir>/<project>/`.
+
+  The data dir is `--data-dir`, else `KLIFE_SIM_DATA_DIR`, else
+  `$XDG_DATA_HOME/klife/simulations_data` (`~/.local/share/klife/simulations_data`).
+  It stays outside the repository so editors and language servers don't index runs.
 
       mix simulate --parallel 2 --simulator-cpus 2 --simulator-memory 2g
 
@@ -19,7 +23,7 @@ defmodule Mix.Tasks.Simulate do
     --no-build
 
   MultiRunner options: --run-seconds 900 --total-seconds 86400.
-  Replay: --rerun simulations_data/<project>/<simulation> runs that saved config
+  Replay: --rerun <data dir>/<project>/<simulation> runs that saved config
   once per worker, restoring its recorded Docker settings and run duration.
   Explicit Docker flags or --run-seconds override the saved values.
   Resource profiles choose a simulator CPU/memory pair once per worker. Without
@@ -55,6 +59,7 @@ defmodule Mix.Tasks.Simulate do
           random_resources: :boolean,
           resource_profile: :keep,
           rerun: :string,
+          data_dir: :string,
           no_build: :boolean,
           help: :boolean
         ]
@@ -80,6 +85,7 @@ defmodule Mix.Tasks.Simulate do
           {nil, nil}
         end
 
+      data_dir = data_dir(opts)
       parallel = Keyword.get(opts, :parallel, 1)
       saved_duration = if replay_config, do: replay_config.run_seconds
       run_seconds = Keyword.get(opts, :run_seconds, saved_duration || 900)
@@ -144,7 +150,7 @@ defmodule Mix.Tasks.Simulate do
                 env
               end
 
-            run_worker("klife-sim-#{batch}-#{index}", worker_env)
+            run_worker("klife-sim-#{batch}-#{index}", worker_env, data_dir)
           end,
           max_concurrency: parallel,
           timeout: :infinity,
@@ -153,12 +159,21 @@ defmodule Mix.Tasks.Simulate do
         |> Enum.to_list()
 
       unless Enum.all?(results, &(&1 == {:ok, :ok})),
-        do: Mix.raise("Simulation workers failed; see simulations_data/<project>/compose.log")
+        do: Mix.raise("Simulation workers failed; see #{data_dir}/<project>/compose.log")
     end
   end
 
-  defp run_worker(project, env) do
-    output = Path.join([@root, "simulations_data", project])
+  defp data_dir(opts) do
+    default =
+      Path.join(System.get_env("XDG_DATA_HOME") || Path.expand("~/.local/share"), "klife")
+
+    (opts[:data_dir] || System.get_env("KLIFE_SIM_DATA_DIR") ||
+       Path.join(default, "simulations_data"))
+    |> Path.expand()
+  end
+
+  defp run_worker(project, env, data_dir) do
+    output = Path.join(data_dir, project)
     File.mkdir_p!(output)
     env = [{"SIM_OUTPUT_DIR", output} | env]
     Mix.shell().info("Starting #{project}; data: #{output}")

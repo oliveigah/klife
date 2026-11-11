@@ -1,21 +1,33 @@
 defmodule Klife.Helpers do
   @moduledoc false
 
-  def with_timeout!(fun, timeout) do
+  def with_timeout!(fun, timeout) when is_function(fun, 0),
+    do: with_timeout!(nil, fn nil -> fun.() end, timeout)
+
+  # Calls fun with input until it returns something other than a retry, sleeping
+  # backoff_ms (an integer or a range to pick from) between attempts. `:retry` and
+  # `{:retry, error}` call it again with the same input, while
+  # `{:retry, next_input, error}` replaces the input, so each attempt may carry only
+  # what is still pending plus anything the caller refreshed.
+  def with_timeout!(input, fun, timeout, backoff_ms \\ 500..1000) when is_function(fun, 1) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    do_with_timeout!(deadline, fun)
+    do_with_timeout!(deadline, fun, input, backoff_ms, nil)
   end
 
-  defp do_with_timeout!(deadline, fun, last_error \\ nil) do
+  defp do_with_timeout!(deadline, fun, input, backoff_ms, last_error) do
     if System.monotonic_time(:millisecond) < deadline do
-      case fun.() do
+      case fun.(input) do
         :retry ->
-          Process.sleep(Enum.random(500..1000))
-          do_with_timeout!(deadline, fun, last_error)
+          backoff(backoff_ms)
+          do_with_timeout!(deadline, fun, input, backoff_ms, last_error)
 
         {:retry, error} ->
-          Process.sleep(Enum.random(500..1000))
-          do_with_timeout!(deadline, fun, error)
+          backoff(backoff_ms)
+          do_with_timeout!(deadline, fun, input, backoff_ms, error)
+
+        {:retry, next_input, error} ->
+          backoff(backoff_ms)
+          do_with_timeout!(deadline, fun, next_input, backoff_ms, error)
 
         val ->
           val
@@ -24,6 +36,9 @@ defmodule Klife.Helpers do
       raise "Timeout while waiting for broker response! Last error is: #{inspect(last_error)}"
     end
   end
+
+  defp backoff(ms) when is_integer(ms), do: Process.sleep(ms)
+  defp backoff(%Range{} = range), do: Process.sleep(Enum.random(range))
 
   def keyword_list_to_map(data) do
     if Keyword.keyword?(data), do: do_parse_kw_to_map(data), else: data

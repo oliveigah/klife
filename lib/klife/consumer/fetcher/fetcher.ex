@@ -47,7 +47,7 @@ defmodule Klife.Consumer.Fetcher do
       type: :non_neg_integer,
       default: 0,
       doc:
-        "Define for how long the broker may wait (for more records) before send a response to the client. Requests sent after this fetch on the same TCP connection wait for it, see [Long polling](#module-long-polling)."
+        "How long the broker may hold a fetch that finds no new records before it answers. Requests sent after this fetch on the same TCP connection wait for it. A value above 0 on a fetcher of low traffic topics is a misconfiguration, see [Long polling](#module-long-polling)."
     ],
     connection: [
       type: :atom,
@@ -127,15 +127,27 @@ defmodule Klife.Consumer.Fetcher do
 
   ## Long polling
 
-  With `max_wait_ms` above 0, a broker with no new records holds the fetch until records arrive
-  or `max_wait_ms` ends. Brokers answer the requests of a TCP connection in order, so meanwhile
-  every request sent after the fetch on that TCP connection waits.
+  With `max_wait_ms` above 0, a broker holds a fetch that finds no new records in any of its
+  partitions until records arrive or `max_wait_ms` ends. Brokers answer the requests of a TCP
+  connection in order, so meanwhile every request sent after the fetch on that TCP connection waits.
 
   Fetchers use the client's `default_fetch_connection` by default, so their long polls don't
   delay produce, heartbeat or commit requests. They still delay the other fetches on that
   connection, the fetcher's own included. A connection of its own (the `:connection` option)
   keeps a long-polling fetcher from delaying the other fetchers. See
   [Connections](guides/examples/client_configuration.md#connections).
+
+  > #### Low traffic topics {: .warning}
+  >
+  > A `max_wait_ms` above 0 on a fetcher of low traffic topics is a misconfiguration. Their fetches
+  > mostly find no new records, so the broker holds nearly every one for the full `max_wait_ms`, and
+  > each fetch queued behind them waits for all of them in turn. A fetch for a partition that has
+  > records can wait several times `max_wait_ms`, or longer than `request_timeout_ms`, in which case
+  > it fails and is retried. A connection of its own does not prevent this, because the fetcher's
+  > own requests still queue behind each other.
+  >
+  > For low traffic topics keep `max_wait_ms` at 0, and choose how soon new records are noticed
+  > with the consumer topic option `fetch_interval_ms`.
 
   ## Isolation level
 

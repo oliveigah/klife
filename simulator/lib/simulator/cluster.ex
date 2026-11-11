@@ -42,6 +42,17 @@ defmodule Simulator.Cluster do
     :ok
   end
 
+  def proc_net_tcp(service) do
+    {output, _status} =
+      System.cmd(
+        "docker",
+        ["exec", container_id(service), "cat", "/proc/net/tcp", "/proc/net/tcp6"],
+        stderr_to_stdout: true
+      )
+
+    output
+  end
+
   defp container_id(service) when service in ["controller1", "kafka1", "kafka2", "kafka3"] do
     case docker!([
            "ps",

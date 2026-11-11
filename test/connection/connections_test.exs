@@ -90,4 +90,31 @@ defmodule Klife.Connection.ConnectionsTest do
       TestGroup.start_link(opts)
     end
   end
+
+  # A write blocks while a peer reads nothing and the socket buffers are full
+  test "a write to a peer that stopped reading fails after send_timeout and closes the socket" do
+    {:ok, listen} = :gen_tcp.listen(0, active: false)
+    {:ok, port} = :inet.port(listen)
+
+    peer =
+      spawn(fn ->
+        {:ok, _socket} = :gen_tcp.accept(listen)
+        Process.sleep(:infinity)
+      end)
+
+    on_exit(fn -> Process.exit(peer, :kill) end)
+
+    opts = ConnController.get_opts()
+    connect_opts = opts[:connect_opts][:default]
+    socket_opts = Keyword.put(opts[:socket_opts][:default], :send_timeout, 200)
+    {:ok, conn} = Klife.Connection.new("localhost:#{port}", false, connect_opts, socket_opts, [])
+
+    chunk = :binary.copy(<<0>>, 64 * 1024)
+    writes = Stream.repeatedly(fn -> Klife.Connection.write(chunk, conn) end)
+    {elapsed_us, result} = :timer.tc(fn -> Enum.find(writes, &(&1 != :ok)) end)
+
+    assert result == {:error, :timeout}
+    assert elapsed_us < 5_000_000
+    assert Klife.Connection.write("x", conn) == {:error, :closed}
+  end
 end

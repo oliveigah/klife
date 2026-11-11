@@ -4,6 +4,7 @@ defmodule Klife.MetadataCacheTest do
   alias Klife.Record
   alias Klife.MetadataCache
   alias Klife.Connection.Controller, as: ConnController
+  alias Klife.Consumer.ConsumerGroup
 
   # The clients used here have periodic metadata checks disabled in practice
   # (10 minutes interval), so any cache heal observed after corrupting the
@@ -189,5 +190,38 @@ defmodule Klife.MetadataCacheTest do
     assert error_code in [3, 6, 100, 103, :unexpected_resp]
 
     assert :ok = wait_leader_heal(client, topic, partition, real_leader)
+  end
+
+  @tag capture_log: true
+  test "offset resets against a stale leader trigger a metadata refresh and succeed" do
+    # Module.concat prevents compile time resolution of the client module,
+    # which is only defined at runtime when the test runs.
+    client = Module.concat(__MODULE__, ResetOffsetClient)
+    Application.put_env(:klife, client, base_config())
+
+    defmodule ResetOffsetClient do
+      use Klife.Client, otp_app: :klife
+    end
+
+    start_supervised!(client)
+
+    topic = "test_no_batch_topic"
+    partition = 6
+    tconfig_map = %{topic => %{offset_reset_policy: :earliest}}
+    conn = ConnController.get_default_critical_connection(client)
+
+    reset_offset = fn ->
+      ConsumerGroup.get_reset_offset([{topic, partition}], client, conn, tconfig_map, "group")
+    end
+
+    expected = reset_offset.()
+    real_leader = corrupt_leader!(client, topic, partition)
+
+    # The first request goes to the wrong broker. Its error triggers the refresh, and
+    # the retry asks the leader found by it, well before the call gives up.
+    assert Task.await(Task.async(reset_offset), 10_000) == expected
+
+    assert MetadataCache.get_metadata_attribute(client, topic, partition, :leader_id) ==
+             real_leader
   end
 end

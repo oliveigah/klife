@@ -17,7 +17,9 @@ defmodule Simulator.Engine do
     producer_epochs: %{},
     # Since when each {client, topic, partition} has a producer leader on
     # another broker than its partition leader
-    leader_divergences: %{}
+    leader_divergences: %{},
+    # Producers stopped at the end of a run, waiting for consumers to catch up
+    draining: false
   ]
 
   def get_config, do: :persistent_term.get(:engine_config)
@@ -146,12 +148,21 @@ defmodule Simulator.Engine do
         }
       )
 
+    Simulator.Diag.install()
+
     GenServer.start_link(__MODULE__, args, name: __MODULE__)
   end
 
   def terminate() do
     GenServer.call(__MODULE__, :terminate, :infinity)
   end
+
+  def stop_producers(), do: GenServer.call(__MODULE__, :stop_producers, :infinity)
+
+  # Acknowledged records each group has not consumed yet, and records offered but
+  # neither acknowledged nor rolled back (their entry per group, so these count
+  # once per group)
+  def drain_status(), do: GenServer.call(__MODULE__, :drain_status, :infinity)
 
   @impl true
   def handle_call({:init_consumer_group, opts}, _from, %__MODULE__{} = state) do
@@ -183,18 +194,52 @@ defmodule Simulator.Engine do
   end
 
   @impl true
+  def handle_call(:stop_producers, _from, %__MODULE__{} = state) do
+    for {_id, pid, _type, [Simulator.Engine.Producer]} <-
+          DynamicSupervisor.which_children(state.sup_pid),
+        is_pid(pid),
+        do: :ok = Simulator.Engine.Producer.stop_producing(pid)
+
+    {:reply, :ok, %{state | draining: true}}
+  end
+
+  def handle_call(:drain_status, _from, %__MODULE__{config: config} = state) do
+    empty = Map.new(config.consumer_groups, fn %{name: cg} -> {cg, 0} end)
+
+    status =
+      for %{topic: t} <- config.topics,
+          p <- 0..(Map.fetch!(state.partition_counts, t) - 1),
+          reduce: %{acknowledged: empty, unconfirmed: 0} do
+        acc ->
+          :ets.foldl(
+            fn
+              {{_key, cg}, _hash, _insert_time, _offset, conf_ts}, acc when is_number(conf_ts) ->
+                update_in(acc, [:acknowledged, cg], &(&1 + 1))
+
+              _entry, acc ->
+                %{acc | unconfirmed: acc.unconfirmed + 1}
+            end,
+            acc,
+            producer_table_name(t, p)
+          )
+      end
+
+    {:reply, status, state}
+  end
+
+  @impl true
   def handle_call(:terminate, from, %__MODULE__{} = state) do
     :ok = Simulator.Engine.EventExecutor.force_rollbacks()
     :ok = DynamicSupervisor.stop(state.sup_pid, :normal)
 
     ts = :persistent_term.get(:simulation_timestamp)
-    :logger.remove_handler(:"engine_log_file_handler_#{ts}")
 
     :ok = Simulator.Cluster.save_logs(Path.relative("simulations_data/#{ts}/cluster.log"))
 
     # Need a last pass on the invariants_check_loopp in order
     # to guarantee that everything is properly save on files
     {:noreply, _} = handle_info(:invariants_check_loop, state)
+    :logger.remove_handler(:"engine_log_file_handler_#{ts}")
 
     case :ets.tab2list(:invariants_violations) do
       [] ->
@@ -267,7 +312,9 @@ defmodule Simulator.Engine do
 
       {last_count, occurrences} = Map.get(state.last_partition_produced_counts, {t, p}, {0, 0})
 
-      if last_count > 0 and current_count <= last_count and occurrences + 1 >= 20 do
+      # Stopped producers produce nothing on purpose
+      if not state.draining and last_count > 0 and current_count <= last_count and
+           occurrences + 1 >= 20 do
         insert_violation(:stale_producer, %{
           topic: t,
           partition: p,
@@ -312,6 +359,21 @@ defmodule Simulator.Engine do
         Enum.group_by(all_data, fn {{_key, cg}, _hash, _time, _offset, _conf_ts} -> cg end)
 
       for {cg, list_of_items} <- grouped_data do
+        waiting_ms =
+          for {_, _, _, offset, conf_ts} <- list_of_items,
+              is_number(conf_ts) and is_number(offset),
+              reduce: 0,
+              do: (acc -> max(acc, now - conf_ts))
+
+        if waiting_ms >= 15_000,
+          do:
+            Simulator.Diag.maybe_dump(%{
+              group: cg,
+              topic: t,
+              partition: p,
+              waiting_ms: waiting_ms
+            })
+
         Enum.filter(list_of_items, fn {{_key, cg}, _hash, _insert_time, offset, conf_ts} ->
           is_number(conf_ts) and is_number(offset) and
             (conf_ts < cg_latest_ts_map[cg] or now - conf_ts >= lag_threshold)

@@ -275,6 +275,16 @@ quiet partitions, at the cost of more requests when they remain empty. It does
 not pace normal consumption while records are available. Positive `max_wait_ms`
 can reduce empty responses, but held requests occupy their TCP connection.
 
+> #### Low traffic topics {: .warning}
+>
+> A positive `max_wait_ms` on a fetcher of low traffic topics is a
+> misconfiguration. The broker holds nearly every fetch of such topics for the
+> full `max_wait_ms`, and the fetches queued behind them on the same TCP
+> connection wait for each in turn, past `request_timeout_ms` when enough of
+> them queue up. Keep `max_wait_ms` at 0 for these topics and tune
+> `fetch_interval_ms` instead. See
+> [Long polling](`m:Klife.Consumer.Fetcher#module-long-polling`).
+
 For a long-polling group, give its fetcher a connection of its own if other
 fetchers need prompt responses. First declare it in the client configuration.
 

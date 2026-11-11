@@ -591,7 +591,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         state.cg_connection,
         %{
           state.topic_name => state.topic_config
-        }
+        },
+        state.cg_name
       )
 
     reset_offset = Map.fetch!(reset_offset_map, {state.topic_name, state.partition_idx})
