@@ -8,6 +8,7 @@ defmodule Klife.Connection.SystemTest do
   alias Klife.Connection
   alias Klife.Connection.MessageVersions, as: MV
   alias KlifeProtocol.Messages.ApiVersions
+  alias KlifeProtocol.Messages.Metadata
   alias Klife.ProcessRegistry
   alias Klife.Connection.Controller, as: ConnController
 
@@ -44,6 +45,114 @@ defmodule Klife.Connection.SystemTest do
     assert_receive({:async_broker_response, ^ref, binary_resp, ApiVersions, ^mv}, 1000)
 
     assert {:ok, %{content: ^resp_content}} = ApiVersions.deserialize_response(binary_resp, mv)
+  end
+
+  # Replay real broker responses, with socket failures before initial discovery.
+  # The successful attempt waits for the test to verify startup is still blocked.
+  defp start_bootstrap_peer(actions) do
+    {:ok, conn} = Connection.new("localhost:19092", false, [active: false], [], [])
+    request = ApiVersions.serialize_request(%{headers: %{correlation_id: 0}, content: %{}}, 0)
+    :ok = Connection.write(request, conn)
+    {:ok, api_versions} = Connection.read(conn)
+
+    request =
+      Metadata.serialize_request(%{headers: %{correlation_id: 0}, content: %{topics: []}}, 1)
+
+    :ok = Connection.write(request, conn)
+    {:ok, metadata} = Connection.read(conn)
+    Connection.close(conn)
+
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, packet: 4, active: false])
+    {:ok, port} = :inet.port(listener)
+    on_exit(fn -> :gen_tcp.close(listener) end)
+
+    parent = self()
+
+    peer =
+      start_supervised!({Task,
+       fn ->
+         for {action, index} <- Stream.with_index(actions) do
+           {:ok, socket} = :gen_tcp.accept(listener)
+
+           if index == 0 do
+             {:ok, <<18::16, 0::16, _rest::binary>>} = :gen_tcp.recv(socket, 0, 5_000)
+             :ok = :gen_tcp.send(socket, api_versions)
+           end
+
+           {:ok, <<3::16, 1::16, _rest::binary>>} = :gen_tcp.recv(socket, 0, 5_000)
+           send(parent, {:initial_metadata_request, index})
+
+           case action do
+             :close ->
+               :gen_tcp.close(socket)
+
+             :reply ->
+               receive do
+                 :reply -> :ok
+               end
+
+               :ok = :gen_tcp.send(socket, metadata)
+
+               # Continue answering periodic metadata checks after startup.
+               Stream.repeatedly(fn -> :gen_tcp.recv(socket, 0, 5_000) end)
+               |> Enum.reduce_while(:ok, fn
+                 {:ok, _request}, :ok -> {:cont, :gen_tcp.send(socket, metadata)}
+                 {:error, :closed}, :ok -> {:halt, :ok}
+               end)
+           end
+         end
+       end})
+
+    {port, peer}
+  end
+
+  test "retries initial discovery and waits for successful metadata before finishing startup", %{
+    test: test_name
+  } do
+    client_name = :"#{__MODULE__}.#{test_name}"
+    {port, peer} = start_bootstrap_peer([:close, :reply])
+
+    input =
+      controller_input(client_name: client_name, bootstrap_servers: ["localhost:#{port}"])
+
+    supervisor = start_supervised!({DynamicSupervisor, strategy: :one_for_one})
+
+    startup =
+      Task.async(fn -> DynamicSupervisor.start_child(supervisor, {ConnController, input}) end)
+
+    assert_receive {:initial_metadata_request, 0}, 1_000
+    assert Task.yield(startup, 0) == nil
+    assert_receive {:initial_metadata_request, 1}, 2_000
+    assert Task.yield(startup, 0) == nil
+    assert :persistent_term.get({:known_brokers_ids, client_name}, :missing) == :missing
+    assert :persistent_term.get({:cluster_controller, client_name}, :missing) == :missing
+
+    send(peer, :reply)
+    assert {:ok, pid} = Task.await(startup)
+    assert ConnController.get_known_brokers(client_name) != []
+    assert is_integer(ConnController.get_cluster_controller(client_name))
+    assert :sys.get_state(pid).bootstrap_conn != nil
+  end
+
+  test "fails startup when initial metadata retries exhaust the timeout", %{test: test_name} do
+    client_name = :"#{__MODULE__}.#{test_name}"
+    {port, _peer} = start_bootstrap_peer(Stream.cycle([:close]))
+
+    input =
+      controller_input(
+        client_name: client_name,
+        bootstrap_servers: ["localhost:#{port}"],
+        default_request_timeout_ms: 1_250
+      )
+
+    assert {:error, reason} = start_supervised({ConnController, input})
+    assert inspect(reason) =~ "Timeout while waiting for broker response"
+    assert inspect(reason) =~ ":closed"
+    assert inspect(reason) =~ inspect(client_name)
+    assert_receive {:initial_metadata_request, 0}
+    assert_receive {:initial_metadata_request, 1}
+    assert ProcessRegistry.registry_lookup({ConnController, client_name}) == []
+    assert :persistent_term.get({:known_brokers_ids, client_name}, :missing) == :missing
   end
 
   test "setup non ssl", %{test: test_name} do
