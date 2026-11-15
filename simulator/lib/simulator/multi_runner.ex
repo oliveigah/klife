@@ -13,6 +13,9 @@ defmodule Simulator.MultiRunner do
     :sup_pid,
     :run_timeout_ms,
     :total_timeout_ms,
+    :drain_timeout_ms,
+    # When the run's drain started: producers stopped, consumers catching up
+    :drain_started_at,
     failed: false
   ]
 
@@ -29,7 +32,8 @@ defmodule Simulator.MultiRunner do
       total_start_time: System.monotonic_time(:millisecond),
       sup_pid: sup_pid,
       run_timeout_ms: seconds_from_env!("RUN_SECONDS", 900),
-      total_timeout_ms: seconds_from_env!("TOTAL_SECONDS", 86_400)
+      total_timeout_ms: seconds_from_env!("TOTAL_SECONDS", 86_400),
+      drain_timeout_ms: seconds_from_env!("DRAIN_SECONDS", 120)
     }
 
     send(self(), :start_engine)
@@ -52,7 +56,14 @@ defmodule Simulator.MultiRunner do
       raise "Unexpected engine termination with reason #{inspect(reason)}"
     end
 
-    new_state = %{state | engine_pid: nil, engine_monitor_ref: nil, run_start_time: nil}
+    new_state = %{
+      state
+      | engine_pid: nil,
+        engine_monitor_ref: nil,
+        run_start_time: nil,
+        drain_started_at: nil
+    }
+
     {:noreply, new_state}
   end
 
@@ -119,9 +130,37 @@ defmodule Simulator.MultiRunner do
 
         {:noreply, %{state | failed: true}}
 
+      state.drain_started_at != nil ->
+        check_drain(state)
+
       run_elapsed >= state.run_timeout_ms ->
         Logger.info(
-          "MultiRunner run #{state.run_count}: Run timeout reached, stopping run ##{state.run_count}"
+          "MultiRunner run #{state.run_count}: Run timeout reached, draining run ##{state.run_count}"
+        )
+
+        :ok = Simulator.Engine.EventExecutor.drain_rollbacks()
+        :ok = Simulator.Engine.stop_producers()
+
+        Process.send_after(self(), :check_status, @check_interval_ms)
+        {:noreply, %{state | drain_started_at: System.monotonic_time(:millisecond)}}
+
+      true ->
+        Process.send_after(self(), :check_status, @check_interval_ms)
+        {:noreply, state}
+    end
+  end
+
+  # Every record a producer had acknowledged must reach every consumer group. Records
+  # offered but never acknowledged carry no such promise and are only reported
+  defp check_drain(%__MODULE__{} = state) do
+    %{acknowledged: acknowledged, unconfirmed: unconfirmed} = Simulator.Engine.drain_status()
+    drain_elapsed = System.monotonic_time(:millisecond) - state.drain_started_at
+    pending = acknowledged |> Map.values() |> Enum.sum()
+
+    cond do
+      pending == 0 ->
+        Logger.info(
+          "MultiRunner run #{state.run_count}: Drain complete in #{drain_elapsed} ms, every acknowledged record consumed by every group (unconfirmed offers: #{unconfirmed})"
         )
 
         :ok = Simulator.Engine.EventExecutor.signal_shutdown()
@@ -129,7 +168,22 @@ defmodule Simulator.MultiRunner do
 
         {:noreply, state}
 
+      drain_elapsed >= state.drain_timeout_ms ->
+        :ok =
+          Simulator.Engine.insert_violation(:not_drained, %{
+            drain_ms: drain_elapsed,
+            acknowledged_not_consumed: acknowledged,
+            unconfirmed: unconfirmed
+          })
+
+        Process.send_after(self(), :check_status, @check_interval_ms)
+        {:noreply, state}
+
       true ->
+        Logger.info(
+          "MultiRunner run #{state.run_count}: Draining for #{drain_elapsed} ms, acknowledged records not consumed yet: #{inspect(acknowledged)}"
+        )
+
         Process.send_after(self(), :check_status, @check_interval_ms)
         {:noreply, state}
     end

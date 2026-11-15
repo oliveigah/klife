@@ -17,7 +17,9 @@ defmodule Simulator.Engine.Producer do
     :record_value_bytes,
     :record_key_bytes,
     # Offset of the last record produced to each partition
-    last_offsets: %{}
+    last_offsets: %{},
+    # Set by the drain at the end of a run: no more produce loops
+    stopped: false
   ]
 
   @slow_produce_us :timer.seconds(10) * 1000
@@ -54,7 +56,17 @@ defmodule Simulator.Engine.Producer do
     GenServer.start_link(__MODULE__, args, name: via_tuple({__MODULE__, c, t, idx}))
   end
 
+  # Replies after the produce loop running now, if any, so every record offered
+  # before the reply is confirmed or rolled back
+  def stop_producing(pid), do: GenServer.call(pid, :stop_producing, :infinity)
+
   @impl true
+  def handle_call(:stop_producing, _from, %__MODULE__{} = state),
+    do: {:reply, :ok, %{state | stopped: true}}
+
+  @impl true
+  def handle_info(:produce_loop, %__MODULE__{stopped: true} = state), do: {:noreply, state}
+
   def handle_info(:produce_loop, %__MODULE__{} = state) do
     new_state =
       if MetadataCache.metadata_exists?(state.client, state.topic, 0) do

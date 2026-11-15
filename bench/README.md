@@ -37,6 +37,8 @@ timing boundaries, variants and tradeoffs.
 | [heavy_sync_production](release_benchmark/scenarios/heavy_sync_production/README.md) | Migration/import workers that wait for successful writes | Single API: 1 / 8 / 64 callers; batch API: 1 / 10 / 100 records with 16 callers | Completed records/s; call acknowledgment p99 |
 | [heavy_async_production](release_benchmark/scenarios/heavy_async_production/README.md) | Telemetry or export pipelines with bounded pending work | 1 / 32 / 1,024 outstanding records | Acknowledged records/s; callback p99 |
 | [latency_sensitive_records](release_benchmark/scenarios/latency_sensitive_records/README.md) | Urgent order/payment updates, alerts and interactive events | 10 / 100 / 1,000 records/s across three single-partition topics | Scheduled-send to acknowledgment and delivery p99 |
+| [long_poll_interference](release_benchmark/scenarios/long_poll_interference/README.md) | Producing while a group long-polls quiet topics | Idle fetch `max_wait_ms` 0 / 1,000 / 5,000 with 8 synchronous callers | Call acknowledgment p99; completed records/s |
+| [isolated_workloads](release_benchmark/scenarios/isolated_workloads/README.md) | Urgent records sharing a client with bulk production | 0 / 64 / 1,024 outstanding bulk records next to 100 urgent records/s | Urgent acknowledgment and delivery p99; bulk records/s |
 
 `--levels 1,2` selects a subset. Synchronous single and batch production are
 variants of one workload, in the same module. Shared/exclusive fetchers are
@@ -49,7 +51,14 @@ one partition each. All topics have replication factor two. Default values are
 explicit, so measurements focus on delivery rather than partitioner choice.
 MiB/s counts value bytes, excluding keys and Kafka protocol overhead.
 
-These are **workload version 2**, recorded in every run's configuration. Older
+Each workload matches a scenario of the [configuration guide](../guides/configuration.md):
+latency-sensitive production, high-throughput production (including the guide's
+pipelined example as a `heavy_async_production` variant), isolating workloads,
+fetching and long polling, and consumer throughput. Variants that need a client
+feature an older version lacks, such as `custom_connections` before 1.3.0, are
+skipped on that version and reported as candidate only.
+
+These are **workload version 3**, recorded in every run's configuration. Older
 reports keep their original scenario names, topology and timing. Use a fresh
 comparison to evaluate these changed workloads across Klife versions.
 
@@ -104,9 +113,10 @@ at callback entry, before application processing and commit confirmation.
 At sparse rates, short phases contain few tail samples; increase `--seconds`
 when collecting meaningful p99 numbers. Zero warmup can include group activation.
 
-The full suite has 42 combinations per version. With default phase durations and
-five samples, timed phases alone take about 15 minutes per version, plus setup
-and catch-up passes. Use `--samples 1` for shorter iterations or the smoke command
+The full suite has 69 combinations per version. With default phase durations and
+five samples, timed phases alone take about 30 minutes per version, plus setup,
+catch-up passes and consumer group activation in the long-poll and isolation
+workloads. Use `--samples 1` for shorter iterations or the smoke command
 above to check setup. Every workload validates completion counts; errors and
 unexpected/missing delivery or commit offsets fail the run.
 

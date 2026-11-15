@@ -11,6 +11,7 @@ defmodule Klife.ReleaseBenchmark.Report do
     :e2e_p95_ms,
     :e2e_p99_ms,
     :dispatch_p99_ms,
+    :bulk_records_s,
     :startup_ms,
     :catchup_ms,
     :delivery_drain_ms,
@@ -149,7 +150,7 @@ defmodule Klife.ReleaseBenchmark.Report do
 
   defp scenario_overview(config, groups) do
     header =
-      "\n## Scenario overview\n\nCounts refer to primary metrics: completion throughput and acknowledgment p99 for heavy production, catch-up time and delivery throughput for backlog recovery, acknowledgment and delivery p99 for latency-sensitive records.\n\n| Scenario | Assessment | Improved | Degraded | Unchanged | Inconclusive | Pending |\n|---|---|---:|---:|---:|---:|---:|\n"
+      "\n## Scenario overview\n\nCounts refer to primary metrics: completion throughput and acknowledgment p99 for heavy production, catch-up time and delivery throughput for backlog recovery, acknowledgment and delivery p99 for latency-sensitive records and for urgent records under bulk load (isolated workloads), throughput and acknowledgment p99 while other fetches long-poll. Cases the baseline cannot configure are candidate only.\n\n| Scenario | Assessment | Improved | Degraded | Unchanged | Inconclusive | Pending |\n|---|---|---:|---:|---:|---:|---:|\n"
 
     rows =
       for scenario <- config.scenarios do
@@ -221,7 +222,10 @@ defmodule Klife.ReleaseBenchmark.Report do
   end
 
   defp primary_metrics(%{kind: :consumer}), do: [:records_s, :catchup_ms]
-  defp primary_metrics(%{kind: :latency}), do: [:ack_p99_ms, :e2e_p99_ms]
+
+  defp primary_metrics(%{kind: kind}) when kind in [:latency, :isolation],
+    do: [:ack_p99_ms, :e2e_p99_ms]
+
   defp primary_metrics(_), do: [:records_s, :ack_p99_ms]
 
   defp result_status(samples, metric, config) do
@@ -236,6 +240,7 @@ defmodule Klife.ReleaseBenchmark.Report do
       :inconclusive in results -> :inconclusive
       :improved in results -> :improved
       :unchanged in results -> :unchanged
+      :candidate_only in results -> :candidate_only
       true -> :not_compared
     end
   end
@@ -245,6 +250,10 @@ defmodule Klife.ReleaseBenchmark.Report do
     {old, new} = populations(samples, metric)
 
     cond do
+      # Cases needing a client feature the baseline lacks (see Config.supported_features/0)
+      Enum.any?(samples, &(&1.version == "baseline" and &1.status == :unsupported)) ->
+        :candidate_only
+
       length(old) != expected or length(new) != expected ->
         :pending
 
@@ -417,7 +426,7 @@ defmodule Klife.ReleaseBenchmark.Report do
     cond do
       job[:error] -> :failed
       not Map.get(job, :complete, false) -> :incomplete
-      Enum.any?(job.results, &(&1.status != :ok)) -> :overloaded
+      Enum.any?(job.results, &(&1.status not in [:ok, :unsupported])) -> :overloaded
       true -> :complete
     end
   end

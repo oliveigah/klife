@@ -42,24 +42,50 @@ defmodule Klife.MetadataCache do
       triggered_check?: false
     }
 
+    # Producers and consumers start once the first check succeeds, so they find their
+    # partitions. A restarted cache finds the table of the previous one (see create_table/1)
+    # and keeps serving it while it retries
+    first_check =
+      case do_check_metadata(state) do
+        :ok ->
+          {:ok, state.check_interval_ms}
+
+        {:error, reason} ->
+          if :ets.info(metadata_table(state.client_name), :size) == 0 do
+            {:error, reason}
+          else
+            :ok = ConnController.trigger_brokers_verification_async(state.client_name)
+            {:ok, :timer.seconds(1)}
+          end
+      end
+
+    with {:ok, next_check_in_ms} <- first_check do
+      :ok = PubSub.subscribe({:cluster_change, args.client_name})
+
+      new_ref = Process.send_after(self(), :check_metadata, next_check_in_ms)
+
+      {:ok, %__MODULE__{state | next_check_ref: new_ref}}
+    else
+      {:error, reason} -> {:stop, {:metadata_unavailable, reason}}
+    end
+  end
+
+  # Called by the client's supervisor, which owns the table: every producer and consumer
+  # reads it, so it must not go away when this process restarts
+  def create_table(client_name) do
     # Built once: every produce call looks it up
-    table = :"metadata_cache.#{state.client_name}"
-    :persistent_term.put({__MODULE__, state.client_name, :table}, table)
+    table = :"metadata_cache.#{client_name}"
+    :persistent_term.put({__MODULE__, client_name, :table}, table)
 
-    :ets.new(table, [
-      :set,
-      :public,
-      :named_table,
-      read_concurrency: true
-    ])
+    ^table =
+      :ets.new(table, [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true
+      ])
 
-    :ok = do_check_metadata(state)
-
-    :ok = PubSub.subscribe({:cluster_change, args.client_name})
-
-    new_ref = Process.send_after(self(), :check_metadata, state.check_interval_ms)
-
-    {:ok, %__MODULE__{state | next_check_ref: new_ref}}
+    :ok
   end
 
   # Used to react to broker responses that indicate stale metadata (e.g.
@@ -91,8 +117,10 @@ defmodule Klife.MetadataCache do
         new_ref = Process.send_after(self(), :check_metadata, state.check_interval_ms)
         {:noreply, %__MODULE__{state | next_check_ref: new_ref, triggered_check?: false}}
 
+      # Not waiting for the cluster check: the controller may take long to answer
+      # while brokers are down, and the table keeps serving meanwhile
       {:error, _} ->
-        :ok = ConnController.trigger_brokers_verification(state.client_name)
+        :ok = ConnController.trigger_brokers_verification_async(state.client_name)
 
         new_ref = Process.send_after(self(), :check_metadata, :timer.seconds(1))
         {:noreply, %__MODULE__{state | next_check_ref: new_ref, triggered_check?: false}}

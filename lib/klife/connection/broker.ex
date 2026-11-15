@@ -122,11 +122,31 @@ defmodule Klife.Connection.Broker do
     # so the previous draining connection is closed by now
     %__MODULE__{draining_conn: nil} = state
 
-    {:ok, conn} = open_conn(state)
+    case open_conn(state) do
+      {:ok, conn} ->
+        Process.send_after(
+          self(),
+          {:close_draining, socket},
+          Connection.drain_ms(state.client_name)
+        )
 
-    Process.send_after(self(), {:close_draining, socket}, Connection.drain_ms(state.client_name))
+        {:noreply, activate_conn(%__MODULE__{state | draining_conn: old}, conn)}
 
-    {:noreply, activate_conn(%__MODULE__{state | draining_conn: old}, conn)}
+      # The broker may be down. The current connection stays until the next attempt
+      # replaces it, or until it closes and a reconnection does
+      {:error, reason} ->
+        Logger.warning(
+          "Could not open a connection to re-authenticate with broker #{state.broker_id} on host #{state.url}, will retry: #{inspect(reason)} (client=#{inspect(state.client_name)}, connection=#{inspect(state.connection_name)})",
+          client: state.client_name,
+          connection: state.connection_name,
+          broker_id: state.broker_id,
+          host: state.url,
+          reason: inspect(reason)
+        )
+
+        Process.send_after(self(), {:reauth, socket}, :timer.seconds(1))
+        {:noreply, state}
+    end
   end
 
   # Set for a connection that was replaced by a reconnection meanwhile
@@ -187,57 +207,58 @@ defmodule Klife.Connection.Broker do
     conn_name =
       Keyword.get_lazy(opts, :connection, fn -> Controller.get_default_connection(client_name) end)
 
-    conn = get_connection(client_name, conn_name, broker_id)
-    true = Controller.insert_in_flight(client_name, correlation_id)
+    with {:ok, conn} <- fetch_connection(message_mod, client_name, conn_name, broker_id) do
+      true = Controller.insert_in_flight(client_name, correlation_id)
 
-    timeout =
-      Keyword.get(opts, :timeout_ms, Controller.get_default_request_timeout_ms(client_name))
+      timeout =
+        Keyword.get(opts, :timeout_ms, Controller.get_default_request_timeout_ms(client_name))
 
-    case Connection.write(raw_data, conn) do
-      :ok ->
-        # The receive must be selective on the correlation id, otherwise a
-        # response that arrives after a previous call of this process timed
-        # out could be consumed here as if it belonged to this request.
-        receive do
-          {:broker_response, ^correlation_id, response} ->
-            message_mod.deserialize_response(response, msg_version)
-        after
-          timeout ->
-            case Controller.take_from_in_flight(client_name, correlation_id) do
-              nil ->
-                # The broker process took the in flight entry first, which
-                # means the response is being routed to this process right
-                # now. Reap it here, otherwise it would stay on the mailbox
-                # until a future call selectively receives it.
-                receive do
-                  {:broker_response, ^correlation_id, response} ->
-                    message_mod.deserialize_response(response, msg_version)
-                after
-                  1000 ->
-                    log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn)
-                    {:error, :timeout}
-                end
+      case Connection.write(raw_data, conn) do
+        :ok ->
+          # The receive must be selective on the correlation id, otherwise a
+          # response that arrives after a previous call of this process timed
+          # out could be consumed here as if it belonged to this request.
+          receive do
+            {:broker_response, ^correlation_id, response} ->
+              message_mod.deserialize_response(response, msg_version)
+          after
+            timeout ->
+              case Controller.take_from_in_flight(client_name, correlation_id) do
+                nil ->
+                  # The broker process took the in flight entry first, which
+                  # means the response is being routed to this process right
+                  # now. Reap it here, otherwise it would stay on the mailbox
+                  # until a future call selectively receives it.
+                  receive do
+                    {:broker_response, ^correlation_id, response} ->
+                      message_mod.deserialize_response(response, msg_version)
+                  after
+                    1000 ->
+                      log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn)
+                      {:error, :timeout}
+                  end
 
-              _entry ->
-                log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn)
-                {:error, :timeout}
-            end
-        end
+                _entry ->
+                  log_sync_timeout(message_mod, client_name, conn_name, broker_id, conn)
+                  {:error, :timeout}
+              end
+          end
 
-      {:error, reason} ->
-        Controller.take_from_in_flight(client_name, correlation_id)
+        {:error, reason} ->
+          Controller.take_from_in_flight(client_name, correlation_id)
 
-        Logger.error(
-          "Error sending #{inspect(message_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
-          client: client_name,
-          connection: conn_name,
-          broker_id: broker_id,
-          host: conn.host,
-          message: inspect(message_mod),
-          reason: inspect(reason)
-        )
+          Logger.error(
+            "Error sending #{inspect(message_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
+            client: client_name,
+            connection: conn_name,
+            broker_id: broker_id,
+            host: conn.host,
+            message: inspect(message_mod),
+            reason: inspect(reason)
+          )
 
-        {:error, reason}
+          {:error, reason}
+      end
     end
   end
 
@@ -255,48 +276,48 @@ defmodule Klife.Connection.Broker do
     conn_name =
       Keyword.get_lazy(opts, :connection, fn -> Controller.get_default_connection(client_name) end)
 
-    conn = get_connection(client_name, conn_name, broker_id)
+    with {:ok, conn} <- fetch_connection(msg_mod, client_name, conn_name, broker_id) do
+      callback_pid = Keyword.get(opts, :callback_pid)
+      callback_ref = Keyword.get(opts, :callback_ref)
 
-    callback_pid = Keyword.get(opts, :callback_pid)
-    callback_ref = Keyword.get(opts, :callback_ref)
+      timeout_ms =
+        Keyword.get(opts, :timeout_ms, Controller.get_default_request_timeout_ms(client_name))
 
-    timeout_ms =
-      Keyword.get(opts, :timeout_ms, Controller.get_default_request_timeout_ms(client_name))
+      timeout_ref =
+        if callback_pid != nil do
+          Process.send_after(
+            callback_pid,
+            {:async_broker_response, callback_ref, :timeout},
+            timeout_ms
+          )
+        end
 
-    timeout_ref =
-      if callback_pid != nil do
-        Process.send_after(
-          callback_pid,
-          {:async_broker_response, callback_ref, :timeout},
-          timeout_ms
-        )
+      in_flight_data =
+        if callback_pid,
+          do: {callback_pid, callback_ref, msg_mod, msg_version, timeout_ref},
+          else: :noop
+
+      true = Controller.insert_in_flight(client_name, correlation_id, in_flight_data)
+
+      case Connection.write(raw_data, conn) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Controller.take_from_in_flight(client_name, correlation_id)
+
+          Logger.error(
+            "Error sending async #{inspect(msg_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
+            client: client_name,
+            connection: conn_name,
+            broker_id: broker_id,
+            host: conn.host,
+            message: inspect(msg_mod),
+            reason: inspect(reason)
+          )
+
+          {:error, reason}
       end
-
-    in_flight_data =
-      if callback_pid,
-        do: {callback_pid, callback_ref, msg_mod, msg_version, timeout_ref},
-        else: :noop
-
-    true = Controller.insert_in_flight(client_name, correlation_id, in_flight_data)
-
-    case Connection.write(raw_data, conn) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Controller.take_from_in_flight(client_name, correlation_id)
-
-        Logger.error(
-          "Error sending async #{inspect(msg_mod)} to broker #{broker_id}: #{inspect(reason)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
-          client: client_name,
-          connection: conn_name,
-          broker_id: broker_id,
-          host: conn.host,
-          message: inspect(msg_mod),
-          reason: inspect(reason)
-        )
-
-        {:error, reason}
     end
   end
 
@@ -408,16 +429,36 @@ defmodule Klife.Connection.Broker do
     get_connection(client_name, conn_name, broker_id, bidx)
   end
 
+  # nil when there is still no connection after the controller checked the cluster:
+  # the broker left it, or no attempt to connect to it succeeded yet
   def get_connection(client_name, conn_name, broker_id, bidx) do
     key = {__MODULE__, client_name, conn_name, broker_id, bidx}
 
-    case :persistent_term.get(key, :not_found) do
-      :not_found ->
-        :ok = Controller.trigger_brokers_verification(client_name)
-        :persistent_term.get(key)
+    case :persistent_term.get(key, nil) do
+      nil ->
+        _ = Controller.trigger_brokers_verification(client_name)
+        :persistent_term.get(key, nil)
 
       %Connection{} = conn ->
         conn
+    end
+  end
+
+  defp fetch_connection(message_mod, client_name, conn_name, broker_id) do
+    case get_connection(client_name, conn_name, broker_id) do
+      %Connection{} = conn ->
+        {:ok, conn}
+
+      nil ->
+        Logger.error(
+          "No connection to broker #{inspect(broker_id)} to send #{inspect(message_mod)} (client=#{inspect(client_name)}, connection=#{inspect(conn_name)})",
+          client: client_name,
+          connection: conn_name,
+          broker_id: broker_id,
+          message: inspect(message_mod)
+        )
+
+        {:error, :no_connection}
     end
   end
 

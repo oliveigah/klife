@@ -16,6 +16,8 @@ GitHub publication dates (UTC).
 
 ### Changed
 
+- Disable Nagle's algorithm by default: the `socket_opts` defaults now include `nodelay: true`. Klife writes each request in one call, so Nagle's algorithm had nothing to combine and only held back the end of large requests until the broker's delayed acknowledgement, up to 40 ms on Linux. Set `nodelay: false` to restore it.
+- Batchers send as soon as a request slot is free, instead of on the next millisecond timer tick. This raises throughput with one request in flight per broker. With several requests in flight and few records pending, requests now carry fewer records; set `linger_ms: 1` to let them accumulate.
 - Require Elixir 1.15 or later and upgrade `klife_protocol` from `~> 1.0` to `~> 2.1`.
 - Reduce connection and metadata overhead by receiving socket replies in groups, caching frequently used table names, and generating direct tuple/map conversions.
 - During a leader handoff, overlapping asynchronous or concurrent produce calls can reach the new leader in a different invocation order when a call is forwarded from the old batcher. Sequential synchronous calls retain their ordering guarantee.
@@ -24,6 +26,12 @@ GitHub publication dates (UTC).
 
 ### Fixed
 
+- A write to a broker that stopped reading no longer waits forever: `socket_opts` now defaults to `send_timeout: 15_000` and `send_timeout_close: true`, so after 15 s the write fails, the connection closes and reconnects. A consumer group member could block on such a write while fetching its initial offsets, stop heartbeating and leave its new partitions unconsumed until the broker removed it from the group.
+- Revoked consumers no longer process new records while they wait for their pending commits. They kept fetching and processing, so a busy partition reached the 10 second revocation deadline with commits still pending, and its new owner processed those records again.
+- A consumer group member no longer leaves its new partitions unconsumed for up to twice `default_request_timeout_ms` when a partition leader or the group coordinator changes while it looks up their starting offsets. Each retry now asks again only for the partitions that failed, sends them to their current leaders after refreshing the metadata on a stale leader error, finds the coordinator again after a coordinator error, and failed lookups are logged.
+- A transactional producer that starts while its transaction coordinator moves no longer retries the old coordinator for 30 seconds and then crashes. After a coordinator error or a failed request, it finds the coordinator again before the next attempt.
+- Producing in a fenced transaction now fails its records at once with the fencing error code (`INVALID_PRODUCER_EPOCH` or `PRODUCER_FENCED`), instead of retrying to add their partitions for 10 seconds and then raising. Retries of that step now resend only the partitions that failed, log each error other than `CONCURRENT_TRANSACTIONS` once, and the timeout error includes the last errors.
+- `linger_ms` of producers and fetchers waited one millisecond longer than configured: `linger_ms: 1` waited 2 ms.
 - Fetches waiting for records (`max_wait_ms` above 0) no longer delay produce, heartbeat, offset commit and metadata requests to the same broker. They shared its TCP connections, which brokers answer in order, so each fetch could add up to `max_wait_ms` to them.
 - Clients with fetchers configured in `fetchers` (other than one named after the default fetcher) failed to start: every fetcher had the same supervisor child id.
 - Serialize records correctly when producer idempotence is disabled, including when using compression.

@@ -4,4 +4,5 @@
 **/simulations_data
 doc
 tmp
+.tmp
 erl_crash.dump

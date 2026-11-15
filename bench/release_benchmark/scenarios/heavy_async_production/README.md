@@ -67,11 +67,20 @@ measurement. Errors, duplicate callbacks or missing completions fail the run.
 
 ## Configuration variants
 
-Both profiles run at all three levels: six cases per version per sample.
-**Default** uses the tested version's built-in producer settings. **Optimized**
-uses one batcher and one in-flight request per broker, zero linger, a
-1,000,000-byte internal batch limit, and TCP_NODELAY. These settings favor
-combining outstanding records while retaining acknowledgments and idempotence.
+The `callback` variant runs both profiles at all three levels. **Default** uses
+the tested version's built-in producer settings. **Optimized** uses one batcher
+and one in-flight request per broker, zero linger, a 1,000,000-byte internal
+batch limit, and TCP_NODELAY. These settings favor combining outstanding records
+while retaining acknowledgments and idempotence.
+
+The `pipelined` variant runs only with the optimized profile. It tries the
+[configuration guide's](../../../../guides/configuration.md#high-throughput-production)
+high-throughput example, four batchers and three in-flight requests per broker,
+with the rest of the optimized settings. Compare it with `callback`/optimized at
+the same level to see whether more batchers and pipelining help on your host.
+The `pipelined_linger` variant adds the guide's `linger_ms: 1`, which lets records
+accumulate when few are pending instead of leaving one per request.
+Twelve cases run per version per sample.
 
 Use `--profile default|optimized` and `--levels` to select variants. For sparse
 urgent events, use [latency-sensitive records](../latency_sensitive_records/README.md).

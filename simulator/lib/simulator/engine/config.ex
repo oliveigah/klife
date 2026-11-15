@@ -420,7 +420,7 @@ defmodule Simulator.EngineConfig do
   end
 
   defp random_value({:exclusive_fetcher, :max_wait_ms}, base_val) do
-    weighted_random_opt([{5, base_val}, 0, 100, 500, 1000, 5000])
+    weighted_random_opt([{5, base_val}, 0, 100, 500])
   end
 
   defp random_value({:exclusive_fetcher, :max_bytes_per_request}, base_val) do

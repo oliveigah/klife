@@ -591,7 +591,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
         state.cg_connection,
         %{
           state.topic_name => state.topic_config
-        }
+        },
+        state.cg_name
       )
 
     reset_offset = Map.fetch!(reset_offset_map, {state.topic_name, state.partition_idx})
@@ -614,6 +615,8 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :batcher_down,
     :broker_removed,
     :unexpected_resp,
+    :closed,
+    :no_connection,
     -1,
     3,
     5,

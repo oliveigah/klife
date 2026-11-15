@@ -2,6 +2,10 @@
 
 Here are some client configuration examples.
 
+For help choosing settings for a workload, see the
+[configuration guide](../configuration.md). It covers latency, throughput,
+isolation, consumer buffering, transactions and deployment tradeoffs.
+
 ## Simplest configuration
 
 ```elixir
@@ -116,8 +120,8 @@ You can declare more connections, for example to keep a latency-sensitive produc
     connection: [
       bootstrap_servers: ["localhost:19092", "localhost:29092"],
       custom_connections: [
-        # One producer's requests, sent without waiting to fill TCP packets
-        [name: :payments, socket_opts: [nodelay: true]],
+        # One producer's requests
+        [name: :payments],
         # One consumer group's heartbeats and commits
         [name: :payments_group],
         # Long polls, away from the other fetchers
@@ -157,7 +161,7 @@ A default connection is only created when no custom connection has its name. So 
       default_fetch_connection: :klife_default_connection,
       # Consumer groups and metadata refreshes use :control
       default_critical_connection: :control,
-      custom_connections: [[name: :control, socket_opts: [nodelay: true]]]
+      custom_connections: [[name: :control]]
     ]
 ```
 
@@ -192,7 +196,9 @@ A component raises when it starts with a connection the client doesn't have.
 >   client starts, even if nothing uses them, and each authenticates on its own.
 > - Requests on the same connection still wait for each other. A fetcher with `max_wait_ms` above 0
 >   delays the other fetchers on its connection, and its own requests too: they all share the
->   connection's TCP connections. Give long-polling fetchers a connection of their own.
+>   connection's TCP connections. Give long-polling fetchers a connection of their own, and never
+>   point them at low traffic topics, which turns most fetches into held ones (see
+>   [Long polling](`m:Klife.Consumer.Fetcher#module-long-polling`)).
 > - Each process sending requests sticks to one TCP connection of a connection, chosen from its pid.
 >   A larger `connection_count` spreads the requests of many processes, not those of one.
 
@@ -278,11 +284,11 @@ On this client, the records produced to `my_topic_0` without a specific partitio
     txn_pools: [
       [name: :my_txn_pool, base_txn_id: "my_custom_base_txn_id"],
       [name: :my_txn_pool_2, txn_timeout_ms: :timer.seconds(120)]
-    ]
+    ],
     topics: [[name: "my_topic_0"]]
 ```
 
-This client will have a total of 3 txn pools, the default one plus the other two defined in the configuration. You can see all the configuration options for the producers in `Klife.TxnProducerPool`.
+This client will have two txn pools. `:my_txn_pool` is the selected default, so Klife does not add another pool. You can see all the configuration options for the pools in `Klife.TxnProducerPool`.
 
 ## Using custom default producer, partitioner and txn pool
 

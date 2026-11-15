@@ -2,6 +2,8 @@ defmodule Klife.Consumer.ConsumerGroupTest do
   use ExUnit.Case, async: false
 
   alias Klife.Record
+  alias Klife.Connection.Controller, as: ConnController
+  alias Klife.Consumer.ConsumerGroup
 
   alias Klife.TestUtils
 
@@ -115,6 +117,27 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
       true ->
         flunk("timed out waiting for assignment of #{inspect(expected_tps)}")
+    end
+  end
+
+  defp wait_for_assigned_count(mod, cg, count, timeout \\ 15_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_assigned_count(mod, cg, count, deadline)
+  end
+
+  defp do_wait_for_assigned_count(mod, cg, count, deadline) do
+    assigned = mod.assigned_partitions(cg)
+
+    cond do
+      length(assigned) == count ->
+        assigned
+
+      System.monotonic_time(:millisecond) < deadline ->
+        Process.sleep(50)
+        do_wait_for_assigned_count(mod, cg, count, deadline)
+
+      true ->
+        flunk("timed out waiting for #{count} assigned partitions, got #{inspect(assigned)}")
     end
   end
 
@@ -1016,6 +1039,50 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     {:ok, _new_boker_id} = TestUtils.start_broker(broker_name, MyClient)
   end
 
+  @tag capture_log: true
+  test "offset init against a stale coordinator finds the current one and succeeds", _ctx do
+    parent_pid = self()
+
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use CGTest, parent_pid: parent_pid
+    end
+
+    [topic] = create_test_topics(1, partitions: 2)
+    cg_name = Base.encode16(:rand.bytes(10))
+
+    cg_pid = start_supervised!({mod_name, [topics: [[name: topic]], group_name: cg_name]})
+
+    for p <- [0, 1] do
+      assert_receive {^mod_name, :started_consumer, ^topic, ^p, ^cg_name}, 15_000
+    end
+
+    state = :sys.get_state(cg_pid)
+
+    tid_p_list =
+      for %{topic_id: t_id, partitions: partitions} <- state.assigned_topic_partitions,
+          p <- partitions,
+          do: {t_id, p}
+
+    {expected, _state} = ConsumerGroup.get_init_offsets(state, tid_p_list)
+
+    wrong_coordinator =
+      MyClient
+      |> ConnController.get_known_brokers()
+      |> Enum.find(fn b -> b != state.coordinator_id end)
+
+    stale_state = %{state | coordinator_id: wrong_coordinator}
+
+    # The first OffsetFetch gets NOT_COORDINATOR, and the retry asks the coordinator
+    # found again, well before the call gives up
+    {offsets, new_state} =
+      Task.await(Task.async(fn -> ConsumerGroup.get_init_offsets(stale_state, tid_p_list) end))
+
+    assert offsets == expected
+    assert new_state.coordinator_id == state.coordinator_id
+  end
+
   test "basic consume test - multiple groups same module", ctx do
     parent_pid = self()
 
@@ -1234,6 +1301,83 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     assert_pull_empty_for(mod_name, cg_name, topic1, 0, 2_000)
   end
 
+  test "consumer retries a missing broker connection without redelivering uncommitted records" do
+    parent_pid = self()
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    [topic] = create_test_topics(1, partitions: 1)
+    cg_name = Base.encode16(:rand.bytes(10))
+
+    consumer_opts = [
+      topics: [[name: topic, mode: :manual, fetch_interval_ms: 100]],
+      fetch_strategy: {:exclusive, [connection: :test_fetcher_connection]},
+      group_name: cg_name
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, restart: :temporary)
+    assert_receive {^mod_name, :started_consumer, ^topic, 0, ^cg_name}, 5_000
+
+    {:ok, first} = MyClient.produce(%Record{topic: topic, partition: 0, value: "first"})
+    assert [pulled] = pull_until_records(mod_name, cg_name, topic, 0)
+    assert pulled.offset == first.offset
+
+    topic_id = Klife.MetadataCache.get_metadata_attribute(MyClient, topic, 0, :topic_id)
+
+    consumer_name =
+      Klife.Consumer.ConsumerGroup.Consumer.get_process_name(
+        MyClient,
+        mod_name,
+        topic_id,
+        0,
+        cg_name
+      )
+
+    consumer_pid = GenServer.whereis(consumer_name)
+    leader_id = Klife.MetadataCache.get_metadata_attribute(MyClient, topic, 0, :leader_id)
+    connection_key = {Klife.Connection.Broker, MyClient, :test_fetcher_connection, leader_id, 0}
+    connection = :persistent_term.get(connection_key)
+
+    # Exercise the real broker -> dispatcher -> consumer error path, leaving
+    # group coordination and production on their separate connections.
+    :erlang.trace(consumer_pid, true, [:receive])
+
+    try do
+      :persistent_term.erase(connection_key)
+
+      assert_receive {:trace, ^consumer_pid, :receive,
+                      {:klife_fetch_response, {^topic, 0, retry_offset}, {:error, :no_connection}}},
+                     5_000
+
+      assert retry_offset == first.offset + 1
+      state = :sys.get_state(consumer_pid)
+      assert state.latest_processed_offset == first.offset
+      assert state.latest_committed_offset < first.offset
+    after
+      :persistent_term.put(connection_key, connection)
+    end
+
+    {:ok, next} = MyClient.produce(%Record{topic: topic, partition: 0, value: "next"})
+    next_offset = next.offset
+
+    # Wait for the consumer's own retry before pulling, since an empty pull
+    # can also trigger a fetch.
+    assert_receive {:trace, ^consumer_pid, :receive,
+                    {:klife_fetch_response, {^topic, 0, ^next_offset},
+                     {:ok, [%Record{offset: ^next_offset}]}}},
+                   5_000
+
+    :erlang.trace(consumer_pid, false, [:receive])
+    assert [resumed] = pull_until_records(mod_name, cg_name, topic, 0)
+    assert resumed.offset == next.offset
+    assert GenServer.whereis(consumer_name) == consumer_pid
+    assert Process.alive?(consumer_pid)
+    assert :ok = mod_name.commit(cg_name, topic, 0, next.offset)
+  end
+
   test "manual mode: pull delivers records and commit is persisted across restart", ctx do
     parent_pid = self()
     mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
@@ -1298,6 +1442,74 @@ defmodule Klife.Consumer.ConsumerGroupTest do
 
     resumed = pull_until_records(mod_name, cg_name, topic1, 0)
     assert Enum.map(resumed, & &1.offset) == [r4.offset]
+  end
+
+  @tag capture_log: true
+  test "manual mode: a revoked consumer delivers nothing while it waits for its commits", _ctx do
+    parent_pid = self()
+    mod_name1 = :"#{:rand.bytes(10) |> Base.encode16()}"
+    mod_name2 = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name1 do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    defmodule mod_name2 do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    [topic1] = create_test_topics(1, partitions: 2)
+
+    consumer_opts = [
+      topics: [
+        [name: topic1, mode: :manual, fetch_strategy: {:exclusive, []}]
+      ],
+      group_name: Base.encode16(:rand.bytes(10))
+    ]
+
+    cg_name = consumer_opts[:group_name]
+
+    start_supervised!({mod_name1, consumer_opts}, id: :mcg1, restart: :temporary)
+
+    for p <- 0..1 do
+      assert_receive {^mod_name1, :started_consumer, ^topic1, ^p, ^cg_name}, 5_000
+    end
+
+    [{:ok, _}, {:ok, _}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: 0, value: :rand.bytes(10)},
+        %Record{topic: topic1, partition: 1, value: :rand.bytes(10)}
+      ])
+
+    # Pulled and not committed, so a revocation has to wait for the commit
+    pulled = Map.new(0..1, fn p -> {p, pull_until_records(mod_name1, cg_name, topic1, p)} end)
+
+    start_supervised!({mod_name2, consumer_opts}, id: :mcg2, restart: :temporary)
+
+    [{^topic1, kept}] = wait_for_assigned_count(mod_name1, cg_name, 1)
+    revoked = 1 - kept
+
+    [{:ok, %Record{offset: new_offset}}] =
+      MyClient.produce_batch([
+        %Record{topic: topic1, partition: revoked, value: :rand.bytes(10)}
+      ])
+
+    # Longer than the cluster's 2 s heartbeat interval: heartbeats must not let the
+    # revoked consumer deliver again
+    assert_pull_empty_for(mod_name1, cg_name, topic1, revoked, 4_000)
+    refute_received {^mod_name2, :started_consumer, ^topic1, ^revoked, ^cg_name}
+
+    last_pulled = List.last(pulled[revoked]).offset
+    assert :ok = mod_name1.commit(cg_name, topic1, revoked, last_pulled)
+
+    assert_receive {^mod_name1, :stopped_consumer, ^topic1, ^revoked, ^cg_name,
+                    {:shutdown, {:assignment_revoked, _, ^revoked}}},
+                   5_000
+
+    assert_receive {^mod_name2, :started_consumer, ^topic1, ^revoked, ^cg_name}, 10_000
+
+    resumed = pull_until_records(mod_name2, cg_name, topic1, revoked)
+    assert Enum.map(resumed, & &1.offset) == [new_offset]
   end
 
   test "runtime-bound module: pull delivers records and commit is persisted across restart" do

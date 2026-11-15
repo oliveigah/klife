@@ -835,7 +835,7 @@ defmodule Klife.Consumer.ConsumerGroup do
   defp unack_topic_partition(client_name, cg_mod, topic_id, partition_idx, cg_name) do
     client_name
     |> get_acked_topic_partitions_table(cg_mod, cg_name)
-    |> :ets.delete({{topic_id, partition_idx}})
+    |> :ets.delete({topic_id, partition_idx})
   end
 
   defp unack_all_topic_partitions(client_name, cg_mod, cg_name) do
@@ -843,6 +843,9 @@ defmodule Klife.Consumer.ConsumerGroup do
     |> get_acked_topic_partitions_table(cg_mod, cg_name)
     |> :ets.delete_all_objects()
   end
+
+  # COORDINATOR_LOAD_IN_PROGRESS (14), COORDINATOR_NOT_AVAILABLE (15) and NOT_COORDINATOR (16)
+  @coordinator_error_codes [14, 15, 16]
 
   @doc false
   def get_coordinator!(%__MODULE__{} = state) do
@@ -987,7 +990,20 @@ defmodule Klife.Consumer.ConsumerGroup do
           end)
         end
 
-        Enum.each(tp_list, fn {t_id, p} ->
+        assigned_topic_partitions =
+          get_in(resp, [:assignment, :topic_partitions]) || state.assigned_topic_partitions
+
+        assigned =
+          for %{topic_id: t_id, partitions: partitions} <- assigned_topic_partitions,
+              p <- partitions,
+              into: MapSet.new(),
+              do: {t_id, p}
+
+        # A revoked consumer stays in tp_list until it stops, so the coordinator keeps
+        # its partition away from other members meanwhile, but it must not process more
+        tp_list
+        |> Enum.filter(&MapSet.member?(assigned, &1))
+        |> Enum.each(fn {t_id, p} ->
           true =
             ack_topic_partition(
               state.client_name,
@@ -1001,8 +1017,7 @@ defmodule Klife.Consumer.ConsumerGroup do
         new_state =
           %__MODULE__{
             state
-            | assigned_topic_partitions:
-                get_in(resp, [:assignment, :topic_partitions]) || state.assigned_topic_partitions,
+            | assigned_topic_partitions: assigned_topic_partitions,
               heartbeat_interval_ms: resp.heartbeat_interval_ms,
               epoch: resp.member_epoch
           }
@@ -1019,7 +1034,7 @@ defmodule Klife.Consumer.ConsumerGroup do
           error_message: em
         )
 
-        coordinator_error? = ec in [14, 15, 16]
+        coordinator_error? = ec in @coordinator_error_codes
         static_membership_error? = ec in [111]
 
         cond do
@@ -1140,7 +1155,9 @@ defmodule Klife.Consumer.ConsumerGroup do
     {tc, []}
   end
 
-  defp get_init_offsets(%__MODULE__{} = state, tid_p_list) do
+  # Returns the state too, because a retry may have found a new coordinator
+  @doc false
+  def get_init_offsets(%__MODULE__{} = state, tid_p_list) do
     tname_map =
       tid_p_list
       |> Enum.map(fn {tid, _p} -> tid end)
@@ -1151,63 +1168,26 @@ defmodule Klife.Consumer.ConsumerGroup do
       end)
       |> Map.new()
 
-    parsed_list =
-      tid_p_list
-      |> Enum.map(fn {tid, p} -> {tname_map[tid], p} end)
-      |> Enum.group_by(fn {tname, _p} -> tname end, fn {_tname, p} -> p end)
+    tname_p_list = Enum.map(tid_p_list, fn {tid, p} -> {tname_map[tid], p} end)
 
-    content = %{
-      groups: [
-        %{
-          group_id: state.group_name,
-          member_id: state.member_id,
-          member_epoch: state.epoch,
-          topics:
-            Enum.map(parsed_list, fn {tname, p_list} ->
-              %{
-                name: tname,
-                partition_indexes: p_list
-              }
-            end)
-        }
-      ],
-      # TODO: should this always be true?
-      require_stable: true
-    }
-
-    # TODO: Filter out successfull topic/partitions on retries!
-    offset_fetch_result =
+    {offset_fetch_result, state} =
       Helpers.with_timeout!(
-        fn ->
-          case Broker.send_message(
-                 M.OffsetFetch,
-                 state.client_name,
-                 state.coordinator_id,
-                 content,
-                 %{},
-                 connection: state.connection
-               ) do
-            {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
-              {results, errors} =
-                for topic_resp <- tdata,
-                    pdata <- topic_resp.partitions,
-                    tp = {topic_resp.name, pdata.partition_index},
-                    reduce: {%{}, []} do
-                  {res_acc, err_acc} when pdata.error_code == 0 ->
-                    {Map.put(res_acc, tp, pdata.committed_offset), err_acc}
+        {tname_p_list, %{}, state},
+        fn {pending, resolved, state} ->
+          {new_resolved, errors} = fetch_committed_offsets(state, pending)
+          resolved = Map.merge(resolved, new_resolved)
 
-                  {res_acc, err_acc} ->
-                    {res_acc, [{tp, pdata.error_code} | err_acc]}
-                end
+          if errors == [] do
+            {resolved, state}
+          else
+            log_partition_errors(errors, {M.OffsetFetch, state.client_name, state.group_name})
 
-              if errors == [] do
-                results
-              else
-                {:retry, errors}
-              end
+            state =
+              if Enum.any?(errors, fn {_tp, reason} -> coordinator_error?(reason) end),
+                do: get_coordinator!(state),
+                else: state
 
-            {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
-              {:retry, [{:group, ec}]}
+            {:retry, {Enum.map(errors, fn {tp, _reason} -> tp end), resolved, state}, errors}
           end
         end,
         state.client_name.get_default_request_timeout_ms() * 2
@@ -1219,7 +1199,13 @@ defmodule Klife.Consumer.ConsumerGroup do
       |> Enum.map(fn {{t, p}, -1} -> {t, p} end)
 
     reset_offset_map =
-      get_reset_offset(missing_resp_tp, state.client_name, state.connection, state.topics)
+      get_reset_offset(
+        missing_resp_tp,
+        state.client_name,
+        state.connection,
+        state.topics,
+        state.group_name
+      )
 
     # OffsetFetch returns offsets on the Kafka convention (the next offset to
     # be consumed), while internally the consumer tracks the last processed
@@ -1233,93 +1219,188 @@ defmodule Klife.Consumer.ConsumerGroup do
 
     tid_map = tname_map |> Enum.map(fn {tname, tid} -> {tid, tname} end) |> Map.new()
 
-    Map.merge(parsed_offset_fetch_result, reset_offset_map)
-    |> Enum.map(fn {{tname, p}, offset} -> {{tid_map[tname], p}, offset} end)
-    |> Map.new()
+    init_offsets =
+      Map.merge(parsed_offset_fetch_result, reset_offset_map)
+      |> Enum.map(fn {{tname, p}, offset} -> {{tid_map[tname], p}, offset} end)
+      |> Map.new()
+
+    {init_offsets, state}
   end
 
-  @doc false
-  def get_reset_offset(tname_p_list, client, conn_name, tconfig_map) do
-    grouped_by_broker =
-      Enum.group_by(
-        tname_p_list,
-        fn {tname, p} ->
-          MetadataCache.get_metadata_attribute(client, tname, p, :leader_id)
-        end
-      )
-
-    contents =
-      Enum.map(grouped_by_broker, fn {broker, tp_list} ->
-        grouped_tp_list =
-          Enum.group_by(tp_list, fn {tname, _p} -> tname end, fn {_tname, p} -> p end)
-
-        content = %{
-          replica_id: -1,
-          isolation_level: 1,
+  defp fetch_committed_offsets(%__MODULE__{} = state, tname_p_list) do
+    content = %{
+      groups: [
+        %{
+          group_id: state.group_name,
+          member_id: state.member_id,
+          member_epoch: state.epoch,
           topics:
-            Enum.map(grouped_tp_list, fn {tname, plist} ->
-              %{
-                name: tname,
-                partitions:
-                  Enum.map(plist, fn p ->
-                    %{
-                      partition_index: p,
-                      timestamp:
-                        case tconfig_map[tname].offset_reset_policy do
-                          :earliest -> -2
-                          :latest -> -1
-                        end
-                    }
-                  end)
-              }
-            end)
+            tname_p_list
+            |> Enum.group_by(fn {tname, _p} -> tname end, fn {_tname, p} -> p end)
+            |> Enum.map(fn {tname, p_list} -> %{name: tname, partition_indexes: p_list} end)
         }
+      ],
+      # TODO: should this always be true?
+      require_stable: true
+    }
 
-        {broker, content}
+    case Broker.send_message(
+           M.OffsetFetch,
+           state.client_name,
+           state.coordinator_id,
+           content,
+           %{},
+           connection: state.connection
+         ) do
+      {:ok, %{content: %{groups: [%{error_code: 0, topics: tdata}]}}} ->
+        responses =
+          for topic_resp <- tdata,
+              pdata <- topic_resp.partitions,
+              into: %{},
+              do:
+                {{topic_resp.name, pdata.partition_index},
+                 {pdata.error_code, pdata.committed_offset}}
+
+        split_by_error_code(tname_p_list, responses)
+
+      {:ok, %{content: %{groups: [%{error_code: ec}]}}} ->
+        {%{}, Enum.map(tname_p_list, &{&1, {:group, ec}})}
+
+      # A closed connection or a timeout
+      {:error, reason} ->
+        {%{}, Enum.map(tname_p_list, &{&1, {:send_error, reason}})}
+    end
+  end
+
+  # Like the heartbeat, a coordinator error or no answer from the coordinator means
+  # it may have moved, so the next attempt asks the coordinator found again
+  defp coordinator_error?({:group, ec}), do: ec in @coordinator_error_codes
+  defp coordinator_error?({:send_error, _reason}), do: true
+  defp coordinator_error?(_partition_error), do: false
+
+  # UNKNOWN_TOPIC_OR_PARTITION (3), LEADER_NOT_AVAILABLE (5), NOT_LEADER_OR_FOLLOWER (6),
+  # FENCED_LEADER_EPOCH (74) and UNKNOWN_LEADER_EPOCH (75) mean the cached leader is
+  # stale, e.g. after a leadership change, so a metadata refresh is triggered for the
+  # next attempt to find the new leader.
+  @list_offsets_stale_metadata_codes [3, 5, 6, 74, 75]
+
+  @doc false
+  def get_reset_offset(tname_p_list, client, conn_name, tconfig_map, group_name) do
+    Helpers.with_timeout!(
+      {tname_p_list, %{}},
+      fn {pending, resolved} ->
+        {new_resolved, errors} = list_offsets(pending, client, conn_name, tconfig_map)
+        resolved = Map.merge(resolved, new_resolved)
+
+        if errors == [] do
+          resolved
+        else
+          log_partition_errors(errors, {M.ListOffsets, client, group_name})
+          {:retry, {Enum.map(errors, fn {tp, _reason} -> tp end), resolved}, errors}
+        end
+      end,
+      client.get_default_request_timeout_ms() * 2
+    )
+  end
+
+  # Each attempt groups the partitions by the leader cached at that moment, so a retry
+  # reaches the new leader once the metadata refresh has seen it
+  defp list_offsets(tname_p_list, client, conn_name, tconfig_map) do
+    {resolved, errors} =
+      tname_p_list
+      |> Enum.group_by(fn {tname, p} ->
+        MetadataCache.get_metadata_attribute(client, tname, p, :leader_id)
+      end)
+      |> Task.async_stream(
+        fn {broker, broker_tps} ->
+          list_broker_offsets(broker, broker_tps, client, conn_name, tconfig_map)
+        end,
+        timeout: client.get_default_request_timeout_ms() + :timer.seconds(5),
+        on_timeout: :kill_task,
+        zip_input_on_exit: true
+      )
+      |> Enum.reduce({%{}, []}, fn
+        {:ok, {broker_resolved, broker_errors}}, {res_acc, err_acc} ->
+          {Map.merge(res_acc, broker_resolved), broker_errors ++ err_acc}
+
+        {:exit, {{_broker, broker_tps}, reason}}, {res_acc, err_acc} ->
+          {res_acc, Enum.map(broker_tps, &{&1, {:exit, reason}}) ++ err_acc}
       end)
 
-    timeout = client.get_default_request_timeout_ms() * 2
+    if Enum.any?(errors, fn {_tp, reason} -> reason in @list_offsets_stale_metadata_codes end) do
+      :ok = MetadataCache.trigger_check_metadata(client)
+    end
 
-    Task.async_stream(
-      contents,
-      fn {broker, content} ->
-        # TODO: Filter out successfull topic/partitions on retries!
-        Helpers.with_timeout!(
-          fn ->
-            case Broker.send_message(M.ListOffsets, client, broker, content, %{},
-                   connection: conn_name
-                 ) do
-              {:ok, %{content: %{topics: tdata}}} ->
-                {results, errors} =
-                  for topic_resp <- tdata,
-                      pdata <- topic_resp.partitions,
-                      tp = {topic_resp.name, pdata.partition_index},
-                      reduce: {[], []} do
-                    {res_acc, err_acc} when pdata.error_code == 0 ->
-                      # Need the -1 so we do not skip the first record
-                      {[{tp, pdata.offset - 1} | res_acc], err_acc}
+    {resolved, errors}
+  end
 
-                    {res_acc, err_acc} ->
-                      {res_acc, [{tp, pdata.error_code} | err_acc]}
-                  end
-
-                if errors == [] do
-                  results
-                else
-                  {:retry, errors}
-                end
-
-              {:error, reason} ->
-                {:retry, reason}
+  defp list_broker_offsets(broker, tname_p_list, client, conn_name, tconfig_map) do
+    content = %{
+      replica_id: -1,
+      isolation_level: 1,
+      topics:
+        tname_p_list
+        |> Enum.group_by(fn {tname, _p} -> tname end, fn {_tname, p} -> p end)
+        |> Enum.map(fn {tname, plist} ->
+          timestamp =
+            case tconfig_map[tname].offset_reset_policy do
+              :earliest -> -2
+              :latest -> -1
             end
-          end,
-          timeout
-        )
-      end,
-      timeout: timeout + :timer.seconds(5)
-    )
-    |> Enum.flat_map(fn {:ok, resp} -> resp end)
-    |> Map.new()
+
+          %{
+            name: tname,
+            partitions: Enum.map(plist, &%{partition_index: &1, timestamp: timestamp})
+          }
+        end)
+    }
+
+    case Broker.send_message(M.ListOffsets, client, broker, content, %{}, connection: conn_name) do
+      {:ok, %{content: %{topics: tdata}}} ->
+        # Need the -1 so we do not skip the first record
+        responses =
+          for topic_resp <- tdata,
+              pdata <- topic_resp.partitions,
+              into: %{},
+              do: {{topic_resp.name, pdata.partition_index}, {pdata.error_code, pdata.offset - 1}}
+
+        split_by_error_code(tname_p_list, responses)
+
+      {:error, reason} ->
+        {%{}, Enum.map(tname_p_list, &{&1, {:send_error, reason}})}
+    end
+  end
+
+  defp split_by_error_code(tname_p_list, responses) do
+    Enum.reduce(tname_p_list, {%{}, []}, fn tp, {resolved, errors} ->
+      case Map.fetch(responses, tp) do
+        {:ok, {0, offset}} -> {Map.put(resolved, tp, offset), errors}
+        {:ok, {ec, _offset}} -> {resolved, [{tp, ec} | errors]}
+        :error -> {resolved, [{tp, :missing_from_response} | errors]}
+      end
+    end)
+  end
+
+  defp log_partition_errors(errors, {message_mod, client, group_name}) do
+    errors
+    |> Enum.group_by(fn {_tp, reason} -> reason end, fn {tp, _reason} -> tp end)
+    |> Enum.each(fn {reason, tps} ->
+      tps_str = Enum.map_join(tps, ", ", fn {tname, p} -> "#{tname}:#{p}" end)
+
+      reason_str =
+        case reason do
+          ec when is_integer(ec) -> "error_code=#{ec}"
+          {:group, ec} -> "group error_code=#{ec}"
+          {:send_error, reason} -> "send error=#{inspect(reason)}"
+          other -> "reason=#{inspect(other)}"
+        end
+
+      Logger.warning(
+        "#{inspect(message_mod)} error on #{tps_str} for group #{group_name}, retrying (#{reason_str}) (client=#{inspect(client)})",
+        client: client,
+        group: group_name
+      )
+    end)
   end
 
   defp handle_assignment(%__MODULE__{consumers_monitor_map: cm_map} = state) do
@@ -1370,7 +1451,7 @@ defmodule Klife.Consumer.ConsumerGroup do
       end)
 
     if MapSet.size(to_start) != 0 do
-      init_offsets_map = get_init_offsets(state, to_start)
+      {init_offsets_map, new_state} = get_init_offsets(new_state, to_start)
 
       Enum.reduce(to_start, new_state, fn {topic_id, partition}, acc_state ->
         start_consumer(acc_state, topic_id, partition, init_offsets_map[{topic_id, partition}])

@@ -8,6 +8,8 @@ defmodule Klife.TxnProducerPool do
 
   alias Klife.Producer
 
+  alias Klife.Helpers
+
   alias Klife.Record
 
   @behaviour NimblePool
@@ -284,32 +286,19 @@ defmodule Klife.TxnProducerPool do
         topic_partitions: txn_topic_partitions
       } = get_txn_ctx(client_name)
 
-    case Enum.reject(tp_list, fn tp -> MapSet.member?(txn_topic_partitions, tp) end) do
+    case tp_list |> Enum.reject(&MapSet.member?(txn_topic_partitions, &1)) |> Enum.uniq() do
       [] ->
         :ok
 
       to_add_tp_list ->
-        grouped_tp_list = Enum.group_by(to_add_tp_list, fn {t, _p} -> t end, fn {_t, p} -> p end)
-
-        content = %{
-          transactions: [
-            %{
-              transactional_id: txn_id,
-              producer_id: p_id,
-              producer_epoch: p_epoch,
-              verify_only: false,
-              topics:
-                Enum.map(grouped_tp_list, fn {t, partitions} ->
-                  %{
-                    name: t,
-                    partitions: partitions
-                  }
-                end)
-            }
-          ]
+        txn = %{
+          transactional_id: txn_id,
+          producer_id: p_id,
+          producer_epoch: p_epoch,
+          verify_only: false
         }
 
-        case add_partitions_to_txn(client_name, conn_name, coordinator_id, content) do
+        case add_partitions_to_txn(client_name, conn_name, coordinator_id, txn, to_add_tp_list) do
           :ok ->
             new_txn_topic_partitions =
               tp_list
@@ -336,61 +325,99 @@ defmodule Klife.TxnProducerPool do
     end
   end
 
-  defp add_partitions_to_txn(client_name, conn_name, coordinator_id, content) do
-    deadline = System.monotonic_time(:millisecond) + :timer.seconds(10)
-    do_add_partitions_to_txn(deadline, client_name, conn_name, coordinator_id, content)
+  # UNKNOWN_TOPIC_OR_PARTITION (3) won't go away in time, and once this transaction's
+  # epoch is fenced, by INVALID_PRODUCER_EPOCH (47) or PRODUCER_FENCED (90), no retry
+  # with it can succeed
+  @add_partitions_stop_codes [3, 47, 90]
+
+  # CONCURRENT_TRANSACTIONS (51) is expected while the broker still completes the
+  # previous transaction of this producer, so it is retried quickly and not logged
+  @concurrent_transactions_code 51
+
+  defp add_partitions_to_txn(client_name, conn_name, coordinator_id, txn, tp_list) do
+    Helpers.with_timeout!(
+      {tp_list, MapSet.new()},
+      fn {pending, logged_reasons} ->
+        results = send_add_partitions(client_name, conn_name, coordinator_id, txn, pending)
+        failed = Enum.reject(results, fn {_tp, reason} -> reason == 0 end)
+
+        cond do
+          failed == [] ->
+            :ok
+
+          Enum.any?(failed, fn {_tp, reason} -> reason in @add_partitions_stop_codes end) ->
+            {:error, results}
+
+          true ->
+            logged_reasons =
+              log_add_partitions_errors(failed, logged_reasons, client_name, coordinator_id)
+
+            {:retry, {Enum.map(failed, fn {tp, _reason} -> tp end), logged_reasons},
+             %{coordinator: coordinator_id, errors: failed}}
+        end
+      end,
+      :timer.seconds(10),
+      10
+    )
   end
 
-  defp do_add_partitions_to_txn(deadline, client_name, conn_name, coordinator_id, content) do
-    if System.monotonic_time(:millisecond) < deadline do
-      with {:ok, %{content: %{error_code: 0} = resp_content}} <-
-             Broker.send_message(M.AddPartitionsToTxn, client_name, coordinator_id, content, %{},
-               connection: conn_name
-             ),
-           %{results_by_transaction: [txn_resp]} <- resp_content,
-           :ok <- check_add_partitions_resp(txn_resp) do
-        :ok
-      else
-        {:error, :stop, error_codes} ->
-          {:error, error_codes}
+  defp send_add_partitions(client_name, conn_name, coordinator_id, txn, tp_list) do
+    topics =
+      tp_list
+      |> Enum.group_by(fn {t, _p} -> t end, fn {_t, p} -> p end)
+      |> Enum.map(fn {t, partitions} -> %{name: t, partitions: partitions} end)
 
-        _ ->
-          Process.sleep(10)
-          do_add_partitions_to_txn(deadline, client_name, conn_name, coordinator_id, content)
-      end
-    else
-      raise "Timeout while adding partition to txn (client=#{inspect(client_name)}, coordinator=#{coordinator_id})"
+    content = %{transactions: [Map.put(txn, :topics, topics)]}
+
+    case Broker.send_message(M.AddPartitionsToTxn, client_name, coordinator_id, content, %{},
+           connection: conn_name
+         ) do
+      {:ok, %{content: %{error_code: 0, results_by_transaction: [txn_resp]}}} ->
+        responses =
+          for t_result <- txn_resp.topic_results,
+              p_result <- t_result.results_by_partition,
+              into: %{},
+              do: {{t_result.name, p_result.partition_index}, p_result.partition_error_code}
+
+        Enum.map(tp_list, fn tp -> {tp, Map.get(responses, tp, :missing_from_response)} end)
+
+      {:ok, %{content: %{error_code: ec}}} when ec != 0 ->
+        Enum.map(tp_list, &{&1, {:request_error, ec}})
+
+      {:ok, _unexpected} ->
+        Enum.map(tp_list, &{&1, :unexpected_response})
+
+      {:error, reason} ->
+        Enum.map(tp_list, &{&1, {:send_error, reason}})
     end
   end
 
-  defp check_add_partitions_resp(%{topic_results: t_results}) do
-    result_set =
-      for t_result <- t_results, p_result <- t_result.results_by_partition, into: MapSet.new() do
-        p_result.partition_error_code
-      end
+  # At most once per reason in a call, because retries are 10 ms apart
+  defp log_add_partitions_errors(failed, logged_reasons, client_name, coordinator_id) do
+    failed
+    |> Enum.group_by(fn {_tp, reason} -> reason end, fn {tp, _reason} -> tp end)
+    |> Enum.reject(fn {reason, _tps} ->
+      reason == @concurrent_transactions_code or MapSet.member?(logged_reasons, reason)
+    end)
+    |> Enum.reduce(logged_reasons, fn {reason, tps}, acc ->
+      tps_str = Enum.map_join(tps, ", ", fn {t, p} -> "#{t}:#{p}" end)
 
-    # TODO: Which error codes should be added here?
-    ok_set = MapSet.new([0])
-    stop_set = MapSet.new([3])
+      reason_str =
+        case reason do
+          ec when is_integer(ec) -> "error_code=#{ec}"
+          {:request_error, ec} -> "request error_code=#{ec}"
+          {:send_error, send_reason} -> "send error=#{inspect(send_reason)}"
+          other -> "reason=#{inspect(other)}"
+        end
 
-    cond do
-      MapSet.subset?(result_set, ok_set) ->
-        :ok
+      Logger.warning(
+        "#{inspect(M.AddPartitionsToTxn)} error on #{tps_str}, retrying (#{reason_str}) (client=#{inspect(client_name)}, coordinator=#{coordinator_id})",
+        client: client_name,
+        broker_id: coordinator_id
+      )
 
-      not MapSet.disjoint?(result_set, stop_set) ->
-        errors =
-          for t_result <- t_results,
-              p_result <- t_result.results_by_partition do
-            {{t_result.name, p_result.partition_index}, p_result.partition_error_code}
-          end
-
-        {:error, :stop, errors}
-
-      true ->
-        # If we got here, it is because some entries ran into errors,
-        # but all of the errors that happened are retriable.
-        :retry
-    end
+      MapSet.put(acc, reason)
+    end)
   end
 
   @doc """
