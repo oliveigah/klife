@@ -616,6 +616,7 @@ defmodule Klife.Consumer.ConsumerGroup.Consumer do
     :broker_removed,
     :unexpected_resp,
     :closed,
+    :no_connection,
     -1,
     3,
     5,

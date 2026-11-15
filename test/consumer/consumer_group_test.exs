@@ -1301,6 +1301,83 @@ defmodule Klife.Consumer.ConsumerGroupTest do
     assert_pull_empty_for(mod_name, cg_name, topic1, 0, 2_000)
   end
 
+  test "consumer retries a missing broker connection without redelivering uncommitted records" do
+    parent_pid = self()
+    mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
+
+    defmodule mod_name do
+      use ManualCGTest, parent_pid: parent_pid
+    end
+
+    [topic] = create_test_topics(1, partitions: 1)
+    cg_name = Base.encode16(:rand.bytes(10))
+
+    consumer_opts = [
+      topics: [[name: topic, mode: :manual, fetch_interval_ms: 100]],
+      fetch_strategy: {:exclusive, [connection: :test_fetcher_connection]},
+      group_name: cg_name
+    ]
+
+    start_supervised!({mod_name, consumer_opts}, restart: :temporary)
+    assert_receive {^mod_name, :started_consumer, ^topic, 0, ^cg_name}, 5_000
+
+    {:ok, first} = MyClient.produce(%Record{topic: topic, partition: 0, value: "first"})
+    assert [pulled] = pull_until_records(mod_name, cg_name, topic, 0)
+    assert pulled.offset == first.offset
+
+    topic_id = Klife.MetadataCache.get_metadata_attribute(MyClient, topic, 0, :topic_id)
+
+    consumer_name =
+      Klife.Consumer.ConsumerGroup.Consumer.get_process_name(
+        MyClient,
+        mod_name,
+        topic_id,
+        0,
+        cg_name
+      )
+
+    consumer_pid = GenServer.whereis(consumer_name)
+    leader_id = Klife.MetadataCache.get_metadata_attribute(MyClient, topic, 0, :leader_id)
+    connection_key = {Klife.Connection.Broker, MyClient, :test_fetcher_connection, leader_id, 0}
+    connection = :persistent_term.get(connection_key)
+
+    # Exercise the real broker -> dispatcher -> consumer error path, leaving
+    # group coordination and production on their separate connections.
+    :erlang.trace(consumer_pid, true, [:receive])
+
+    try do
+      :persistent_term.erase(connection_key)
+
+      assert_receive {:trace, ^consumer_pid, :receive,
+                      {:klife_fetch_response, {^topic, 0, retry_offset}, {:error, :no_connection}}},
+                     5_000
+
+      assert retry_offset == first.offset + 1
+      state = :sys.get_state(consumer_pid)
+      assert state.latest_processed_offset == first.offset
+      assert state.latest_committed_offset < first.offset
+    after
+      :persistent_term.put(connection_key, connection)
+    end
+
+    {:ok, next} = MyClient.produce(%Record{topic: topic, partition: 0, value: "next"})
+    next_offset = next.offset
+
+    # Wait for the consumer's own retry before pulling, since an empty pull
+    # can also trigger a fetch.
+    assert_receive {:trace, ^consumer_pid, :receive,
+                    {:klife_fetch_response, {^topic, 0, ^next_offset},
+                     {:ok, [%Record{offset: ^next_offset}]}}},
+                   5_000
+
+    :erlang.trace(consumer_pid, false, [:receive])
+    assert [resumed] = pull_until_records(mod_name, cg_name, topic, 0)
+    assert resumed.offset == next.offset
+    assert GenServer.whereis(consumer_name) == consumer_pid
+    assert Process.alive?(consumer_pid)
+    assert :ok = mod_name.commit(cg_name, topic, 0, next.offset)
+  end
+
   test "manual mode: pull delivers records and commit is persisted across restart", ctx do
     parent_pid = self()
     mod_name = :"#{:rand.bytes(10) |> Base.encode16()}"
