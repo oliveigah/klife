@@ -8,6 +8,7 @@ defmodule Klife.Connection.Controller do
   require Logger
 
   alias Klife.PubSub
+  alias Klife.Helpers
 
   alias KlifeProtocol.Messages
 
@@ -276,7 +277,8 @@ defmodule Klife.Connection.Controller do
     end)
   end
 
-  # The client can't start without a bootstrap connection, so this one raises
+  # The client can't start without a bootstrap connection and its first metadata
+  # response: the other children need the broker list and controller already set.
   defp do_init(%__MODULE__{} = state) do
     conn =
       case connect_bootstrap_server(
@@ -300,7 +302,6 @@ defmodule Klife.Connection.Controller do
     :ok = negotiate_api_versions(conn, state.client_name)
     new_sasl_opts = Connection.build_sasl_opts(state.sasl_opts, state.client_name)
     {:ok, conn} = Connection.authenticate_sasl(conn, new_sasl_opts)
-    :ok = schedule_bootstrap_reauth(conn, state.client_name)
 
     connections =
       Map.new(state.connections, fn {name, conn_opts} ->
@@ -315,9 +316,44 @@ defmodule Klife.Connection.Controller do
         connections: connections
     }
 
-    {_, new_state} = handle_info(:check_cluster, new_state)
+    {conn, cluster_info} =
+      Helpers.with_timeout!(
+        new_state,
+        fn state ->
+          connection =
+            if state.bootstrap_conn do
+              {:ok, state.bootstrap_conn}
+            else
+              connect_bootstrap_server(
+                state.bootstrap_servers,
+                state.ssl,
+                state.connect_opts,
+                state.socket_opts,
+                state.sasl_opts
+              )
+            end
 
-    new_state
+          case connection do
+            {:ok, conn} ->
+              case get_cluster_info(%{conn | read_timeout: state.default_request_timeout_ms}) do
+                {:ok, cluster_info} ->
+                  {conn, cluster_info}
+
+                {:error, reason} ->
+                  Connection.close(conn)
+                  error = %{client: state.client_name, request: Messages.Metadata, reason: reason}
+                  {:retry, %{state | bootstrap_conn: nil}, error}
+              end
+
+            {:error, errors} ->
+              {:retry, state, %{client: state.client_name, bootstrap_errors: errors}}
+          end
+        end,
+        state.default_request_timeout_ms
+      )
+
+    :ok = schedule_bootstrap_reauth(conn, state.client_name)
+    update_cluster_info(%{new_state | bootstrap_conn: conn}, cluster_info)
   end
 
   @impl true
@@ -383,24 +419,8 @@ defmodule Klife.Connection.Controller do
     end
 
     case get_cluster_info(state.bootstrap_conn) do
-      {:ok, %{brokers: new_brokers_list, controller: controller}} ->
-        set_cluster_controller(controller, state.client_name)
-
-        old_brokers = state.known_brokers
-        to_remove = old_brokers -- new_brokers_list
-        to_start = new_brokers_list -- old_brokers
-
-        next_ref = Process.send_after(self(), :check_cluster, @check_cluster_delay)
-
-        new_state = %__MODULE__{
-          state
-          | known_brokers: new_brokers_list,
-            check_cluster_timer_ref: next_ref
-        }
-
-        new_state = handle_brokers(to_start, to_remove, new_state)
-
-        {:noreply, new_state}
+      {:ok, cluster_info} ->
+        {:noreply, update_cluster_info(state, cluster_info)}
 
       {:error, reason} ->
         Logger.warning(
@@ -640,6 +660,27 @@ defmodule Klife.Connection.Controller do
     do: :persistent_term.get({__MODULE__, client_name, feature, :disabled?}, false)
 
   ## PRIVATE FUNCTIONS
+
+  defp update_cluster_info(%__MODULE__{} = state, %{
+         brokers: new_brokers_list,
+         controller: controller
+       }) do
+    set_cluster_controller(controller, state.client_name)
+
+    old_brokers = state.known_brokers
+    to_remove = old_brokers -- new_brokers_list
+    to_start = new_brokers_list -- old_brokers
+
+    next_ref = Process.send_after(self(), :check_cluster, @check_cluster_delay)
+
+    new_state = %__MODULE__{
+      state
+      | known_brokers: new_brokers_list,
+        check_cluster_timer_ref: next_ref
+    }
+
+    handle_brokers(to_start, to_remove, new_state)
+  end
 
   # Every connection keeps its connection_count TCP connections to each broker
   defp handle_brokers(to_start, to_remove, %__MODULE__{} = state) do

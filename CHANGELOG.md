@@ -7,6 +7,10 @@ GitHub publication dates (UTC).
 
 ## [Unreleased]
 
+### Fixed
+
+- Retry initial cluster metadata requests synchronously for `default_request_timeout_ms`, reconnecting after failures, and fail startup if discovery never succeeds. This prevents components from starting before broker discovery and crashing on missing persistent terms. Metadata failures after startup still reconnect and retry asynchronously.
+
 ## [1.3.0] - 2026-11-15
 
 ### Added
