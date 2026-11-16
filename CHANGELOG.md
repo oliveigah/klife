@@ -5,7 +5,13 @@ from the [published releases](https://github.com/oliveigah/klife/releases) and t
 commits between release tags. Related changes are combined; release dates follow
 GitHub publication dates (UTC).
 
-## Unreleased
+## [Unreleased]
+
+### Fixed
+
+- Retry initial cluster metadata requests synchronously for `default_request_timeout_ms`, reconnecting after failures, and fail startup if discovery never succeeds. This prevents components from starting before broker discovery and crashing on missing persistent terms. Metadata failures after startup still reconnect and retry asynchronously.
+
+## [1.3.0] - 2026-11-15
 
 ### Added
 
@@ -26,6 +32,7 @@ GitHub publication dates (UTC).
 
 ### Fixed
 
+- Consumers retry fetches when a broker connection is temporarily unavailable, preserving pending commits instead of crashing and redelivering uncommitted records.
 - A write to a broker that stopped reading no longer waits forever: `socket_opts` now defaults to `send_timeout: 15_000` and `send_timeout_close: true`, so after 15 s the write fails, the connection closes and reconnects. A consumer group member could block on such a write while fetching its initial offsets, stop heartbeating and leave its new partitions unconsumed until the broker removed it from the group.
 - Revoked consumers no longer process new records while they wait for their pending commits. They kept fetching and processing, so a busy partition reached the 10 second revocation deadline with commits still pending, and its new owner processed those records again.
 - A consumer group member no longer leaves its new partitions unconsumed for up to twice `default_request_timeout_ms` when a partition leader or the group coordinator changes while it looks up their starting offsets. Each retry now asks again only for the partitions that failed, sends them to their current leaders after refreshing the metadata on a stale leader error, finds the coordinator again after a coordinator error, and failed lookups are logged.
@@ -190,7 +197,8 @@ Initial public release, focused on producing records.
 - `Klife.Testing` helpers for checking produced records against a real broker.
 - An example application, client configuration documentation, and synchronous producer benchmarks.
 
-[unreleased]: https://github.com/oliveigah/klife/compare/v1.2.0...main
+[unreleased]: https://github.com/oliveigah/klife/compare/v1.3.0...main
+[1.3.0]: https://github.com/oliveigah/klife/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/oliveigah/klife/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/oliveigah/klife/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/oliveigah/klife/compare/v0.5.1...v1.0.0
